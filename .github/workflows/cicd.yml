@@ -140,7 +140,7 @@ jobs:
           set -euo pipefail
           : "${SERVER_USER:?Set SERVER_USER secret}"
           SERVER_PORT="${SERVER_PORT:-22}"
-          DEPLOY_PATH="${DEPLOY_PATH:-/opt/skit-saas}"
+          DEPLOY_PATH="${DEPLOY_PATH:-$HOME/skit-saas}"
           SSH_TARGET="${SERVER_USER}@${SERVER_HOST}"
           .deploy/ssh "${SSH_TARGET}" \
             "mkdir -p '${DEPLOY_PATH}/app-source/releases/${PACKAGE_TAG}'"
