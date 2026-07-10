@@ -181,13 +181,14 @@ const adaptTenant = async () => {
 
 /** 初始化装修模版 */
 const adaptTemplate = async (appTemplate, templateId) => {
-  const { data: diyTemplate } = templateId
+  const templateRes = templateId
     ? // 查询指定模板，一般是预览时使用
       await DiyApi.getDiyTemplate(templateId)
     : await DiyApi.getUsedDiyTemplate();
+  const diyTemplate = templateRes?.data;
   // 模板不存在
   if (!diyTemplate) {
-    $router.error('TemplateError');
+    applyShortDramaTemplate(appTemplate);
     return;
   }
 
@@ -208,6 +209,48 @@ const adaptTemplate = async (appTemplate, templateId) => {
   }
   appTemplate.home = diyTemplate?.home;
   appTemplate.user = diyTemplate?.user;
+};
+
+const applyShortDramaTemplate = (appTemplate) => {
+  appTemplate.basic.tabbar = {
+    mode: 1,
+    style: {
+      color: '#8a8a8a',
+      activeColor: '#ff5a1f',
+      bgType: 'color',
+      bgColor: '#ffffff',
+    },
+    items: [
+      {
+        text: '首页',
+        url: '/pages/index/index',
+        iconUrl: '',
+        activeIconUrl: '',
+      },
+      {
+        text: '剧场',
+        url: '/pages/index/category',
+        iconUrl: '',
+        activeIconUrl: '',
+      },
+      {
+        text: '我的',
+        url: '/pages/index/user',
+        iconUrl: '',
+        activeIconUrl: '',
+      },
+    ],
+  };
+  appTemplate.home = {
+    page: { color: '#f6f6f6' },
+    navigationBar: {},
+    components: [],
+  };
+  appTemplate.user = {
+    page: { color: '#f6f6f6' },
+    navigationBar: {},
+    components: [],
+  };
 };
 
 export default app;

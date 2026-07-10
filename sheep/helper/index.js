@@ -1,5 +1,6 @@
 import test from './test.js';
 import { round } from './digit.js';
+import safeUni from './uni.js';
 /**
  * @description 如果value小于min，取min；如果value大于max，取max
  * @param {number} min
@@ -22,7 +23,7 @@ export function getPx(value, unit = false) {
   }
   // 如果带有rpx，先取出其数值部分，再转为px值
   if (/(rpx|upx)$/.test(value)) {
-    return unit ? `${uni.upx2px(parseInt(value))}px` : Number(uni.upx2px(parseInt(value)));
+    return unit ? `${safeUni.upx2px(parseInt(value))}px` : Number(safeUni.upx2px(parseInt(value)));
   }
   return unit ? `${parseInt(value)}px` : parseInt(value);
 }
@@ -45,7 +46,7 @@ export function sleep(value = 30) {
  * @link 运行期判断平台 https://uniapp.dcloud.io/frame?id=判断平台
  */
 export function os() {
-  return uni.getDeviceInfo().platform.toLowerCase();
+  return safeUni.getDeviceInfo().platform.toLowerCase();
 }
 
 /**

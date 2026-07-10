@@ -8,6 +8,7 @@ import UserApi from '@/sheep/api/member/user';
 import PayWalletApi from '@/sheep/api/pay/wallet';
 import OrderApi from '@/sheep/api/trade/order';
 import CouponApi from '@/sheep/api/promotion/coupon';
+import safeUni from '@/sheep/helper/uni';
 
 // 默认用户信息
 const defaultUserInfo = {
@@ -40,7 +41,7 @@ const user = defineStore('user', {
   state: () => ({
     userInfo: clone(defaultUserInfo), // 用户信息
     userWallet: clone(defaultUserWallet), // 用户钱包信息
-    isLogin: !!uni.getStorageSync('token'), // 登录状态
+    isLogin: !!safeUni.getStorageSync('token'), // 登录状态
     numData: cloneDeep(defaultNumData), // 用户其他数据
     lastUpdateTime: 0, // 上次更新时间
   }),

@@ -1,4 +1,5 @@
 // ========== COMMON - 公共模块 ==========
+import safeUni from '@/sheep/helper/uni';
 
 /**
  * 与后端Terminal枚举一一对应
@@ -17,7 +18,7 @@ export const TerminalEnum = {
  * @return 终端
  */
 export const getTerminal = () => {
-  const platformType = uni.getAppBaseInfo().uniPlatform;
+  const platformType = safeUni.getAppBaseInfo().uniPlatform;
   // 与后端terminal枚举一一对应
   switch (platformType) {
     case 'app':

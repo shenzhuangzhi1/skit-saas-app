@@ -1,10 +1,11 @@
 <script setup>
   import { onLaunch, onShow, onError } from '@dcloudio/uni-app';
   import { ShoproInit } from './sheep';
+  import safeUni from './sheep/helper/uni';
 
   onLaunch(() => {
     // 隐藏原生导航栏 使用自定义底部导航
-    uni.hideTabBar({
+    safeUni.hideTabBar({
       fail: () => {},
     });
 
@@ -20,7 +21,7 @@
     }
 
     // 获取剪贴板
-    uni.getClipboardData({
+    safeUni.getClipboardData({
       success: (res) => {},
     });
     // #endif

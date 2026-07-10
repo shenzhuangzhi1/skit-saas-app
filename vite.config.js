@@ -10,7 +10,7 @@ import mpliveMainfestPlugin from './sheep/libs/mplive-manifest-plugin';
 export default (command, mode) => {
 	const env = loadEnv(mode, __dirname, 'SHOPRO_');
 	return {
-		envPrefix: "SHOPRO_",
+		envPrefix: ['SHOPRO_', 'VITE_'],
 		plugins: [
 			uni(),
 			// viteCompression({

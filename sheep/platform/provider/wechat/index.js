@@ -1,17 +1,24 @@
 // #ifdef H5
-import service from './officialAccount';
+import officialAccountService from './officialAccount';
 // #endif
 
 // #ifdef MP-WEIXIN
-import service from './miniProgram';
+import miniProgramService from './miniProgram';
 // #endif
 
 // #ifdef APP-PLUS
-import service from './openPlatform';
+import openPlatformService from './openPlatform';
 // #endif
 
 let wechat = {};
-if (typeof service !== 'undefined') {
-  wechat = service;
-}
+// #ifdef H5
+wechat = officialAccountService;
+// #endif
+// #ifdef MP-WEIXIN
+wechat = miniProgramService;
+// #endif
+// #ifdef APP-PLUS
+wechat = openPlatformService;
+// #endif
+
 export default wechat;

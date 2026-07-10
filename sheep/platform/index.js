@@ -18,10 +18,11 @@ import alipay from './provider/alipay/index';
 import apple from './provider/apple';
 import share from './share';
 import Pay from './pay';
+import safeUni from '@/sheep/helper/uni';
 
-const device = uni.getWindowInfo();
+const device = safeUni.getWindowInfo();
 
-const os = uni.getDeviceInfo().platform;
+const os = safeUni.getDeviceInfo().platform;
 
 let name = '';
 let provider = '';
@@ -59,7 +60,7 @@ name = 'alipayMiniProgram';
 platform = 'alipayMiniProgram';
 provider = 'alipay';
 if (!device.safeAreaInsets) {
-  device.safeAreaInsets = uni.getSystemInfoSync().safeAreaInsets
+  device.safeAreaInsets = safeUni.getSystemInfoSync().safeAreaInsets
 }
 // 兜底一下。还是没有值时候，就给个默认值
 if (!device.safeAreaInsets) {
@@ -68,7 +69,7 @@ if (!device.safeAreaInsets) {
 // #endif
 
 if (isEmpty(name)) {
-  uni.showToast({
+  safeUni.showToast({
     title: '暂不支持该平台',
     icon: 'none',
   });
@@ -116,7 +117,7 @@ const checkUpdate = (silence = false) => {
  * @param {Boolean} silence - 静默检查
  */
 async function checkNetwork() {
-  const networkStatus = await uni.getNetworkType();
+  const networkStatus = await safeUni.getNetworkType();
   if (networkStatus.networkType == 'none') {
     return Promise.resolve(false);
   }
@@ -126,7 +127,7 @@ async function checkNetwork() {
 // 获取小程序胶囊信息
 const getCapsule = () => {
   // #ifdef MP
-  let capsule = uni.getMenuButtonBoundingClientRect();
+  let capsule = safeUni.getMenuButtonBoundingClientRect();
   if (!capsule) {
     capsule = {
       bottom: 56,

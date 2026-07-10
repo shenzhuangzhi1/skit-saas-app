@@ -9,3 +9,5 @@ yarn.lock
 package-lock.json
 *.keystore
 pnpm-lock.yaml
+android-preview-webview/build/
+pages/index/* 2.vue

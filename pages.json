@@ -35,22 +35,22 @@
 		{
 			"path": "pages/index/category",
 			"style": {
-				"navigationBarTitleText": "商品分类"
+				"navigationBarTitleText": "剧场"
 			},
 			"meta": {
 				"sync": true,
-				"title": "商品分类",
+				"title": "剧场",
 				"group": "短剧"
 			}
 		},
 		{
 			"path": "pages/index/cart",
 			"style": {
-				"navigationBarTitleText": "购物车"
+				"navigationBarTitleText": "我的追剧"
 			},
 			"meta": {
 				"sync": true,
-				"title": "购物车",
+				"title": "我的追剧",
 				"group": "短剧"
 			}
 		},
@@ -63,11 +63,11 @@
 		{
 			"path": "pages/index/search",
 			"style": {
-				"navigationBarTitleText": "搜索"
+				"navigationBarTitleText": "搜索短剧"
 			},
 			"meta": {
 				"sync": true,
-				"title": "搜索",
+				"title": "搜索短剧",
 				"group": "短剧"
 			}
 		},
@@ -517,6 +517,66 @@
 				}
 			]
 		},
+
+		{
+			"root": "pages/drama",
+			"pages": [{
+					"path": "play",
+					"style": {
+						"navigationBarTitleText": "播放"
+					},
+					"meta": {
+						"sync": true,
+						"title": "播放",
+						"group": "短剧"
+					}
+				},
+				{
+					"path": "hot",
+					"style": {
+						"navigationBarTitleText": "热门短剧"
+					},
+					"meta": {
+						"sync": true,
+						"title": "热门短剧",
+						"group": "短剧"
+					}
+				},
+				{
+					"path": "follow",
+					"style": {
+						"navigationBarTitleText": "我的追剧"
+					},
+					"meta": {
+						"sync": true,
+						"title": "我的追剧",
+						"group": "短剧"
+					}
+				},
+				{
+					"path": "vip",
+					"style": {
+						"navigationBarTitleText": "VIP 权益"
+					},
+					"meta": {
+						"sync": true,
+						"title": "VIP 权益",
+						"group": "短剧"
+					}
+				},
+				{
+					"path": "about",
+					"style": {
+						"navigationBarTitleText": "关于"
+					},
+					"meta": {
+						"sync": true,
+						"title": "关于",
+						"group": "短剧"
+					}
+				}
+			]
+		},
 		{
 			"root": "pages/coupon",
 			"pages": [{
@@ -692,9 +752,6 @@
             {
 				"pagePath": "pages/index/category"
             },
-			{
-				"pagePath": "pages/index/cart"
-			},
 			{
 				"pagePath": "pages/index/user"
 			}

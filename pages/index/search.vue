@@ -1,119 +1,299 @@
-<!-- 搜索界面 -->
 <template>
-  <s-layout :bgStyle="{ color: '#FFF' }" class="set-wrap" title="搜索">
-    <view class="ss-p-x-24">
-      <view class="ss-flex ss-col-center">
-        <uni-search-bar
-          class="ss-flex-1"
-          radius="33"
-          placeholder="请输入关键字"
-          cancelButton="none"
-          :focus="true"
-          @confirm="onSearch($event.value)"
-        />
+  <view class="search-page">
+    <view class="header">
+      <view class="back" @tap="goBack">
+        <uni-icons type="back" size="23" color="#222" />
       </view>
-      <view class="ss-flex ss-row-between ss-col-center">
-        <view class="serach-history">搜索历史</view>
-        <button class="clean-history ss-reset-button" @tap="onDelete"> 清除搜索历史 </button>
-      </view>
-      <view class="ss-flex ss-col-center ss-row-left ss-flex-wrap">
-        <button
-          class="history-btn ss-reset-button"
-          @tap="onSearch(item)"
-          v-for="(item, index) in state.historyList"
-          :key="index"
-        >
-          {{ item }}
-        </button>
-      </view>
+      <uni-search-bar
+        class="search-input"
+        radius="33"
+        placeholder="搜索短剧名称、题材"
+        cancelButton="none"
+        :focus="true"
+        v-model="keyword"
+        @confirm="onSearch($event.value)"
+      />
     </view>
-  </s-layout>
+
+    <scroll-view scroll-y class="page-scroll">
+      <view v-if="keyword && resultList.length > 0" class="result-list">
+        <view v-for="drama in resultList" :key="drama.id" class="result-item" @tap="goPlay(drama)">
+          <view class="poster" :style="{ background: drama.cover }">
+            <view class="poster-title">{{ drama.title }}</view>
+          </view>
+          <view class="result-info">
+            <view class="result-title ss-line-1">{{ drama.title }}</view>
+            <view class="result-desc ss-line-2">{{ drama.desc }}</view>
+            <view class="tag-row">
+              <text v-for="tag in drama.tags" :key="tag">{{ tag }}</text>
+            </view>
+          </view>
+        </view>
+      </view>
+
+      <view v-else-if="keyword" class="empty-state">
+        <view class="empty-title">没有找到相关短剧</view>
+        <view class="empty-desc">换个剧名、题材或关键词试试。</view>
+      </view>
+
+      <view v-else class="history-section">
+        <view class="history-head">
+          <view class="section-title">搜索历史</view>
+          <button class="clean-history" @tap="onDelete">清除</button>
+        </view>
+        <view class="history-list">
+          <button v-for="item in historyList" :key="item" class="history-btn" @tap="onSearch(item)">
+            {{ item }}
+          </button>
+        </view>
+
+        <view class="section-title recommend-title">热门搜索</view>
+        <view class="history-list">
+          <button
+            v-for="item in hotKeywords"
+            :key="item"
+            class="history-btn hot"
+            @tap="onSearch(item)"
+          >
+            {{ item }}
+          </button>
+        </view>
+      </view>
+    </scroll-view>
+  </view>
 </template>
 
 <script setup>
-  import { reactive } from 'vue';
-  import sheep from '@/sheep';
+  import { computed, ref } from 'vue';
   import { onLoad } from '@dcloudio/uni-app';
+  import { DRAMAS, saveHistory } from '@/pages/drama/data';
 
-  const state = reactive({
-    historyList: [],
+  const STORAGE_KEY = 'skit_drama_search_history_v1';
+  const keyword = ref('');
+  const historyList = ref([]);
+  const hotKeywords = ['重生', '甜宠', '商战', '悬疑', '古装'];
+
+  const resultList = computed(() => {
+    const word = keyword.value.trim().toLowerCase();
+    if (!word) {
+      return [];
+    }
+    return DRAMAS.filter((drama) => {
+      const text = `${drama.title} ${drama.category} ${drama.tags.join(' ')} ${
+        drama.desc
+      }`.toLowerCase();
+      return text.includes(word);
+    });
   });
 
-  // 搜索
-  function onSearch(keyword) {
-    if (!keyword) {
+  function onSearch(value) {
+    const word = String(value || '').trim();
+    if (!word) {
       return;
     }
-    saveSearchHistory(keyword);
-    // 前往商品列表（带搜索条件）
-    sheep.$router.go('/pages/goods/list', { keyword });
+    keyword.value = word;
+    saveSearchHistory(word);
   }
 
-  // 保存搜索历史
-  function saveSearchHistory(keyword) {
-    // 如果关键词在搜索历史中，则把此关键词先移除
-    if (state.historyList.includes(keyword)) {
-      state.historyList.splice(state.historyList.indexOf(keyword), 1);
-    }
-    // 置顶关键词
-    state.historyList.unshift(keyword);
-
-    // 最多保留 10 条记录
-    if (state.historyList.length >= 10) {
-      state.historyList.length = 10;
-    }
-    uni.setStorageSync('searchHistory', state.historyList);
+  function saveSearchHistory(word) {
+    historyList.value = historyList.value.filter((item) => item !== word);
+    historyList.value.unshift(word);
+    historyList.value = historyList.value.slice(0, 10);
+    uni.setStorageSync(STORAGE_KEY, historyList.value);
   }
 
   function onDelete() {
-    uni.showModal({
-      title: '提示',
-      content: '确认清除搜索历史吗？',
-      success: function (res) {
-        if (res.confirm) {
-          state.historyTag = [];
-          uni.removeStorageSync('searchHistory');
-        }
-      },
+    historyList.value = [];
+    uni.removeStorageSync(STORAGE_KEY);
+  }
+
+  function goBack() {
+    uni.navigateBack();
+  }
+
+  function goPlay(drama) {
+    saveHistory(drama.id, 1);
+    uni.navigateTo({
+      url: `/pages/drama/play?id=${encodeURIComponent(drama.id)}&episode=1`,
     });
   }
 
   onLoad(() => {
-    state.historyList = uni.getStorageSync('searchHistory') || [];
+    historyList.value = uni.getStorageSync(STORAGE_KEY) || [];
   });
 </script>
 
 <style lang="scss" scoped>
-  .serach-title {
-    font-size: 30rpx;
-    font-weight: 500;
-    color: #333333;
+  .search-page {
+    min-height: 100vh;
+    background: #f6f6f6;
+    color: #202020;
   }
 
-  .uni-searchbar {
-    padding-left: 0;
+  .header {
+    display: flex;
+    align-items: center;
+    padding: 86rpx 18rpx 18rpx;
+    background: #fff;
   }
 
-  .serach-history {
-    font-weight: bold;
-    color: #333333;
-    font-size: 30rpx;
+  .back {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 64rpx;
+    height: 64rpx;
+    margin-right: 8rpx;
+    border-radius: 50%;
+    background: #f3f3f3;
+  }
+
+  .search-input {
+    flex: 1;
+  }
+
+  .page-scroll {
+    height: calc(100vh - 168rpx);
+  }
+
+  .history-section,
+  .result-list {
+    padding: 24rpx;
+  }
+
+  .history-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .section-title {
+    font-size: 32rpx;
+    font-weight: 800;
   }
 
   .clean-history {
-    font-weight: 500;
-    color: #999999;
-    font-size: 28rpx;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #999;
+    font-size: 24rpx;
+    line-height: 34rpx;
+  }
+
+  .history-list {
+    display: flex;
+    flex-wrap: wrap;
+    margin-top: 18rpx;
   }
 
   .history-btn {
-    padding: 0 38rpx;
-    height: 60rpx;
-    background: #f5f6f8;
-    border-radius: 30rpx;
-    font-size: 28rpx;
-    color: #333333;
-    max-width: 690rpx;
-    margin: 0 20rpx 20rpx 0;
+    height: 62rpx;
+    margin: 0 16rpx 16rpx 0;
+    padding: 0 26rpx;
+    border: 0;
+    border-radius: 32rpx;
+    background: #fff;
+    color: #333;
+    font-size: 26rpx;
+    line-height: 62rpx;
+  }
+
+  .history-btn.hot {
+    background: #fff3ed;
+    color: #ff5a1f;
+  }
+
+  .recommend-title {
+    margin-top: 34rpx;
+  }
+
+  .result-item {
+    display: flex;
+    margin-bottom: 18rpx;
+    padding: 18rpx;
+    border-radius: 18rpx;
+    background: #fff;
+  }
+
+  .poster {
+    position: relative;
+    flex-shrink: 0;
+    width: 138rpx;
+    height: 184rpx;
+    overflow: hidden;
+    border-radius: 12rpx;
+  }
+
+  .poster::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.62));
+  }
+
+  .poster-title {
+    position: absolute;
+    left: 10rpx;
+    right: 10rpx;
+    bottom: 12rpx;
+    z-index: 1;
+    color: #fff;
+    font-size: 22rpx;
+    font-weight: 700;
+    line-height: 28rpx;
+  }
+
+  .result-info {
+    flex: 1;
+    min-width: 0;
+    margin-left: 20rpx;
+  }
+
+  .result-title {
+    font-size: 31rpx;
+    font-weight: 800;
+  }
+
+  .result-desc {
+    margin-top: 10rpx;
+    color: #777;
+    font-size: 25rpx;
+    line-height: 36rpx;
+  }
+
+  .tag-row {
+    display: flex;
+    flex-wrap: wrap;
+    margin-top: 12rpx;
+  }
+
+  .tag-row text {
+    margin: 0 10rpx 10rpx 0;
+    padding: 6rpx 12rpx;
+    border-radius: 18rpx;
+    background: #fff3ed;
+    color: #ff5a1f;
+    font-size: 22rpx;
+  }
+
+  .empty-state {
+    margin: 170rpx 24rpx 0;
+    padding: 58rpx 34rpx;
+    border-radius: 18rpx;
+    background: #fff;
+    text-align: center;
+  }
+
+  .empty-title {
+    font-size: 34rpx;
+    font-weight: 800;
+  }
+
+  .empty-desc {
+    margin-top: 12rpx;
+    color: #888;
+    font-size: 26rpx;
   }
 </style>

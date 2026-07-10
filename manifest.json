@@ -28,6 +28,9 @@
       "VideoPlayer": {},
       "OAuth": {}
     },
+    "nativePlugins": {
+      "SkitPangleDrama": {}
+    },
     "distribute": {
       "android": {
         "permissions": [
@@ -64,7 +67,7 @@
           "<uses-permission android:name=\"android.permission.WRITE_SMS\"/>",
           "<uses-permission android:name=\"android.permission.RECEIVE_USER_PRESENT\"/>"
         ],
-        "minSdkVersion": 21,
+        "minSdkVersion": 24,
         "schemes": "skit-saas"
       },
       "ios": {
@@ -201,8 +204,8 @@
   "h5": {
     "template": "index.html",
     "router": {
-      "mode": "history",
-      "base": "/"
+      "mode": "hash",
+      "base": "./"
     },
     "sdkConfigs": {
       "maps": {}

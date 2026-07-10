@@ -1,247 +1,238 @@
-<!-- 商品分类列表 -->
 <template>
-  <s-layout :bgStyle="{ color: '#fff' }" tabbar="/pages/index/category" title="分类">
-    <view class="s-category">
-      <view class="three-level-wrap ss-flex ss-col-top">
-        <!-- 商品分类（左） -->
-        <view class="side-menu-wrap" :style="[{ top: Number(statusBarHeight + 88) + 'rpx' }]">
-          <scroll-view scroll-y :style="[{ height: pageHeight + 'px' }]">
-            <view
-              class="menu-item ss-flex"
-              v-for="(item, index) in state.categoryList"
-              :key="item.id"
-              :class="[{ 'menu-item-active': index === state.activeMenu }]"
-              @tap="onMenu(index)"
-            >
-              <view class="menu-title ss-line-1">
-                {{ item.name }}
-              </view>
-            </view>
-          </scroll-view>
-        </view>
-        <!-- 商品分类（右） -->
-        <view class="goods-list-box" v-if="state.categoryList?.length">
-          <scroll-view scroll-y :style="[{ height: pageHeight + 'px' }]">
-            <image
-              v-if="state.categoryList[state.activeMenu].picUrl"
-              class="banner-img"
-              :src="sheep.$url.cdn(state.categoryList[state.activeMenu].picUrl)"
-              mode="widthFix"
-            />
-            <first-one v-if="state.style === 'first_one'" :pagination="state.pagination" />
-            <first-two v-if="state.style === 'first_two'" :pagination="state.pagination" />
-            <second-one
-              v-if="state.style === 'second_one'"
-              :data="state.categoryList"
-              :activeMenu="state.activeMenu"
-            />
-            <uni-load-more
-              v-if="
-                (state.style === 'first_one' || state.style === 'first_two') &&
-                state.pagination.total > 0
-              "
-              :status="state.loadStatus"
-              :content-text="{
-                contentdown: '点击查看更多',
-              }"
-              @tap="loadMore"
-            />
-          </scroll-view>
-        </view>
+  <view class="theater-page">
+    <view class="header">
+      <view>
+        <view class="title">剧场</view>
+        <view class="subtitle">热播短剧和分类剧库</view>
+      </view>
+      <view class="hot-link" @tap="goHot">
+        <uni-icons type="fire-filled" size="18" color="#ff5a1f" />
+        <text>热榜</text>
       </view>
     </view>
-  </s-layout>
+
+    <scroll-view scroll-y class="page-scroll">
+      <view class="hot-section">
+        <view class="section-head">
+          <view class="section-title">热播短剧</view>
+          <view class="section-more" @tap="goHot">更多</view>
+        </view>
+        <scroll-view scroll-x class="horizontal-scroll" :show-scrollbar="false">
+          <view class="horizontal-list">
+            <DramaCard
+              v-for="drama in hotList"
+              :key="drama.id"
+              mode="compact"
+              :drama="drama"
+              @select="goPlay(drama, 1)"
+            />
+          </view>
+        </scroll-view>
+      </view>
+
+      <view class="category-tabs">
+        <view
+          v-for="category in categories"
+          :key="category"
+          class="category-tab"
+          :class="{ active: activeCategory === category }"
+          @tap="activeCategory = category"
+        >
+          {{ category }}
+        </view>
+      </view>
+
+      <view class="drama-grid">
+        <DramaCard
+          v-for="drama in filteredList"
+          :key="drama.id"
+          :drama="drama"
+          @select="goPlay(drama, 1)"
+        />
+      </view>
+    </scroll-view>
+
+    <DramaTabbar active="theater" />
+  </view>
 </template>
 
 <script setup>
-  import secondOne from './components/second-one.vue';
-  import firstOne from './components/first-one.vue';
-  import firstTwo from './components/first-two.vue';
-  import sheep from '@/sheep';
-  import CategoryApi from '@/sheep/api/product/category';
-  import SpuApi from '@/sheep/api/product/spu';
-  import { onLoad, onShow } from '@dcloudio/uni-app';
-  import { computed, reactive } from 'vue';
-  import { concat } from 'lodash-es';
-  import { handleTree } from '@/sheep/helper/utils';
+  import { computed, ref } from 'vue';
+  import { onShow } from '@dcloudio/uni-app';
+  import DramaCard from '@/pages/drama/components/DramaCard.vue';
+  import DramaTabbar from '@/pages/drama/components/DramaTabbar.vue';
+  import {
+    DRAMA_CATEGORIES,
+    getDramasByCategory,
+    getHotDramas,
+    saveHistory,
+  } from '@/pages/drama/data';
+  import { getPangleDramaList } from '@/pages/drama/services/pangle-content';
 
-  const state = reactive({
-    style: 'second_one', // first_one（一级 - 样式一）, first_two（二级 - 样式二）, second_one（二级）
-    categoryList: [], // 商品分类树
-    activeMenu: 0, // 选中的一级菜单，在 categoryList 的下标
-
-    pagination: {
-      // 商品分页
-      list: [], // 商品列表
-      total: [], // 商品总数
-      pageNo: 1,
-      pageSize: 6,
-    },
-    loadStatus: '',
+  uni.hideTabBar({
+    fail: () => {},
   });
 
-  const { safeArea } = sheep.$platform.device;
-  const pageHeight = computed(() => safeArea.height - 44 - 50);
-  const statusBarHeight = sheep.$platform.device.statusBarHeight * 2;
-
-  // 加载商品分类
-  async function getList() {
-    const { code, data } = await CategoryApi.getCategoryList();
-    if (code !== 0) {
-      return;
+  const categories = DRAMA_CATEGORIES;
+  const activeCategory = ref('全部');
+  const sdkList = ref([]);
+  const hotList = ref(getHotDramas(6));
+  const filteredList = computed(() => {
+    if (sdkList.value.length > 0) {
+      if (!activeCategory.value || activeCategory.value === '全部' || activeCategory.value === '热播') {
+        return sdkList.value;
+      }
+      return sdkList.value.filter((item) => item.category === activeCategory.value);
     }
-    state.categoryList = handleTree(data);
+    return getDramasByCategory(activeCategory.value);
+  });
+
+  async function refreshPangleContent() {
+    try {
+      const result = await getPangleDramaList({ page: 1, pageSize: 36, category: activeCategory.value });
+      if (result.skipped || result.list.length === 0) {
+        return;
+      }
+      sdkList.value = result.list;
+      hotList.value = result.list.slice(0, 6);
+    } catch (error) {
+      console.warn('[drama] Pangle theater list unavailable:', error);
+    }
   }
 
-  // 选中菜单
-  const onMenu = (val) => {
-    state.activeMenu = val;
-    if (state.style === 'first_one' || state.style === 'first_two') {
-      state.pagination.pageNo = 1;
-      state.pagination.list = [];
-      state.pagination.total = 0;
-      getGoodsList();
-    }
-  };
-
-  // 加载商品列表
-  async function getGoodsList() {
-    // 加载列表
-    state.loadStatus = 'loading';
-    const res = await SpuApi.getSpuPage({
-      categoryId: state.categoryList[state.activeMenu].id,
-      pageNo: state.pagination.pageNo,
-      pageSize: state.pagination.pageSize,
+  function goPlay(drama, episode = 1) {
+    saveHistory(drama.id, episode);
+    uni.navigateTo({
+      url: `/pages/drama/play?id=${encodeURIComponent(drama.id)}&episode=${episode}`,
     });
-    if (res.code !== 0) {
-      return;
-    }
-    // 合并列表
-    state.pagination.list = concat(state.pagination.list, res.data.list);
-    state.pagination.total = res.data.total;
-    state.loadStatus = state.pagination.list.length < state.pagination.total ? 'more' : 'noMore';
   }
 
-  // 加载更多商品
-  function loadMore() {
-    if (state.loadStatus === 'noMore') {
-      return;
+  function goHot() {
+    uni.navigateTo({
+      url: '/pages/drama/hot',
+    });
+  }
+
+  onShow(() => {
+    const intent = uni.getStorageSync('skit_drama_category_intent');
+    if (intent && categories.includes(intent)) {
+      activeCategory.value = intent;
+      uni.removeStorageSync('skit_drama_category_intent');
     }
-    state.pagination.pageNo++;
-    getGoodsList();
-  }
-  function initMenuIndex() {
-    // TODO @AI：可优化：增加一个 params.id 的兼容
-    const appStore = sheep.$store('app');
-    // 处理 tabbar 传参的情况
-    const tabbarParams = appStore.paramsForTabbar || {};
-    const id = tabbarParams.id;
-    appStore.clearParamsForTabbar(); // 使用完后清理，避免影响下次跳转
-    // 首页点击分类的处理：查找满足条件的分类
-    const foundCategory = state.categoryList.find((category) => category.id === Number(id));
-    // 如果找到则调用 onMenu 自动勾选相应分类，否则调用 onMenu(0) 勾选第一个分类
-    onMenu(foundCategory ? state.categoryList.indexOf(foundCategory) : 0);
-  }
-  onShow(async () => {
-    await getList();
-    initMenuIndex();
+    refreshPangleContent();
   });
-
-  function handleScrollToLower() {
-    loadMore();
-  }
 </script>
 
 <style lang="scss" scoped>
-  .s-category {
-    :deep() {
-      .side-menu-wrap {
-        width: 200rpx;
-        height: 100%;
-        padding-left: 12rpx;
-        background-color: #f6f6f6;
-        position: fixed;
-        left: 0;
+  .theater-page {
+    min-height: 100vh;
+    background: #f6f6f6;
+    color: #1f1f1f;
+  }
 
-        .menu-item {
-          width: 100%;
-          height: 88rpx;
-          position: relative;
-          transition: all linear 0.2s;
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 92rpx 28rpx 22rpx;
+    background: #fff;
+  }
 
-          .menu-title {
-            line-height: 32rpx;
-            font-size: 30rpx;
-            font-weight: 400;
-            color: #333;
-            margin-left: 28rpx;
-            position: relative;
-            z-index: 0;
+  .title {
+    color: #141414;
+    font-size: 42rpx;
+    font-weight: 800;
+    line-height: 50rpx;
+  }
 
-            &::before {
-              content: '';
-              width: 64rpx;
-              height: 12rpx;
-              background: linear-gradient(
-                90deg,
-                var(--ui-BG-Main-gradient),
-                var(--ui-BG-Main-light)
-              ) !important;
-              position: absolute;
-              left: -64rpx;
-              bottom: 0;
-              z-index: -1;
-              transition: all linear 0.2s;
-            }
-          }
+  .subtitle {
+    margin-top: 6rpx;
+    color: #8c8c8c;
+    font-size: 24rpx;
+  }
 
-          &.menu-item-active {
-            background-color: #fff;
-            border-radius: 20rpx 0 0 20rpx;
+  .hot-link {
+    display: flex;
+    align-items: center;
+    height: 60rpx;
+    padding: 0 20rpx;
+    border-radius: 34rpx;
+    background: #fff3ed;
+    color: #ff5a1f;
+    font-size: 24rpx;
+    font-weight: 700;
+  }
 
-            &::before {
-              content: '';
-              position: absolute;
-              right: 0;
-              bottom: -20rpx;
-              width: 20rpx;
-              height: 20rpx;
-              background: radial-gradient(circle at 0 100%, transparent 20rpx, #fff 0);
-            }
+  .hot-link text {
+    margin-left: 6rpx;
+  }
 
-            &::after {
-              content: '';
-              position: absolute;
-              top: -20rpx;
-              right: 0;
-              width: 20rpx;
-              height: 20rpx;
-              background: radial-gradient(circle at 0% 0%, transparent 20rpx, #fff 0);
-            }
+  .page-scroll {
+    height: calc(100vh - 164rpx);
+  }
 
-            .menu-title {
-              font-weight: 600;
+  .hot-section {
+    padding: 26rpx 24rpx;
+    background: #fff;
+  }
 
-              &::before {
-                left: 0;
-              }
-            }
-          }
-        }
-      }
+  .section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 18rpx;
+  }
 
-      .goods-list-box {
-        background-color: #fff;
-        width: calc(100vw - 200rpx);
-        padding: 10px;
-        margin-left: 200rpx;
-      }
+  .section-title {
+    font-size: 34rpx;
+    font-weight: 800;
+  }
 
-      .banner-img {
-        width: calc(100vw - 130px);
-        border-radius: 5px;
-        margin-bottom: 20rpx;
-      }
-    }
+  .section-more {
+    color: #999;
+    font-size: 24rpx;
+  }
+
+  .horizontal-scroll {
+    width: 100%;
+    white-space: nowrap;
+  }
+
+  .horizontal-list {
+    display: flex;
+  }
+
+  .category-tabs {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    display: flex;
+    overflow-x: auto;
+    padding: 22rpx 24rpx 14rpx;
+    background: #f6f6f6;
+    white-space: nowrap;
+  }
+
+  .category-tab {
+    flex-shrink: 0;
+    margin-right: 16rpx;
+    padding: 14rpx 24rpx;
+    border-radius: 32rpx;
+    background: #fff;
+    color: #666;
+    font-size: 26rpx;
+  }
+
+  .category-tab.active {
+    background: #1f1f1f;
+    color: #fff;
+    font-weight: 700;
+  }
+
+  .drama-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 28rpx 18rpx;
+    padding: 10rpx 24rpx 156rpx;
   }
 </style>
