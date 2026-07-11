@@ -4,7 +4,7 @@ const UserApi = {
   // 获得基本信息
   getUserInfo: () => {
     return request({
-      url: '/member/user/get',
+      url: '/skit/member/user/profile',
       method: 'GET',
       custom: {
         showLoading: false,
@@ -21,7 +21,7 @@ const UserApi = {
       custom: {
         auth: true,
         showSuccess: true,
-        successMsg: '更新成功'
+        successMsg: '更新成功',
       },
     });
   },
@@ -34,7 +34,7 @@ const UserApi = {
       custom: {
         loadingMsg: '验证中',
         showSuccess: true,
-        successMsg: '修改成功'
+        successMsg: '修改成功',
       },
     });
   },
@@ -44,12 +44,12 @@ const UserApi = {
       url: '/member/user/update-mobile-by-weixin',
       method: 'PUT',
       data: {
-        code
+        code,
       },
       custom: {
         showSuccess: true,
         loadingMsg: '获取中',
-        successMsg: '修改成功'
+        successMsg: '修改成功',
       },
     });
   },
@@ -62,7 +62,7 @@ const UserApi = {
       custom: {
         loadingMsg: '验证中',
         showSuccess: true,
-        successMsg: '修改成功'
+        successMsg: '修改成功',
       },
     });
   },
@@ -75,11 +75,10 @@ const UserApi = {
       custom: {
         loadingMsg: '验证中',
         showSuccess: true,
-        successMsg: '修改成功'
-      }
+        successMsg: '修改成功',
+      },
     });
   },
-
 };
 
 export default UserApi;

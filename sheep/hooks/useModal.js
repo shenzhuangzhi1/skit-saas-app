@@ -6,7 +6,17 @@ import test from '@/sheep/helper/test.js';
 import AuthUtil from '@/sheep/api/member/auth';
 
 // 打开授权弹框
-export function showAuthModal(type = 'smsLogin') {
+export function showAuthModal(type = 'skitAuth') {
+  // 短剧会员必须在显式注册页完成邀请码与租户绑定，默认授权入口不再走旧商城的
+  // “短信登录即自动注册”流程。
+  if (type === 'skitAuth') {
+    const pages = getCurrentPages();
+    const currentRoute = pages[pages.length - 1]?.route || '';
+    if (currentRoute !== 'pages/auth/index') {
+      uni.navigateTo({ url: '/pages/auth/index?mode=login' });
+    }
+    return;
+  }
   const modal = $store('modal');
   // #ifdef H5
   closeAuthModal();

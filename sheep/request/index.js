@@ -28,6 +28,8 @@ const options = {
   auth: false,
   // 是否传递 token
   isToken: true,
+  // 是否传递租户编号；邀请解析等公开接口需要关闭
+  tenant: true,
 };
 
 // Loading全局实例
@@ -57,7 +59,8 @@ const http = new Request({
     platform: $platform.name,
   },
   // #ifdef APP-PLUS
-  sslVerify: false,
+  // Never bypass TLS certificate validation for login credentials or bearer tokens.
+  sslVerify: true,
   // #endif
   // #ifdef H5
   // 跨域请求时是否携带凭证（cookies）仅H5支持（HBuilderX 2.6.15+）
@@ -93,12 +96,16 @@ http.interceptors.request.use(
     // 增加 token 令牌、terminal 终端、tenant 租户的请求头
     const token = config.custom.isToken ? getAccessToken() : undefined;
     if (token) {
-      config.header['Authorization'] = token;
+      config.header['Authorization'] = getAuthorizationHeader(token);
     }
     config.header['terminal'] = getTerminal();
 
     config.header['Accept'] = '*/*';
-    config.header['tenant-id'] = getTenantId();
+    if (config.custom.tenant !== false) {
+      config.header['tenant-id'] = getTenantId();
+    } else {
+      delete config.header['tenant-id'];
+    }
     return config;
   },
   (error) => {
@@ -112,8 +119,19 @@ http.interceptors.request.use(
 http.interceptors.response.use(
   (response) => {
     // 约定：如果是 /auth/ 下的 URL 地址，并且返回了 accessToken 说明是登录相关的接口，则自动设置登陆令牌
-    if (response.config.url.indexOf('/member/auth/') >= 0 && response.data?.data?.accessToken) {
-      $store('user').setToken(response.data.data.accessToken, response.data.data.refreshToken);
+    if (
+      response.config.url.indexOf('/skit/member/auth/') >= 0 &&
+      response.data?.data?.accessToken
+    ) {
+      const authData = response.data.data;
+      const userStore = $store('user');
+
+      // 登录结果决定实际租户。必须先切换租户，再保存 token；setToken 会立即拉取用户资料。
+      if (authData.tenantId !== undefined && authData.tenantId !== null) {
+        uni.setStorageSync('tenant-id', authData.tenantId);
+      }
+      userStore.applyAuthResult(authData);
+      userStore.setToken(authData.accessToken, authData.refreshToken);
     }
 
     // 自定处理【loading 加载中】：如果需要显示 loading，则关闭 loading
@@ -224,7 +242,7 @@ let requestList = []; // 请求队列
 let isRefreshToken = false; // 是否正在刷新中
 const refreshToken = async (config) => {
   // 如果当前已经是 refresh-token 的 URL 地址，并且还是 401 错误，说明是刷新令牌失败了，直接返回 Promise.reject(error)
-  if (config.url.indexOf('/member/auth/refresh-token') >= 0) {
+  if (config.url.indexOf('/skit/member/auth/refresh-token') >= 0) {
     return Promise.reject('error');
   }
 
@@ -247,7 +265,7 @@ const refreshToken = async (config) => {
         throw new Error('刷新令牌失败');
       }
       // 2.1 刷新成功，则回放队列的请求 + 当前请求
-      config.header.Authorization = 'Bearer ' + getAccessToken();
+      config.header.Authorization = getAuthorizationHeader(getAccessToken());
       requestList.forEach((cb) => {
         cb();
       });
@@ -269,7 +287,7 @@ const refreshToken = async (config) => {
     // 添加到队列，等待刷新获取到新的令牌
     return new Promise((resolve) => {
       requestList.push(() => {
-        config.header.Authorization = 'Bearer ' + getAccessToken(); // 让每个请求携带自定义token 请根据实际情况自行修改
+        config.header.Authorization = getAuthorizationHeader(getAccessToken());
         resolve(request(config));
       });
     });
@@ -281,12 +299,14 @@ const refreshToken = async (config) => {
  */
 const handleAuthorized = () => {
   const userStore = $store('user');
-  userStore.logout(true);
+  const wasLogin = userStore.isLogin;
+  // Token 已失效时只清理本地状态，避免 logout 接口再次 401 形成递归刷新。
+  userStore.logout(false);
   showAuthModal();
   // 登录超时
   return Promise.reject({
     code: 401,
-    msg: userStore.isLogin ? '您的登陆已过期' : '请先登录',
+    msg: wasLogin ? '您的登陆已过期' : '请先登录',
   });
 };
 
@@ -298,6 +318,11 @@ export const getAccessToken = () => {
 /** 获得刷新令牌 */
 export const getRefreshToken = () => {
   return uni.getStorageSync('refresh-token');
+};
+
+const getAuthorizationHeader = (token) => {
+  const value = String(token || '');
+  return value.startsWith('Bearer ') ? value : `Bearer ${value}`;
 };
 
 /** 获得租户编号 */

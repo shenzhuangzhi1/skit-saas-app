@@ -4,13 +4,31 @@ const AuthUtil = {
   // 使用手机 + 密码登录
   login: (data) => {
     return request({
-      url: '/member/auth/login',
+      url: '/skit/member/auth/login',
       method: 'POST',
       data,
       custom: {
+        isToken: false,
+        // 后端按 tenantCode 或全局唯一手机号解析租户，不能携带旧租户上下文
+        tenant: false,
         showSuccess: true,
         loadingMsg: '登录中',
         successMsg: '登录成功',
+      },
+    });
+  },
+  // 使用邀请码注册账号
+  register: (data) => {
+    return request({
+      url: '/skit/member/auth/register',
+      method: 'POST',
+      data,
+      custom: {
+        isToken: false,
+        tenant: false,
+        showSuccess: true,
+        loadingMsg: '注册中',
+        successMsg: '注册成功',
       },
     });
   },
@@ -46,19 +64,24 @@ const AuthUtil = {
   // 登出系统
   logout: () => {
     return request({
-      url: '/member/auth/logout',
+      url: '/skit/member/auth/logout',
       method: 'POST',
+      custom: {
+        showLoading: false,
+        showError: false,
+      },
     });
   },
   // 刷新令牌
   refreshToken: (refreshToken) => {
     return request({
-      url: '/member/auth/refresh-token',
+      url: '/skit/member/auth/refresh-token',
       method: 'POST',
       params: {
         refreshToken,
       },
       custom: {
+        isToken: false,
         showLoading: false, // 不用加载中
         showError: false, // 不展示错误提示
       },
