@@ -4,10 +4,13 @@ import android.app.Activity;
 import android.content.Intent;
 import android.util.Log;
 
-import com.bytedance.sdk.dp.DPDrama;
-import com.bytedance.sdk.dp.DPSdk;
-import com.bytedance.sdk.dp.DPSdkConfig;
-import com.bytedance.sdk.dp.IDPWidgetFactory;
+import com.bytedance.sdk.djx.DJXSdk;
+import com.bytedance.sdk.djx.DJXSdkConfig;
+import com.bytedance.sdk.djx.IDJXService;
+import com.bytedance.sdk.djx.model.DJXDrama;
+import com.bytedance.sdk.djx.model.DJXError;
+import com.bytedance.sdk.djx.model.DJXImage;
+import com.bytedance.sdk.djx.model.DJXOthers;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -38,22 +41,54 @@ public class SkitPangleDramaModule extends UniModule {
         settingFile = optString(options, "settingFile", DEFAULT_SETTING_FILE);
         boolean debug = options != null && options.optBoolean("debug", false);
 
+        PangleAdSdkInitializer.ensureStarted(activity.getApplicationContext(), debug, settingFile,
+                new PangleAdSdkInitializer.Callback() {
+            @Override
+            public void onSuccess() {
+                activity.runOnUiThread(() -> startContentSdk(options, callback, debug));
+            }
+
+            @Override
+            public void onFailure(int code, String message) {
+                fail(callback, code, message);
+            }
+        });
+    }
+
+    private void startContentSdk(JSONObject options, UniJSCallback callback, boolean debug) {
+        Activity activity = getActivity();
+        if (activity == null) {
+            fail(callback, -1, "Activity unavailable");
+            return;
+        }
         try {
             if (!initialized) {
-                DPSdkConfig config = new DPSdkConfig.Builder().debug(debug).build();
-                DPSdk.init(activity.getApplication(), settingFile, config);
+                DJXSdkConfig config = new DJXSdkConfig.Builder()
+                        .debug(debug)
+                        .build();
+                DJXSdk.init(activity.getApplicationContext(), settingFile, config);
                 initialized = true;
             }
-            if (DPSdk.isStartSuccess()) {
-                success(callback, mapOf("started", true, "settingFile", settingFile));
+            if (DJXSdk.isStartSuccess()) {
+                success(callback, mapOf(
+                        "success", true,
+                        "started", true,
+                        "settingFile", settingFile,
+                        "version", DJXSdk.getVersion()
+                ));
                 return;
             }
-            DPSdk.start((success, message) -> {
-                Log.d(TAG, "start result: " + success + " " + message);
+            DJXSdk.start((success, message, error) -> {
+                Log.d(TAG, "start result: " + success + " " + message + " " + error);
                 if (success) {
-                    success(callback, mapOf("started", true, "settingFile", settingFile));
+                    success(callback, mapOf(
+                            "success", true,
+                            "started", true,
+                            "settingFile", settingFile,
+                            "version", DJXSdk.getVersion()
+                    ));
                 } else {
-                    fail(callback, -2, message);
+                    fail(callback, errorCode(error, -2), errorMessage(error, message));
                 }
             });
         } catch (Throwable error) {
@@ -63,7 +98,7 @@ public class SkitPangleDramaModule extends UniModule {
 
     @UniJSMethod(uiThread = true)
     public void list(JSONObject options, UniJSCallback callback) {
-        runWhenStarted(options, callback, () -> DPSdk.factory().requestAllDrama(
+        runWhenStarted(options, callback, () -> DJXSdk.service().requestAllDrama(
                 optInt(options, "page", 1),
                 optInt(options, "count", 20),
                 options == null || options.optBoolean("order", true),
@@ -72,8 +107,17 @@ public class SkitPangleDramaModule extends UniModule {
     }
 
     @UniJSMethod(uiThread = true)
+    public void recommend(JSONObject options, UniJSCallback callback) {
+        runWhenStarted(options, callback, () -> DJXSdk.service().requestAllDramaByRecommend(
+                optInt(options, "page", 1),
+                optInt(options, "count", 20),
+                dramaCallback(callback)
+        ));
+    }
+
+    @UniJSMethod(uiThread = true)
     public void history(JSONObject options, UniJSCallback callback) {
-        runWhenStarted(options, callback, () -> DPSdk.factory().getDramaHistory(
+        runWhenStarted(options, callback, () -> DJXSdk.service().getDramaHistory(
                 optInt(options, "page", 1),
                 optInt(options, "count", 20),
                 dramaCallback(callback)
@@ -82,16 +126,20 @@ public class SkitPangleDramaModule extends UniModule {
 
     @UniJSMethod(uiThread = true)
     public void categoryList(JSONObject options, UniJSCallback callback) {
-        runWhenStarted(options, callback, () -> DPSdk.factory().requestDramaCategoryList(
-                new IDPWidgetFactory.DramaCategoryCallback() {
+        runWhenStarted(options, callback, () -> DJXSdk.service().requestDramaCategoryList(
+                new IDJXService.IDJXCallback<List<String>>() {
                     @Override
-                    public void onError(int code, String message) {
-                        fail(callback, code, message);
+                    public void onSuccess(List<String> list, DJXOthers others) {
+                        success(callback, mapOf(
+                                "success", true,
+                                "list", list == null ? new ArrayList<String>() : list,
+                                "extra", othersToMap(others)
+                        ));
                     }
 
                     @Override
-                    public void onSuccess(List<String> list) {
-                        success(callback, mapOf("list", list));
+                    public void onError(DJXError error) {
+                        fail(callback, errorCode(error, -5), errorMessage(error, "requestDramaCategoryList failed"));
                     }
                 }
         ));
@@ -99,8 +147,20 @@ public class SkitPangleDramaModule extends UniModule {
 
     @UniJSMethod(uiThread = true)
     public void listWithCategory(JSONObject options, UniJSCallback callback) {
-        runWhenStarted(options, callback, () -> DPSdk.factory().requestDramaByCategory(
+        runWhenStarted(options, callback, () -> DJXSdk.service().requestDramaByCategory(
                 optString(options, "category", ""),
+                optInt(options, "categoryId", optInt(options, "typeId", 0)),
+                optInt(options, "page", 1),
+                optInt(options, "count", 20),
+                dramaCallback(callback)
+        ));
+    }
+
+    @UniJSMethod(uiThread = true)
+    public void search(JSONObject options, UniJSCallback callback) {
+        runWhenStarted(options, callback, () -> DJXSdk.service().searchDrama(
+                optString(options, "keyword", optString(options, "query", "")),
+                options == null || options.optBoolean("strict", true),
                 optInt(options, "page", 1),
                 optInt(options, "count", 20),
                 dramaCallback(callback)
@@ -117,7 +177,7 @@ public class SkitPangleDramaModule extends UniModule {
                     ids.add(rawIds.optLong(i));
                 }
             }
-            DPSdk.factory().requestDrama(ids, dramaCallback(callback));
+            DJXSdk.service().requestDrama(ids, dramaCallback(callback));
         });
     }
 
@@ -129,68 +189,114 @@ public class SkitPangleDramaModule extends UniModule {
             return;
         }
         runWhenStarted(options, callback, () -> {
+            long dramaId = optLong(options, "dramaId", 0L);
+            if (dramaId <= 0L) {
+                fail(callback, -6, "Invalid Pangle dramaId");
+                return;
+            }
             Intent intent = new Intent(activity, SkitPangleDramaActivity.class);
-            intent.putExtra("dramaId", optLong(options, "dramaId", 0L));
+            intent.putExtra("dramaId", dramaId);
             intent.putExtra("episode", optInt(options, "episode", 1));
             intent.putExtra("progress", optInt(options, "progress", 0));
             intent.putExtra("freeSet", optInt(options, "freeSet", 8));
             intent.putExtra("lockSet", optInt(options, "lockSet", 5));
-            intent.putExtra("mode", optString(options, "mode", "common"));
+            intent.putExtra("unlockMode", optString(options, "unlockMode", "specific"));
             activity.startActivity(intent);
-            success(callback, mapOf("opened", true));
+            success(callback, mapOf("success", true, "opened", true));
         });
     }
 
     private void runWhenStarted(JSONObject options, UniJSCallback callback, Runnable action) {
-        if (DPSdk.isStartSuccess()) {
+        if (DJXSdk.isStartSuccess()) {
             action.run();
             return;
         }
         start(options, result -> {
-            if (DPSdk.isStartSuccess()) {
+            if (DJXSdk.isStartSuccess()) {
                 action.run();
             } else {
-                fail(callback, -4, "DPSdk start failed");
+                fail(callback, -4, "DJXSdk start failed");
             }
         });
     }
 
-    private IDPWidgetFactory.DramaCallback dramaCallback(UniJSCallback callback) {
-        return new IDPWidgetFactory.DramaCallback() {
+    private IDJXService.IDJXCallback<List<? extends DJXDrama>> dramaCallback(UniJSCallback callback) {
+        return new IDJXService.IDJXCallback<List<? extends DJXDrama>>() {
             @Override
-            public void onError(int code, String message) {
-                fail(callback, code, message);
+            public void onSuccess(List<? extends DJXDrama> list, DJXOthers others) {
+                success(callback, mapOf(
+                        "success", true,
+                        "list", getData(list),
+                        "extra", othersToMap(others)
+                ));
             }
 
             @Override
-            public void onSuccess(List<? extends DPDrama> list, Map<String, Object> extra) {
-                success(callback, mapOf("list", getData(list), "extra", extra));
+            public void onError(DJXError error) {
+                fail(callback, errorCode(error, -5), errorMessage(error, "request drama failed"));
             }
         };
     }
 
-    private List<Map<String, Object>> getData(List<? extends DPDrama> list) {
+    private List<Map<String, Object>> getData(List<? extends DJXDrama> list) {
         List<Map<String, Object>> result = new ArrayList<>();
         if (list == null) {
             return result;
         }
-        for (DPDrama item : list) {
+        for (DJXDrama item : list) {
             Map<String, Object> obj = new HashMap<>();
             obj.put("id", item.id);
             obj.put("index", item.index);
             obj.put("title", item.title);
             obj.put("coverImage", item.coverImage);
+            obj.put("coverImages", imageList(item.coverImages2));
             obj.put("status", item.status);
             obj.put("total", item.total);
+            obj.put("unlockIndex", item.unlockIndex);
             obj.put("type", item.type);
+            obj.put("typeId", item.typeId);
             obj.put("desc", item.desc);
             obj.put("scriptName", item.scriptName);
             obj.put("scriptAuthor", item.scriptAuthor);
             obj.put("actionTime", item.actionTime);
             obj.put("createTime", item.createTime);
+            obj.put("freeSet", item.freeSet);
+            obj.put("lockSet", item.lockSet);
+            obj.put("icpNumber", item.icpNumber);
+            obj.put("isFavor", item.isFavor);
+            obj.put("favoriteCount", item.favoriteCount);
+            obj.put("groupId", item.groupId);
+            obj.put("recMap", item.recMap);
             result.add(obj);
         }
         return result;
+    }
+
+    private List<Map<String, Object>> imageList(List<DJXImage> images) {
+        List<Map<String, Object>> result = new ArrayList<>();
+        if (images == null) {
+            return result;
+        }
+        for (DJXImage image : images) {
+            result.add(mapOf(
+                    "url", image.url,
+                    "backupUrl", image.backupUrl,
+                    "definition", image.definition
+            ));
+        }
+        return result;
+    }
+
+    private static Map<String, Object> othersToMap(DJXOthers others) {
+        if (others == null) {
+            return new HashMap<>();
+        }
+        return mapOf(
+                "hasMore", others.hasMore,
+                "requestId", others.requestId,
+                "total", others.total,
+                "others", others.others
+        );
     }
 
     private Activity getActivity() {
@@ -217,6 +323,17 @@ public class SkitPangleDramaModule extends UniModule {
         if (callback != null) {
             callback.invoke(result);
         }
+    }
+
+    private static int errorCode(DJXError error, int fallback) {
+        return error == null ? fallback : error.code;
+    }
+
+    private static String errorMessage(DJXError error, String fallback) {
+        if (error != null && error.msg != null && error.msg.length() > 0) {
+            return error.msg;
+        }
+        return fallback == null ? "unknown error" : fallback;
     }
 
     private static Map<String, Object> mapOf(Object... pairs) {

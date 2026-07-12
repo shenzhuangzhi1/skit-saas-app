@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">短剧 SaaS</string>
+    <string name="djx_drama_history_info" formatted="false">观看至%d集 共%d集</string>
+    <string name="djx_drama_info" formatted="false">%s共%d集</string>
+</resources>

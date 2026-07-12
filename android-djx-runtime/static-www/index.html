@@ -211,6 +211,24 @@
         gap: 12px;
       }
 
+      .load-more {
+        width: 100%;
+        height: 42px;
+        margin: 16px 0 8px;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.1);
+        color: rgba(248, 250, 252, 0.78);
+        font-size: 14px;
+      }
+
+      .load-more[hidden] {
+        display: none;
+      }
+
+      .load-more:disabled {
+        color: rgba(248, 250, 252, 0.42);
+      }
+
       .filter-row {
         display: flex;
         gap: 8px;
@@ -864,6 +882,7 @@
           <button id="refreshNative">刷新真实剧单</button>
         </div>
         <section class="grid" id="grid"></section>
+        <button class="load-more" id="loadMoreNative" type="button" hidden>加载更多真实剧单</button>
       </section>
 
       <section class="tab-page" id="theater" hidden>
@@ -958,7 +977,9 @@
 
     <script>
       const TAKU_PLACEMENT_ID = "b6a50acf394505";
-      const PANGLE_SETTING_FILE = "SDK_Setting_5839007.json";
+      const PANGLE_SETTING_FILE = "SDK_Setting_5850994.json";
+      const PANGLE_INITIAL_COUNT = 72;
+      const PANGLE_PAGE_SIZE = 24;
       const FOLLOW_STORAGE_KEY = "skit_runtime_follows_v1";
       const HISTORY_STORAGE_KEY = "skit_runtime_history_v1";
       const VISITOR_STORAGE_KEY = "skit_runtime_visitor_v1";
@@ -1052,6 +1073,10 @@
       let activeEpisode = 1;
       let currentTab = "home";
       let currentCategory = "全部";
+      let nativePage = 0;
+      let nativeMode = false;
+      let nativeHasMore = false;
+      let nativeLoading = false;
       const unlocked = new Set();
       const followedDramaIds = new Set(readStoredList(FOLLOW_STORAGE_KEY));
       let watchHistory = readStoredList(HISTORY_STORAGE_KEY);
@@ -1196,6 +1221,25 @@
         return card;
       }
 
+      function mergeNativeDramas(nextList) {
+        const seen = new Set();
+        return dramas
+          .concat(nextList)
+          .filter((drama) => {
+            const key = String(drama.nativeId || drama.id || "");
+            if (!key || seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+      }
+
+      function updateLoadMoreButton() {
+        const button = document.getElementById("loadMoreNative");
+        button.hidden = !nativeMode;
+        button.disabled = nativeLoading || !nativeHasMore;
+        button.textContent = nativeLoading ? "真实剧单加载中" : nativeHasMore ? "加载更多真实剧单" : "已加载全部真实剧单";
+      }
+
       function renderHome() {
         activeDrama = dramas[0] || fallbackDramas[0];
         document.getElementById("hero").style.setProperty("--cover", activeDrama.cover);
@@ -1216,6 +1260,7 @@
         });
         renderTheater();
         renderProfile();
+        updateLoadMoreButton();
       }
 
       function renderTheater() {
@@ -1293,6 +1338,17 @@
         activeDrama = drama;
         activeEpisode = Math.max(1, Math.min(Number(episode) || 1, drama.total));
         saveWatchHistory(drama, activeEpisode);
+        if (drama.isNative) {
+          openNativePlayerFor(drama, activeEpisode);
+          return;
+        }
+        showToast("真实剧单加载中，请刷新真实剧单");
+      }
+
+      function openLegacyPlayer(drama, episode) {
+        activeDrama = drama;
+        activeEpisode = Math.max(1, Math.min(Number(episode) || 1, drama.total));
+        saveWatchHistory(drama, activeEpisode);
         document.querySelectorAll(".tab-page").forEach((page) => {
           page.hidden = true;
         });
@@ -1317,9 +1373,7 @@
         document.getElementById("playerScreen").style.setProperty("--cover", activeDrama.cover);
         document.getElementById("playerTitle").textContent = activeDrama.title;
         document.getElementById("playerEpisode").textContent = "第" + activeEpisode + "集";
-        document.getElementById("playerNote").textContent = activeDrama.isNative
-          ? "可通过穿山甲短剧 SDK 打开真实播放器。"
-          : "当前内置剧目用于验证播放、选集和广告解锁流程。";
+        document.getElementById("playerNote").textContent = activeDrama.desc || "";
 
         document.getElementById("backBtn").onclick = () => {
           player.classList.remove("is-open");
@@ -1373,21 +1427,23 @@
         }
       }
 
-      async function openNativePlayer() {
-        if (!activeDrama.isNative) {
-          showToast("内置剧目没有真实剧集 ID，请先刷新真实剧单");
+      async function openNativePlayerFor(drama, episode) {
+        if (!drama || !drama.isNative) {
+          showToast("这条不是 SDK 真实剧，请先刷新真实剧单");
           return;
         }
+        const safeEpisode = Math.max(1, Math.min(Number(episode) || 1, drama.total || 1));
         try {
           const result = await callNative(
             window.SkitPangleDramaNative,
             "openPlayer",
             {
               settingFile: PANGLE_SETTING_FILE,
-              dramaId: Number(activeDrama.nativeId || 0),
-              episode: activeEpisode,
-              freeSet: activeDrama.freeEpisodes,
-              unlockMode: "common",
+              dramaId: Number(drama.nativeId || 0),
+              episode: safeEpisode,
+              freeSet: drama.freeEpisodes,
+              lockSet: drama.unlockSize,
+              unlockMode: "specific",
             },
             30000,
           );
@@ -1397,33 +1453,83 @@
         }
       }
 
+      async function openNativePlayer() {
+        await openNativePlayerFor(activeDrama, activeEpisode);
+      }
+
       async function refreshNativeList() {
         try {
+          nativeLoading = true;
+          updateLoadMoreButton();
           setSdkStatus("穿山甲启动中", false);
           await callNative(window.SkitPangleDramaNative, "start", { settingFile: PANGLE_SETTING_FILE, debug: true }, 30000);
           const result = await callNative(
             window.SkitPangleDramaNative,
             "list",
-            { settingFile: PANGLE_SETTING_FILE, page: 1, count: 12, order: true },
+            { settingFile: PANGLE_SETTING_FILE, page: 1, count: PANGLE_INITIAL_COUNT, order: true },
             30000,
           );
           if (result && result.success === false) throw new Error(result.message || "剧单拉取失败");
           const nativeList = Array.isArray(result.list) ? result.list.map(normalizeNativeDrama).filter((item) => item.nativeId) : [];
           if (nativeList.length > 0) {
-            dramas = nativeList.concat(fallbackDramas).slice(0, 16);
+            dramas = nativeList;
+            nativeMode = true;
+            nativePage = Math.ceil(nativeList.length / PANGLE_PAGE_SIZE);
+            nativeHasMore = nativeList.length >= PANGLE_PAGE_SIZE;
             setSdkStatus("真实剧单已载入", true);
             renderHome();
           } else {
+            nativeMode = false;
+            nativeHasMore = false;
             setSdkStatus("SDK 已启动", true);
             showToast("真实剧单为空，先展示内置剧目");
+            renderHome();
           }
         } catch (error) {
+          nativeMode = false;
+          nativeHasMore = false;
           setSdkStatus("SDK 待配置", false);
           showToast(error.message || "穿山甲短剧 SDK 暂不可用");
+          renderHome();
+        } finally {
+          nativeLoading = false;
+          updateLoadMoreButton();
+        }
+      }
+
+      async function loadMoreNativeList() {
+        if (nativeLoading || !nativeMode || !nativeHasMore) return;
+        try {
+          nativeLoading = true;
+          updateLoadMoreButton();
+          const nextPage = nativePage + 1;
+          const result = await callNative(
+            window.SkitPangleDramaNative,
+            "list",
+            { settingFile: PANGLE_SETTING_FILE, page: nextPage, count: PANGLE_PAGE_SIZE, order: true },
+            30000,
+          );
+          if (result && result.success === false) throw new Error(result.message || "剧单拉取失败");
+          const nativeList = Array.isArray(result.list) ? result.list.map(normalizeNativeDrama).filter((item) => item.nativeId) : [];
+          if (nativeList.length === 0) {
+            nativeHasMore = false;
+            showToast("没有更多真实剧单");
+            return;
+          }
+          dramas = mergeNativeDramas(nativeList);
+          nativePage = nextPage;
+          nativeHasMore = nativeList.length >= PANGLE_PAGE_SIZE;
+          renderHome();
+        } catch (error) {
+          showToast(error.message || "更多真实剧单加载失败");
+        } finally {
+          nativeLoading = false;
+          updateLoadMoreButton();
         }
       }
 
       document.getElementById("refreshNative").onclick = refreshNativeList;
+      document.getElementById("loadMoreNative").onclick = loadMoreNativeList;
       document.getElementById("profileVisitorId").textContent = getVisitorId();
       document.getElementById("profileLogin").onclick = () => showToast("当前为游客测试账号");
       const showFollowPanel = () => {
@@ -1438,7 +1544,7 @@
       document.getElementById("profileVipMenu").onclick = () =>
         showInfoModal("VIP 权益", "正式版本将提供免广告、专属剧集和提前观看权益；当前测试包暂不产生付费。");
       document.getElementById("profileAboutMenu").onclick = () =>
-        showInfoModal("关于短剧 SaaS", "当前为穿山甲短剧内容 SDK 测试版，包名 com.bjhacg.sxg，用于验证真实剧单、播放和广告解锁链路。");
+        showInfoModal("关于短剧 SaaS", "当前为穿山甲短剧内容 SDK 测试版，包名 top.neoshen.xingheyingguan，用于验证真实剧单、播放和广告解锁链路。");
       document.getElementById("infoModalClose").onclick = closeInfoModal;
       document.getElementById("infoModal").onclick = (event) => {
         if (event.target.id === "infoModal") closeInfoModal();
@@ -1446,6 +1552,15 @@
       document.querySelectorAll(".tabbar-item").forEach((item) => {
         item.onclick = () => showTab(item.dataset.tab);
       });
+      window.addEventListener(
+        "scroll",
+        () => {
+          if (currentTab !== "home" && currentTab !== "theater") return;
+          if (window.innerHeight + window.scrollY < document.body.scrollHeight - 640) return;
+          loadMoreNativeList();
+        },
+        { passive: true },
+      );
       renderHome();
       setTimeout(refreshNativeList, 500);
     </script>

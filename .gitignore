@@ -11,3 +11,12 @@ package-lock.json
 pnpm-lock.yaml
 android-preview-webview/build/
 pages/index/* 2.vue
+.playwright-cli/
+dist/
+output/
+android-djx-runtime/.gradle-dist/
+android-djx-runtime/.gradle/
+android-djx-runtime/app/build/
+android-djx-runtime/app/src/main/assets/
+android-djx-runtime/build-djx-apk.log
+nativeplugins/SkitPangleDrama/android/assets/SDK_Setting_*.json

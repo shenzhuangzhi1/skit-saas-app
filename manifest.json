@@ -68,6 +68,7 @@
           "<uses-permission android:name=\"android.permission.RECEIVE_USER_PRESENT\"/>"
         ],
         "minSdkVersion": 24,
+        "package": "top.neoshen.xingheyingguan",
         "schemes": "skit-saas"
       },
       "ios": {

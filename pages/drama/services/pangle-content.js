@@ -2,9 +2,11 @@ import { callNativeMethod, getNativePlugin } from './native-bridge';
 import { cacheExternalDramas } from '@/pages/drama/data';
 
 const PANGLE_PLUGIN_NAME = 'SkitPangleDrama';
-const DEFAULT_SETTING_FILE = import.meta.env?.VITE_PANGLE_DRAMA_SETTING_FILE || 'SDK_Setting_5850994.json';
+const DEFAULT_SETTING_FILE =
+  import.meta.env?.VITE_PANGLE_DRAMA_SETTING_FILE || 'SDK_Setting_5850994.json';
 const DEFAULT_FREE_SET = Number(import.meta.env?.VITE_PANGLE_DRAMA_FREE_SET || 8);
 const DEFAULT_LOCK_SET = Number(import.meta.env?.VITE_PANGLE_DRAMA_LOCK_SET || 5);
+const DEFAULT_PAGE_SIZE = Number(import.meta.env?.VITE_PANGLE_DRAMA_PAGE_SIZE || 24);
 let startPromise;
 
 export function isPangleContentReady() {
@@ -53,6 +55,16 @@ function makeEpisodes(total) {
   }));
 }
 
+function getPositiveDramaId(drama = {}) {
+  const rawId = drama.pangleDramaId ?? drama.contentId ?? drama.nativeId ?? drama.id;
+  const numericId = Number(rawId);
+  return Number.isFinite(numericId) && numericId > 0 ? numericId : null;
+}
+
+export function hasPangleDramaId(drama = {}) {
+  return getPositiveDramaId(drama) !== null;
+}
+
 export function normalizePangleDrama(raw = {}) {
   const rawId = raw.id ?? raw.drama_id ?? raw.dramaId ?? raw.dramaID;
   if (rawId === undefined || rawId === null || rawId === '') {
@@ -72,14 +84,16 @@ export function normalizePangleDrama(raw = {}) {
     category,
     tags: [category].filter(Boolean),
     total,
-    freeEpisodes: DEFAULT_FREE_SET,
-    unlockSize: DEFAULT_LOCK_SET,
+    freeEpisodes: Number(raw.freeSet || raw.free_set || DEFAULT_FREE_SET),
+    unlockSize: Number(raw.lockSet || raw.lock_set || DEFAULT_LOCK_SET),
     status: Number(raw.status) === 1 ? '连载中' : '已完结',
     heat: raw.heat || raw.hot || '穿山甲内容',
     follows: raw.follows || '',
     score: raw.score || '9.0',
     updateText: '',
-    cover: coverImage ? `url("${coverImage}") center/cover` : 'linear-gradient(155deg, #111827 0%, #374151 52%, #f97316 100%)',
+    cover: coverImage
+      ? `url("${coverImage}") center/cover`
+      : 'linear-gradient(155deg, #111827 0%, #374151 52%, #f97316 100%)',
     accent: '#ff5a1f',
     desc: raw.desc || raw.description || '',
     lines: [raw.desc || raw.description || ''],
@@ -96,20 +110,52 @@ export async function openPangleDramaPlayer(options = {}) {
 
   await startPangleContentSdk(options);
   const drama = options.drama || {};
+  const dramaId = getPositiveDramaId(drama);
+  if (!dramaId) {
+    return { skipped: true, reason: 'pangle-drama-id-missing' };
+  }
   return callNativeMethod(
     plugin,
     'openPlayer',
     {
-      dramaId: drama.pangleDramaId || drama.contentId || drama.id,
+      dramaId,
       episode: options.episode || 1,
       progress: options.progress || 0,
       source: options.source || 'drama_page',
       freeSet: options.freeSet ?? drama.freeEpisodes ?? DEFAULT_FREE_SET,
       lockSet: options.lockSet ?? drama.unlockSize ?? DEFAULT_LOCK_SET,
+      unlockMode: options.unlockMode || 'specific',
       settingFile: options.settingFile || DEFAULT_SETTING_FILE,
     },
     { timeoutMs: 10000 },
   );
+}
+
+export async function openDirectDramaPlayer(drama, episode = 1, source = 'drama_card') {
+  if (!hasPangleDramaId(drama)) {
+    uni.showToast({
+      title: '真实播放器暂不可用',
+      icon: 'none',
+    });
+    return false;
+  }
+  try {
+    const result = await openPangleDramaPlayer({
+      drama,
+      episode,
+      source,
+    });
+    if (result?.skipped) {
+      throw new Error('原生播放器未接入');
+    }
+    return true;
+  } catch (error) {
+    uni.showToast({
+      title: error?.message || '真实播放器打开失败',
+      icon: 'none',
+    });
+    return false;
+  }
 }
 
 export async function getPangleDramaList(params = {}) {
@@ -119,14 +165,15 @@ export async function getPangleDramaList(params = {}) {
   }
 
   await startPangleContentSdk(params);
-  const method = params.category && typeof plugin.listWithCategory === 'function' ? 'listWithCategory' : 'list';
+  const method =
+    params.category && typeof plugin.listWithCategory === 'function' ? 'listWithCategory' : 'list';
   const result = await callNativeMethod(
     plugin,
     method,
     {
       category: params.category || '',
       page: params.page || 1,
-      count: params.count || params.pageSize || 20,
+      count: params.count || params.pageSize || DEFAULT_PAGE_SIZE,
       order: params.order ?? true,
     },
     { timeoutMs: 20000 },

@@ -67,6 +67,7 @@
   import { computed, ref } from 'vue';
   import { onLoad } from '@dcloudio/uni-app';
   import { DRAMAS, saveHistory } from '@/pages/drama/data';
+  import { openDirectDramaPlayer } from '@/pages/drama/services/pangle-content';
 
   const STORAGE_KEY = 'skit_drama_search_history_v1';
   const keyword = ref('');
@@ -113,9 +114,7 @@
 
   function goPlay(drama) {
     saveHistory(drama.id, 1);
-    uni.navigateTo({
-      url: `/pages/drama/play?id=${encodeURIComponent(drama.id)}&episode=1`,
-    });
+    openDirectDramaPlayer(drama, 1, 'search_direct');
   }
 
   onLoad(() => {

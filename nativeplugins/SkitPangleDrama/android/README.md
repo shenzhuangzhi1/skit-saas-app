@@ -1,32 +1,43 @@
 # SkitPangleDrama Android 原生插件
 
-这个目录是穿山甲短剧内容 SDK 的 uni-app 原生桥接骨架。
+这个目录是穿山甲短剧内容 SDK 的 uni-app 原生桥接。
 
-## 必要文件
+## 当前配置
 
-1. 从穿山甲短剧后台下载 Android SDK 配置 JSON。
-2. 将配置文件放入 Android assets，默认文件名：
+已接入的 SDK 参数配置：
 
 ```text
-SDK_Setting_5850994.json
+android/assets/SDK_Setting_5850994.json
 ```
 
-3. 依赖穿山甲短剧 SDK：
+这份配置文件校验到的信息：
+
+```text
+site_id: 5850994
+app_id: 1037672
+license_config.PackageName: top.neoshen.xingheyingguan
+```
+
+正式 APK 的 Android 包名必须是 `top.neoshen.xingheyingguan`，否则内容 SDK license 会不匹配。需要先在穿山甲内容输出后台录入该包名并重新下载 SDK 参数配置。
+
+## Maven 仓库
 
 ```gradle
-implementation 'com.pangle.cn:ads-sdk-pro:5.3.0.5'
-implementation('com.pangle.cn:pangrowth-sdk:3.9.0.0') {
-    exclude group: 'com.pangle.cn', module: 'partner-live-sdk'
-    exclude group: 'com.pangle.cn', module: 'pangrowth-novel-sdk'
-    exclude group: 'com.pangle.cn', module: 'pangrowth-game-sdk'
-    exclude group: 'com.pangle.cn', module: 'pangrowth-luckycat-sdk'
-    exclude group: 'com.pangle.cn', module: 'pangrowth-reward-sdk'
-    exclude group: 'com.pangle.cn', module: 'partner-luckycat-api-sdk'
-    exclude group: 'com.pangle.cn', module: 'pangrowth-luckycat-api'
-}
+maven { url 'https://artifact.bytedance.com/repository/Volcengine/' }
+maven { url 'https://artifact.bytedance.com/repository/pangle' }
 ```
 
-如果穿山甲后台下载页给出更新版本，以后台生成的 SDK 版本为准。
+## Android 依赖
+
+以穿山甲接入文档/后台生成命令为准，当前按用户提供版本接入：
+
+```gradle
+implementation 'com.pangle_beta.cn:mediation-sdk:7.1.0.5'
+implementation 'com.pangle.cn:pangrowth-base:2.9.0.9'
+implementation 'com.pangle.cn:pangrowth-djx-sdk-lite:2.9.0.9'
+```
+
+`pangrowth-base` 和 `pangrowth-djx-sdk-lite` 在 Volcengine Maven 仓库下；`mediation-sdk` 在 pangle Maven 仓库下。
 
 ## JS 暴露方法
 
@@ -41,18 +52,33 @@ SkitPangleDrama
 ```js
 start({ settingFile, debug }, callback)
 list({ page, count, order }, callback)
+recommend({ page, count }, callback)
+history({ page, count }, callback)
 categoryList({}, callback)
-listWithCategory({ category, page, count }, callback)
+listWithCategory({ category, categoryId, page, count }, callback)
+search({ keyword, page, count }, callback)
 listWithIds({ ids }, callback)
 openPlayer({ dramaId, episode, freeSet, lockSet, progress }, callback)
 ```
 
-## 当前接入策略
+## 原生实现
+
+当前桥接使用新版 DJX API：
+
+```java
+DJXSdk.init(context, "SDK_Setting_5850994.json", config);
+DJXSdk.start(listener);
+DJXSdk.service().requestAllDrama(...);
+DJXSdk.service().requestDramaCategoryList(...);
+DJXSdk.service().requestDramaByCategory(...);
+DJXSdk.service().requestDrama(...);
+DJXSdk.factory().createDramaDetail(...);
+```
 
 移动端页面通过 `pages/drama/services/pangle-content.js` 调用本插件：
 
 - 首页 / 剧场：优先使用 `list` 拉取真实穿山甲短剧列表。
 - 播放页：用 `openPlayer` 打开穿山甲短剧原生播放器。
-- 解锁：仍由页面层的 GroMore/Taku 激励广告控制，完整观看后才允许进入锁定集。
+- 解锁：当前页面层仍保留 GroMore/Taku 激励广告控制，后续要切成 DJX 非完全封装模式的自定义解锁时，再实现 `IDJXDramaUnlockListener` 里的广告展示回调。
 
 当前仓库的 WebView 预览 APK 不包含本原生 SDK，只能验证 UI 和广告回调占位。真实短剧播放必须通过 HBuilderX 自定义基座/云打包或 Android 离线打包工程验证。

@@ -34,7 +34,11 @@
             {{ pangleReady ? '穿山甲短剧播放器已就绪' : '真实短剧资源未接入' }}
           </view>
           <view class="placeholder-desc">
-            {{ pangleReady ? '将通过穿山甲短剧 SDK 打开真实剧集' : '需要接入穿山甲短剧 SDK 或配置 episode.videoUrl' }}
+            {{
+              pangleReady
+                ? '将通过穿山甲短剧 SDK 打开真实剧集'
+                : '需要接入穿山甲短剧 SDK 或配置 episode.videoUrl'
+            }}
           </view>
         </view>
         <view class="episode-badge">第{{ currentEpisode }}集</view>
@@ -46,7 +50,12 @@
           <uni-icons type="locked-filled" size="42" color="#fff" />
           <view class="locked-title">本集需要解锁</view>
           <view class="locked-desc"> 看广告后可解锁第{{ unlockRangeText }}集 </view>
-          <button class="unlock-btn" :disabled="unlocking" :loading="unlocking" @tap.stop="unlockCurrent">
+          <button
+            class="unlock-btn"
+            :disabled="unlocking"
+            :loading="unlocking"
+            @tap.stop="unlockCurrent"
+          >
             {{ unlocking ? '广告加载中' : '看广告解锁' }}
           </button>
         </view>
@@ -77,6 +86,13 @@
         <text>{{ drama.heat }}热度</text>
       </view>
       <view class="bottom-actions">
+        <button
+          v-if="canOpenPanglePlayer"
+          class="ghost-btn"
+          @tap="playCurrentEpisode('manual_open')"
+        >
+          打开真实播放器
+        </button>
         <button class="primary-btn" @tap="nextEpisode">下一集</button>
         <button class="ghost-btn" @tap="showEpisodePanel = true">选集</button>
       </view>
@@ -123,6 +139,8 @@
 <script setup>
   import { computed, ref, watch } from 'vue';
   import { onLoad, onShow } from '@dcloudio/uni-app';
+  import sheep from '@/sheep';
+  import AdRevenueApi from '@/sheep/api/member/ad-revenue';
   import {
     getDramaById,
     getUnlockRange,
@@ -132,7 +150,11 @@
     toggleFollow,
     unlockEpisodes,
   } from '@/pages/drama/data';
-  import { isPangleContentReady, openPangleDramaPlayer } from '@/pages/drama/services/pangle-content';
+  import {
+    hasPangleDramaId,
+    isPangleContentReady,
+    openPangleDramaPlayer,
+  } from '@/pages/drama/services/pangle-content';
   import { showDramaRewardedVideoAd } from '@/pages/drama/services/reward-ad';
 
   const drama = ref(getDramaById());
@@ -143,6 +165,7 @@
   const unlocking = ref(false);
   const videoErrored = ref(false);
   const pangleReady = ref(false);
+  const userStore = sheep.$store('user');
 
   const locked = computed(() => {
     unlockedVersion.value;
@@ -162,6 +185,12 @@
     return drama.value.episodes[currentEpisode.value - 1]?.videoUrl || drama.value.videoUrl || '';
   });
 
+  const canOpenPanglePlayer = computed(() => {
+    return (
+      pangleReady.value && hasPangleDramaId(drama.value) && !currentVideoUrl.value && !locked.value
+    );
+  });
+
   const unlockRangeText = computed(() => {
     const range = getUnlockRange(drama.value, currentEpisode.value);
     if (range.length === 0) {
@@ -175,7 +204,7 @@
 
   function refresh() {
     followed.value = isFollowed(drama.value.id);
-    pangleReady.value = isPangleContentReady();
+    pangleReady.value = isPangleContentReady() && hasPangleDramaId(drama.value);
     unlockedVersion.value += 1;
   }
 
@@ -204,12 +233,67 @@
     console.warn('[drama] video playback failed:', currentVideoUrl.value, error);
   }
 
+  function assertAdBuildProfile(provider, providerConfig) {
+    const expectedAgentCode = String(import.meta.env?.VITE_SKIT_AGENT_CODE || '').toUpperCase();
+    const currentTenantCode = String(userStore.userInfo?.tenantCode || '').toUpperCase();
+    if (!expectedAgentCode || !currentTenantCode) {
+      throw new Error('代理商白标身份尚未就绪，暂不能展示广告');
+    }
+    if (expectedAgentCode !== currentTenantCode) {
+      throw new Error('当前安装包不属于该代理商，请使用所属代理商的白标 App');
+    }
+    const builtAppId = String(
+      provider === 'taku'
+        ? import.meta.env?.VITE_TAKU_APP_ID || ''
+        : import.meta.env?.VITE_PANGLE_APP_ID || '',
+    );
+    const configuredAppId = String(providerConfig?.appId || '');
+    if (!builtAppId || !configuredAppId) {
+      throw new Error('广告 App ID 未完整配置，暂不能展示广告');
+    }
+    if (builtAppId !== configuredAppId) {
+      throw new Error('广告账号与当前白标包不匹配，请重新安装正确版本');
+    }
+  }
+
+  function resolveVerifiedAdConfig() {
+    const adConfig = userStore.adConfig || {};
+    const configuredProvider = String(adConfig.provider || '').toLowerCase();
+    const builtProvider = String(import.meta.env?.VITE_DRAMA_AD_PROVIDER || '').toLowerCase();
+    if (configuredProvider === 'none' || !configuredProvider) {
+      throw new Error('当前代理商未启用广告账号');
+    }
+
+    const provider = configuredProvider === 'multi' ? builtProvider : configuredProvider;
+    if (!['pangle', 'taku'].includes(provider)) {
+      throw new Error('当前白标包未指定可用的广告平台');
+    }
+    if (!builtProvider || builtProvider !== provider) {
+      throw new Error('广告平台与当前白标包不匹配，请重新安装正确版本');
+    }
+
+    const providerConfig = adConfig[provider];
+    if (!providerConfig || providerConfig.enabled !== true) {
+      throw new Error('当前代理商的广告账号未启用');
+    }
+    const placementId = String(providerConfig.placementId || '').trim();
+    if (!placementId) {
+      throw new Error('当前代理商未配置广告位');
+    }
+    assertAdBuildProfile(provider, providerConfig);
+    return { provider, placementId };
+  }
+
   async function playCurrentEpisode(source) {
     if (!isUnlocked(currentEpisode.value)) {
       return;
     }
 
     if (currentVideoUrl.value) {
+      return;
+    }
+
+    if (!hasPangleDramaId(drama.value)) {
       return;
     }
 
@@ -222,9 +306,9 @@
       return { skipped: true, reason: error?.message || 'pangle-open-failed' };
     });
 
-    if (result?.skipped) {
+    if (result?.skipped && source === 'manual_open') {
       uni.showToast({
-        title: '真实短剧 SDK 未接入',
+        title: '当前剧目没有真实 SDK ID',
         icon: 'none',
       });
     }
@@ -252,10 +336,19 @@
     if (range.length === 0) {
       return;
     }
+    if (!userStore.isLogin) {
+      uni.navigateTo({
+        url: '/pages/auth/index?mode=login',
+      });
+      return;
+    }
 
     unlocking.value = true;
     try {
+      const { provider, placementId } = resolveVerifiedAdConfig();
       const reward = await showDramaRewardedVideoAd({
+        provider,
+        placementId,
         scene: 'drama_unlock',
         dramaId: drama.value.id,
         episode: currentEpisode.value,
@@ -264,8 +357,11 @@
       const unlockedText = range.length === 1 ? range[0] : `${range[0]}-${range[range.length - 1]}`;
       unlockEpisodes(drama.value.id, range);
       unlockedVersion.value += 1;
+      reportAdRevenue(reward, provider, placementId);
       uni.showToast({
-        title: reward.mock ? `开发模拟广告，已解锁第${unlockedText}集` : `已解锁第${unlockedText}集`,
+        title: reward.mock
+          ? `开发模拟广告，已解锁第${unlockedText}集`
+          : `已解锁第${unlockedText}集`,
         icon: 'none',
       });
       playCurrentEpisode('reward_unlock');
@@ -277,6 +373,39 @@
     } finally {
       unlocking.value = false;
     }
+  }
+
+  function reportAdRevenue(reward, fallbackProvider, fallbackPlacementId) {
+    if (!reward?.completed || reward.mock) {
+      return;
+    }
+    const raw = reward.raw || {};
+    const adInfo = raw.adInfo || raw.ad_info || {};
+    const externalEventId = String(
+      adInfo.requestId || raw.requestId || raw.request_id || '',
+    ).trim();
+    const ecpm = Number(adInfo.ecpm ?? raw.ecpm);
+    if (!externalEventId || !Number.isFinite(ecpm) || ecpm <= 0) {
+      console.warn('[ad-revenue] missing requestId/ecpm; skip estimated commission report');
+      return;
+    }
+    const provider = String(
+      reward.provider || raw.provider || fallbackProvider || '',
+    ).toUpperCase();
+    const placementId =
+      reward.placementId || adInfo.placementId || raw.placementId || fallbackPlacementId || '';
+    AdRevenueApi.report({
+      provider: provider === 'GROMORE' ? 'PANGLE' : provider,
+      externalEventId,
+      placementId,
+      grossAmount: (ecpm / 1000).toFixed(8),
+      occurredTime: new Date().toISOString(),
+      completed: true,
+      mock: false,
+      rawData: raw,
+    }).catch((error) => {
+      console.warn('[ad-revenue] report failed', error);
+    });
   }
 
   function nextEpisode() {
@@ -529,6 +658,8 @@
 
   .bottom-actions {
     display: flex;
+    flex-wrap: wrap;
+    gap: 14rpx 0;
     margin-top: 12rpx;
   }
 

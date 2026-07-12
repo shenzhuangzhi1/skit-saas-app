@@ -67,7 +67,10 @@
     getHotDramas,
     saveHistory,
   } from '@/pages/drama/data';
-  import { getPangleDramaList } from '@/pages/drama/services/pangle-content';
+  import {
+    getPangleDramaList,
+    openDirectDramaPlayer,
+  } from '@/pages/drama/services/pangle-content';
 
   uni.hideTabBar({
     fail: () => {},
@@ -79,7 +82,11 @@
   const hotList = ref(getHotDramas(6));
   const filteredList = computed(() => {
     if (sdkList.value.length > 0) {
-      if (!activeCategory.value || activeCategory.value === '全部' || activeCategory.value === '热播') {
+      if (
+        !activeCategory.value ||
+        activeCategory.value === '全部' ||
+        activeCategory.value === '热播'
+      ) {
         return sdkList.value;
       }
       return sdkList.value.filter((item) => item.category === activeCategory.value);
@@ -89,7 +96,11 @@
 
   async function refreshPangleContent() {
     try {
-      const result = await getPangleDramaList({ page: 1, pageSize: 36, category: activeCategory.value });
+      const result = await getPangleDramaList({
+        page: 1,
+        pageSize: 72,
+        category: activeCategory.value,
+      });
       if (result.skipped || result.list.length === 0) {
         return;
       }
@@ -102,9 +113,7 @@
 
   function goPlay(drama, episode = 1) {
     saveHistory(drama.id, episode);
-    uni.navigateTo({
-      url: `/pages/drama/play?id=${encodeURIComponent(drama.id)}&episode=${episode}`,
-    });
+    openDirectDramaPlayer(drama, episode, 'theater_direct');
   }
 
   function goHot() {

@@ -134,7 +134,10 @@
     saveHistory,
     toggleFollow,
   } from '@/pages/drama/data';
-  import { getPangleDramaList } from '@/pages/drama/services/pangle-content';
+  import {
+    getPangleDramaList,
+    openDirectDramaPlayer,
+  } from '@/pages/drama/services/pangle-content';
 
   uni.hideTabBar({
     fail: () => {},
@@ -161,13 +164,13 @@
 
   async function refreshPangleContent() {
     try {
-      const result = await getPangleDramaList({ page: 1, pageSize: 16 });
+      const result = await getPangleDramaList({ page: 1, pageSize: 72 });
       if (result.skipped || result.list.length === 0) {
         return;
       }
       cacheExternalDramas(result.list);
       featured.value = result.list[0];
-      recommendList.value = result.list.slice(1, 13);
+      recommendList.value = result.list.slice(1);
     } catch (error) {
       console.warn('[drama] Pangle drama list unavailable:', error);
     }
@@ -175,9 +178,7 @@
 
   function goPlay(drama, episode = 1) {
     saveHistory(drama.id, episode);
-    uni.navigateTo({
-      url: `/pages/drama/play?id=${encodeURIComponent(drama.id)}&episode=${episode}`,
-    });
+    openDirectDramaPlayer(drama, episode, 'home_direct');
   }
 
   function followFeatured() {

@@ -32,6 +32,7 @@
 
 <script setup>
   import { getHotDramas, saveHistory } from '@/pages/drama/data';
+  import { openDirectDramaPlayer } from '@/pages/drama/services/pangle-content';
 
   const list = getHotDramas();
 
@@ -41,9 +42,7 @@
 
   function goPlay(drama) {
     saveHistory(drama.id, 1);
-    uni.navigateTo({
-      url: `/pages/drama/play?id=${encodeURIComponent(drama.id)}&episode=1`,
-    });
+    openDirectDramaPlayer(drama, 1, 'hot_direct');
   }
 </script>
 

@@ -4,7 +4,8 @@ const TAKU_PLUGIN_NAME = 'SkitTakuAd';
 const DEFAULT_REWARD_PLACEMENT_ID = import.meta.env?.VITE_TAKU_REWARD_PLACEMENT_ID || '';
 const MOCK_REWARD_AD =
   import.meta.env?.VITE_DRAMA_MOCK_REWARD_AD === 'true' ||
-  (import.meta.env?.MODE !== 'production' && import.meta.env?.VITE_DRAMA_MOCK_REWARD_AD !== 'false');
+  (import.meta.env?.MODE !== 'production' &&
+    import.meta.env?.VITE_DRAMA_MOCK_REWARD_AD !== 'false');
 
 function normalizeRewardResult(result = {}) {
   const type = String(result.type || result.event || result.status || '').toLowerCase();
@@ -21,6 +22,8 @@ function normalizeRewardResult(result = {}) {
   return {
     completed,
     closed: result.closed === true || type === 'close' || type === 'closed',
+    provider: 'taku',
+    placementId: result.placementId || '',
     mock: result.mock === true,
     raw: result,
   };
@@ -36,6 +39,8 @@ async function showMockRewardedVideo(context) {
   return {
     completed: true,
     closed: true,
+    provider: 'taku',
+    placementId: context.placementId || DEFAULT_REWARD_PLACEMENT_ID,
     mock: true,
     raw: { mock: true },
   };
@@ -71,6 +76,10 @@ export async function showRewardedVideoAd(context = {}) {
     },
     { timeoutMs: 180000 },
   );
+
+  if (result && result.success === false) {
+    throw new Error(result.message || 'Taku 激励视频加载失败');
+  }
 
   const reward = normalizeRewardResult(result);
   if (!reward.completed) {

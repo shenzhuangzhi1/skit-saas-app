@@ -34,6 +34,7 @@
   import { onShow } from '@dcloudio/uni-app';
   import DramaCard from '@/pages/drama/components/DramaCard.vue';
   import { getFollowList, saveHistory } from '@/pages/drama/data';
+  import { openDirectDramaPlayer } from '@/pages/drama/services/pangle-content';
 
   const list = ref([]);
 
@@ -53,9 +54,7 @@
 
   function goPlay(drama, episode = 1) {
     saveHistory(drama.id, episode);
-    uni.navigateTo({
-      url: `/pages/drama/play?id=${encodeURIComponent(drama.id)}&episode=${episode}`,
-    });
+    openDirectDramaPlayer(drama, episode, 'follow_direct');
   }
 
   onShow(refresh);

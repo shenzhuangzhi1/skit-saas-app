@@ -162,7 +162,7 @@ GroMore / Taku 只处理激励视频广告，不提供真实短剧片源。
 docs/pangle-drama-content-sdk.md
 ```
 
-当前已新增 `SkitPangleDrama` 前端桥和 Android 原生插件骨架，但真实播放仍需要穿山甲短剧后台下载的 `SDK_Setting_5850994.json` 和 Android 原生 SDK 打包进正式 App。
+当前已新增 `SkitPangleDrama` 前端桥和 Android 原生插件源码，并已放入穿山甲短剧后台配置 `SDK_Setting_5850994.json`。真实播放仍需要通过 HBuilderX 自定义基座/云打包或 Android 离线打包，把 DJX 原生 SDK 打进正式 App。
 
 ## 本地构建验证
 
@@ -179,6 +179,22 @@ UNI_OUTPUT_DIR=/Users/neo/Desktop/skit/skit-saas-app/unpackage/dist/build/app-an
 
 ```text
 /Users/neo/Desktop/skit/skit-saas-app/unpackage/dist/build/app-android
+```
+
+## Android Runtime 联动打包
+
+`android-djx-runtime` 是当前用于 Taku 和穿山甲短剧 SDK 的 Android WebView 壳。
+运行 `build-djx-apk.sh` 会先调用 `build-h5.sh`，将 uni-app 的 H5 产物构建到
+`unpackage/dist/build/h5-android-runtime`，再写入 APK 的 `assets/www`。
+
+```bash
+./android-djx-runtime/build-djx-apk.sh
+```
+
+只有排查指定静态目录时才需要跳过自动 H5 构建：
+
+```bash
+H5_DIR=/absolute/path/to/h5 SKIP_UNI_BUILD=1 ./android-djx-runtime/build-djx-apk.sh
 ```
 
 ## 临时 WebView 预览 APK

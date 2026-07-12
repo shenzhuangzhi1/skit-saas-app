@@ -14,12 +14,14 @@
         }
       ],
       "integrateType": "aar",
+      "repositories": [
+        "https://artifact.bytedance.com/repository/Volcengine/",
+        "https://artifact.bytedance.com/repository/pangle"
+      ],
       "dependencies": [
-        "com.pangle.cn:ads-sdk-pro:5.3.0.5",
-        {
-          "id": "com.pangle.cn:pangrowth-sdk",
-          "source": "implementation('com.pangle.cn:pangrowth-sdk:3.9.0.0') {\\r\\n    exclude group: 'com.pangle.cn', module: 'partner-live-sdk'\\r\\n    exclude group: 'com.pangle.cn', module: 'pangrowth-novel-sdk'\\r\\n    exclude group: 'com.pangle.cn', module: 'pangrowth-game-sdk'\\r\\n    exclude group: 'com.pangle.cn', module: 'pangrowth-luckycat-sdk'\\r\\n    exclude group: 'com.pangle.cn', module: 'pangrowth-reward-sdk'\\r\\n    exclude group: 'com.pangle.cn', module: 'partner-luckycat-api-sdk'\\r\\n    exclude group: 'com.pangle.cn', module: 'pangrowth-luckycat-api'\\r\\n}"
-        }
+        "com.pangle_beta.cn:mediation-sdk:7.1.0.5",
+        "com.pangle.cn:pangrowth-base:2.9.0.9",
+        "com.pangle.cn:pangrowth-djx-sdk-lite:2.9.0.9"
       ],
       "compileOptions": {
         "sourceCompatibility": "1.8",
