@@ -9,7 +9,7 @@ const AuthUtil = {
       data,
       custom: {
         isToken: false,
-        // 后端按 tenantCode 或全局唯一手机号解析租户，不能携带旧租户上下文
+        // 后端根据全局唯一手机号解析租户，不能携带旧租户上下文。
         tenant: false,
         showSuccess: true,
         loadingMsg: '登录中',

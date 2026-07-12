@@ -45,18 +45,6 @@
             placeholder="请输入密码"
           />
         </view>
-        <view class="field">
-          <view class="field-label"
-            >代理商编码{{ builtAgentCode ? '（当前白标包）' : '（可选）' }}</view
-          >
-          <input
-            v-model="state.login.tenantCode"
-            class="field-input"
-            :disabled="!!builtAgentCode"
-            maxlength="64"
-            placeholder="同一手机号属于多个代理商时填写"
-          />
-        </view>
         <button class="submit-button" :loading="state.submitting" @tap="submitLogin"> 登录 </button>
         <view class="form-tip" @tap="setMode('register')">没有账号？使用邀请码注册</view>
       </view>
@@ -141,7 +129,6 @@
     login: {
       mobile: '',
       password: '',
-      tenantCode: '',
     },
     register: {
       mobile: '',
@@ -169,7 +156,6 @@
     }
     const mobile = state.login.mobile.trim();
     const password = state.login.password;
-    const tenantCode = builtAgentCode || state.login.tenantCode.trim();
     if (!validateMobile(mobile)) {
       toast('请输入正确的手机号');
       return;
@@ -181,11 +167,7 @@
 
     state.submitting = true;
     try {
-      const payload = { mobile, password };
-      if (tenantCode) {
-        payload.tenantCode = tenantCode;
-      }
-      const result = await AuthUtil.login(payload);
+      const result = await AuthUtil.login({ mobile, password });
       if (result?.code === 0) {
         finishAuth();
       }
@@ -299,7 +281,6 @@
 
   onLoad((options = {}) => {
     const inviteCode = options.inviteCode || options.code || '';
-    state.login.tenantCode = builtAgentCode || options.tenantCode || '';
     if (options.mode === 'register' || inviteCode) {
       state.mode = 'register';
     }
