@@ -16,6 +16,8 @@ import java.io.BufferedOutputStream;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -37,7 +39,7 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         TakuRewardedAdController.initialize(getApplicationContext());
-        assetServer = new LocalAssetServer(getAssets(), "www");
+        assetServer = new LocalAssetServer(getAssets(), "www", new File(getFilesDir(), "skit-web-update"));
         assetServer.start();
 
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
@@ -55,6 +57,7 @@ public class MainActivity extends Activity {
 
         webView.addJavascriptInterface(new SkitPangleDramaBridge(this, webView), "SkitPangleDramaNative");
         webView.addJavascriptInterface(new SkitTakuAdBridge(this, webView), "SkitTakuAdNative");
+        webView.addJavascriptInterface(new SkitRuntimeUpdateBridge(this, webView), "SkitRuntimeUpdateNative");
         webView.setWebChromeClient(
                 new WebChromeClient() {
                     @Override
@@ -115,12 +118,14 @@ public class MainActivity extends Activity {
     private static final class LocalAssetServer implements Closeable, Runnable {
         private final AssetManager assets;
         private final String root;
+        private final File updateRoot;
         private ServerSocket serverSocket;
         private Thread thread;
 
-        LocalAssetServer(AssetManager assets, String root) {
+        LocalAssetServer(AssetManager assets, String root, File updateRoot) {
             this.assets = assets;
             this.root = root;
+            this.updateRoot = updateRoot;
         }
 
         void start() {
@@ -177,7 +182,7 @@ public class MainActivity extends Activity {
                 byte[] body;
                 String status = "200 OK";
                 String type = contentType(path);
-                try (InputStream asset = assets.open(root + path)) {
+                try (InputStream asset = openAsset(path)) {
                     body = readAll(asset);
                 } catch (IOException e) {
                     status = "404 Not Found";
@@ -187,6 +192,16 @@ public class MainActivity extends Activity {
                 writeResponse(output, status, type, body);
             } catch (IOException ignored) {
             }
+        }
+
+        private InputStream openAsset(String path) throws IOException {
+            String relativePath = path.startsWith("/") ? path.substring(1) : path;
+            File candidate = new File(updateRoot, relativePath);
+            String updateRootPath = updateRoot.getCanonicalPath() + File.separator;
+            if (candidate.getCanonicalPath().startsWith(updateRootPath) && candidate.isFile()) {
+                return new FileInputStream(candidate);
+            }
+            return assets.open(root + path);
         }
 
         private String readRequest(InputStream input) throws IOException {

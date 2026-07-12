@@ -42,6 +42,10 @@
       callNative(window.SkitTakuAdNative, 'SkitTakuAdNative', method, payload, callback);
     }
 
+    function callRuntimeUpdate(method, payload, callback) {
+      callNative(window.SkitRuntimeUpdateNative, 'SkitRuntimeUpdateNative', method, payload, callback);
+    }
+
     var originalRequire = window.uni.requireNativePlugin;
     window.uni.requireNativePlugin = function (name) {
       if (name === 'SkitPangleDrama') {
@@ -60,6 +64,12 @@
       if (name === 'SkitTakuAd') {
         return {
           showRewardedVideo: function (payload, callback) { callTaku('showRewardedVideo', payload, callback); },
+        };
+      }
+      if (name === 'SkitRuntimeUpdate') {
+        return {
+          getInfo: function (payload, callback) { callRuntimeUpdate('getInfo', payload, callback); },
+          installWebBundle: function (payload, callback) { callRuntimeUpdate('installWebBundle', payload, callback); },
         };
       }
       return typeof originalRequire === 'function' ? originalRequire(name) : null;

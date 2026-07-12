@@ -115,6 +115,7 @@
   import { onLoad } from '@dcloudio/uni-app';
   import AuthUtil from '@/sheep/api/member/auth';
   import InvitationApi from '@/sheep/api/member/invitation';
+  import { ensureMemberAppContext } from '@/sheep/services/member-app-context';
 
   const builtAgentCode = String(import.meta.env?.VITE_SKIT_AGENT_CODE || '')
     .trim()
@@ -126,6 +127,7 @@
     resolving: false,
     invitationValid: false,
     invitationMessage: '',
+    linkedAgentCode: '',
     login: {
       mobile: '',
       password: '',
@@ -150,6 +152,24 @@
     return /^1\d{10}$/.test(String(mobile || '').trim());
   }
 
+  function resolveAgentCode() {
+    return (
+      builtAgentCode ||
+      String(state.linkedAgentCode || '')
+        .trim()
+        .toUpperCase()
+    );
+  }
+
+  async function requireContextToken() {
+    try {
+      return await ensureMemberAppContext(resolveAgentCode());
+    } catch (error) {
+      toast(error?.message || '代理商入口不可用');
+      return '';
+    }
+  }
+
   async function submitLogin() {
     if (state.submitting) {
       return;
@@ -165,9 +185,13 @@
       return;
     }
 
+    const contextToken = await requireContextToken();
+    if (!contextToken) {
+      return;
+    }
     state.submitting = true;
     try {
-      const result = await AuthUtil.login({ mobile, password });
+      const result = await AuthUtil.login({ mobile, password, contextToken });
       if (result?.code === 0) {
         finishAuth();
       }
@@ -196,7 +220,8 @@
       const invitationTenantCode = String(data.tenantCode || '')
         .trim()
         .toUpperCase();
-      if (builtAgentCode && invitationTenantCode !== builtAgentCode) {
+      const agentCode = resolveAgentCode();
+      if (agentCode && invitationTenantCode !== agentCode) {
         state.invitationMessage = '该邀请码不属于当前代理商白标 App';
         return false;
       }
@@ -250,9 +275,19 @@
       return;
     }
 
+    const contextToken = await requireContextToken();
+    if (!contextToken) {
+      return;
+    }
     state.submitting = true;
     try {
-      const result = await AuthUtil.register({ mobile, password, nickname, inviteCode });
+      const result = await AuthUtil.register({
+        mobile,
+        password,
+        nickname,
+        inviteCode,
+        contextToken,
+      });
       if (result?.code === 0) {
         finishAuth();
       }
@@ -280,6 +315,10 @@
   }
 
   onLoad((options = {}) => {
+    // 深链代码只在未内置白标代码的通用壳中作为回退，不会覆盖已编译的代理商身份。
+    state.linkedAgentCode = String(options.agentCode || options.tenantCode || '')
+      .trim()
+      .toUpperCase();
     const inviteCode = options.inviteCode || options.code || '';
     if (options.mode === 'register' || inviteCode) {
       state.mode = 'register';

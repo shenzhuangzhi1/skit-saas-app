@@ -1,0 +1,46 @@
+name: App hot update bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile_code:
+        description: Agent release profile code
+        required: true
+        type: string
+      hot_version:
+        description: Hot update version, for example 2.3.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    name: Build verified WebView hot update bundle
+    runs-on: [self-hosted, macOS, hbuilderx]
+    environment: android-production
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build agent-specific bundle
+        env:
+          SKIT_AGENT_CODE: ${{ inputs.profile_code }}
+          SKIT_HOT_VERSION: ${{ inputs.hot_version }}
+          SKIT_API_BASE_URL: ${{ secrets.SKIT_API_BASE_URL }}
+        run: ./android-djx-runtime/build-hot-bundle.sh
+      - name: Publish build metadata for release profile
+        id: bundle
+        env:
+          PROFILE_CODE: ${{ inputs.profile_code }}
+          HOT_VERSION: ${{ inputs.hot_version }}
+        run: |
+          set -euo pipefail
+          ARCHIVE="dist/hot-updates/${PROFILE_CODE}/${HOT_VERSION}.zip"
+          SHA256="$(shasum -a 256 "$ARCHIVE" | awk '{print $1}')"
+          printf 'archive=%s\nsha256=%s\n' "$ARCHIVE" "$SHA256" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hot-update-${{ inputs.profile_code }}-${{ inputs.hot_version }}
+          path: ${{ steps.bundle.outputs.archive }}
+          if-no-files-found: error
+          retention-days: 30

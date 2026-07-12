@@ -1,6 +1,20 @@
 import request from '@/sheep/request';
 
 const AuthUtil = {
+  // 根据白标 App 内置的代理商代码换取短时、不透明的登录上下文。
+  bootstrap: (data) => {
+    return request({
+      url: '/skit/member/auth/bootstrap',
+      method: 'POST',
+      data,
+      custom: {
+        isToken: false,
+        tenant: false,
+        showLoading: false,
+        showError: false,
+      },
+    });
+  },
   // 使用手机 + 密码登录
   login: (data) => {
     return request({
@@ -9,7 +23,7 @@ const AuthUtil = {
       data,
       custom: {
         isToken: false,
-        // 后端根据全局唯一手机号解析租户，不能携带旧租户上下文。
+        // 租户由短时 App 上下文令牌确定，不能携带旧租户请求头。
         tenant: false,
         showSuccess: true,
         loadingMsg: '登录中',

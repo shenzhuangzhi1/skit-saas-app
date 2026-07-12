@@ -1,0 +1,8 @@
+{
+  "profileCode": "AGENT42",
+  "channel": "production",
+  "hotVersion": "2.3.0",
+  "hotBundleUrl": "https://updates.example.com/skit/AGENT42/2.3.0.zip",
+  "hotBundleSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "minNativeVersion": "2.1.0"
+}
