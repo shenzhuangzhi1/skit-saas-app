@@ -2,10 +2,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-EXPECTED_FILE="SDK_Setting_5850994.json"
-EXPECTED_PACKAGE="top.neoshen.xingheyingguan"
-CANONICAL_FILE="$ROOT_DIR/nativeplugins/SkitPangleDrama/android/assets/$EXPECTED_FILE"
-APK_FILE="$ROOT_DIR/dist/skit-djx-debug.apk"
+EXPECTED_FILE="${SKIT_PANGLE_SETTING_ASSET:-SDK_Setting.json}"
+EXPECTED_PACKAGE="${SKIT_APPLICATION_ID:-top.neoshen.xingheyingguan}"
+CANONICAL_FILE="${SKIT_PANGLE_SETTINGS_JSON:-$ROOT_DIR/nativeplugins/SkitPangleDrama/android/assets/SDK_Setting_5850994.json}"
+APK_FILE="${APK_FILE:-$ROOT_DIR/dist/skit-djx-debug.apk}"
 
 fail() {
   echo "SDK config check failed: $*" >&2
@@ -21,16 +21,12 @@ actual_package="$(jq -r '.license_config[0].PackageName // empty' "$CANONICAL_FI
 runtime_files=(
   "$ROOT_DIR/android-djx-runtime/build-djx-apk.sh"
   "$ROOT_DIR/android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/SkitPangleDramaBridge.java"
-  "$ROOT_DIR/nativeplugins/SkitPangleDrama/android/src/main/java/com/skit/nativeplugins/pangle/SkitPangleDramaModule.java"
   "$ROOT_DIR/pages/drama/services/pangle-content.js"
 )
 
-for file in "${runtime_files[@]}"; do
-  rg -q "$EXPECTED_FILE" "$file" || fail "$file does not reference $EXPECTED_FILE"
-  if rg -q 'SDK_Setting_5839007\.json' "$file"; then
-    fail "$file still references SDK_Setting_5839007.json"
-  fi
-done
+rg -q 'SDK_Setting' "${runtime_files[0]}" || fail "build script does not package an SDK setting asset"
+rg -q 'PANGLE_SETTING_ASSET' "${runtime_files[1]}" || fail "native bridge does not use the build setting asset"
+rg -q 'VITE_PANGLE_DRAMA_SETTING_FILE' "${runtime_files[2]}" || fail "uni-app bridge does not accept the build setting asset"
 
 if [[ -f "$APK_FILE" ]]; then
   apk_settings="$(unzip -Z1 "$APK_FILE" | rg '^assets/SDK_Setting_.*\.json$' || true)"
