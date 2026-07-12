@@ -2,6 +2,7 @@ const HISTORY_KEY = 'skit_drama_history_v1';
 const FOLLOW_KEY = 'skit_drama_follow_v1';
 const UNLOCK_KEY = 'skit_drama_unlock_v1';
 const EXTERNAL_DRAMA_CACHE_KEY = 'skit_external_drama_cache_v1';
+const REQUIRE_REAL_CONTENT = import.meta.env?.VITE_DRAMA_REAL_CONTENT_REQUIRED === 'true';
 
 export const DRAMA_CATEGORIES = ['全部', '热播', '逆袭', '甜宠', '都市', '悬疑', '古装'];
 
@@ -172,29 +173,34 @@ export function cacheExternalDramas(list = []) {
 
 export function getDramaById(id) {
   const targetId = String(id || '');
+  const source = REQUIRE_REAL_CONTENT ? getExternalDramas() : [...getExternalDramas(), ...DRAMAS];
   return (
-    [...getExternalDramas(), ...DRAMAS].find((item) => String(item.id) === targetId) ||
-    DRAMAS[0]
+    source.find((item) => String(item.id) === targetId) || (REQUIRE_REAL_CONTENT ? null : DRAMAS[0])
   );
 }
 
 export function getHotDramas(limit = DRAMAS.length) {
-  return [...getExternalDramas(), ...DRAMAS].slice(0, limit);
+  const source = REQUIRE_REAL_CONTENT ? getExternalDramas() : [...getExternalDramas(), ...DRAMAS];
+  return source.slice(0, limit);
 }
 
 export function getDramasByCategory(category) {
   if (!category || category === '全部' || category === '热播') {
     return getHotDramas();
   }
-  return [...getExternalDramas(), ...DRAMAS].filter((item) => item.category === category);
+  const source = REQUIRE_REAL_CONTENT ? getExternalDramas() : [...getExternalDramas(), ...DRAMAS];
+  return source.filter((item) => item.category === category);
 }
 
 export function getRecommendDrama() {
-  return getHotDramas(1)[0] || DRAMAS[0];
+  return getHotDramas(1)[0] || (REQUIRE_REAL_CONTENT ? null : DRAMAS[0]);
 }
 
 export function saveHistory(id, episode = 1) {
   const drama = getDramaById(id);
+  if (!drama) {
+    return;
+  }
   const safeEpisode = Math.max(1, Math.min(Number(episode) || 1, drama.total));
   const history = readStorage(HISTORY_KEY, []).filter((item) => item.id !== id);
   history.unshift({

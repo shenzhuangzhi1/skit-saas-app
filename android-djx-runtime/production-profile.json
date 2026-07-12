@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "profileId": "xingheyingguan-cn-production",
+  "applicationId": "top.neoshen.xingheyingguan",
+  "appName": "短剧 SaaS",
+  "adProvider": "taku",
+  "pangle": {
+    "siteId": "5850994",
+    "contentAppId": "1037672",
+    "settingsAsset": "SDK_Setting.json",
+    "settingsSource": "nativeplugins/SkitPangleDrama/android/assets/SDK_Setting_5850994.json",
+    "adSdkVersion": "7.1.0.5",
+    "contentSdkVersion": "2.9.0.9"
+  },
+  "taku": {
+    "appId": "a6a50ac83df403",
+    "rewardPlacementId": "b6a50acf394505",
+    "sdkVersion": "6.6.22"
+  },
+  "outputBaseName": "xingheyingguan"
+}

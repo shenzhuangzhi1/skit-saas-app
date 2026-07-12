@@ -66,10 +66,11 @@
 <script setup>
   import { computed, ref } from 'vue';
   import { onLoad } from '@dcloudio/uni-app';
-  import { DRAMAS, saveHistory } from '@/pages/drama/data';
+  import { DRAMAS, getExternalDramas, saveHistory } from '@/pages/drama/data';
   import { openDirectDramaPlayer } from '@/pages/drama/services/pangle-content';
 
   const STORAGE_KEY = 'skit_drama_search_history_v1';
+  const requireRealContent = import.meta.env?.VITE_DRAMA_REAL_CONTENT_REQUIRED === 'true';
   const keyword = ref('');
   const historyList = ref([]);
   const hotKeywords = ['重生', '甜宠', '商战', '悬疑', '古装'];
@@ -79,7 +80,8 @@
     if (!word) {
       return [];
     }
-    return DRAMAS.filter((drama) => {
+    const source = requireRealContent ? getExternalDramas() : DRAMAS;
+    return source.filter((drama) => {
       const text = `${drama.title} ${drama.category} ${drama.tags.join(' ')} ${
         drama.desc
       }`.toLowerCase();

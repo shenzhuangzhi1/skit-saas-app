@@ -2,8 +2,7 @@ import { callNativeMethod, getNativePlugin } from './native-bridge';
 import { cacheExternalDramas } from '@/pages/drama/data';
 
 const PANGLE_PLUGIN_NAME = 'SkitPangleDrama';
-const DEFAULT_SETTING_FILE =
-  import.meta.env?.VITE_PANGLE_DRAMA_SETTING_FILE || 'SDK_Setting_5850994.json';
+const DEFAULT_SETTING_FILE = import.meta.env?.VITE_PANGLE_DRAMA_SETTING_FILE || 'SDK_Setting.json';
 const DEFAULT_FREE_SET = Number(import.meta.env?.VITE_PANGLE_DRAMA_FREE_SET || 8);
 const DEFAULT_LOCK_SET = Number(import.meta.env?.VITE_PANGLE_DRAMA_LOCK_SET || 5);
 const DEFAULT_PAGE_SIZE = Number(import.meta.env?.VITE_PANGLE_DRAMA_PAGE_SIZE || 24);

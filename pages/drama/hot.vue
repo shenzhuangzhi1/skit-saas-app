@@ -11,7 +11,12 @@
     </view>
 
     <scroll-view scroll-y class="page-scroll">
-      <view class="rank-list">
+      <view v-if="loading" class="content-state">正在加载真实榜单</view>
+      <view v-else-if="errorMessage" class="content-state">
+        <view>{{ errorMessage }}</view>
+        <button class="retry-btn" @tap="refresh">重新加载</button>
+      </view>
+      <view v-else class="rank-list">
         <view v-for="(drama, index) in list" :key="drama.id" class="rank-item" @tap="goPlay(drama)">
           <view class="rank-no" :class="{ top: index < 3 }">{{ index + 1 }}</view>
           <view class="poster" :style="{ background: drama.cover }">
@@ -31,10 +36,37 @@
 </template>
 
 <script setup>
+  import { ref } from 'vue';
+  import { onLoad } from '@dcloudio/uni-app';
   import { getHotDramas, saveHistory } from '@/pages/drama/data';
-  import { openDirectDramaPlayer } from '@/pages/drama/services/pangle-content';
+  import { getPangleDramaList, openDirectDramaPlayer } from '@/pages/drama/services/pangle-content';
 
-  const list = getHotDramas();
+  const requireRealContent = import.meta.env?.VITE_DRAMA_REAL_CONTENT_REQUIRED === 'true';
+  const list = ref(requireRealContent ? [] : getHotDramas());
+  const loading = ref(requireRealContent);
+  const errorMessage = ref('');
+
+  async function refresh() {
+    loading.value = true;
+    errorMessage.value = '';
+    try {
+      const result = await getPangleDramaList({ page: 1, pageSize: 72 });
+      if (result.skipped || result.list.length === 0) {
+        if (requireRealContent) {
+          throw new Error(result.skipped ? '短剧原生 SDK 未接入' : 'SDK 暂未返回可用剧目');
+        }
+        return;
+      }
+      list.value = result.list;
+    } catch (error) {
+      if (requireRealContent) {
+        list.value = [];
+        errorMessage.value = error?.message || '真实榜单加载失败';
+      }
+    } finally {
+      loading.value = false;
+    }
+  }
 
   function goBack() {
     uni.navigateBack();
@@ -44,6 +76,8 @@
     saveHistory(drama.id, 1);
     openDirectDramaPlayer(drama, 1, 'hot_direct');
   }
+
+  onLoad(refresh);
 </script>
 
 <style lang="scss" scoped>
@@ -85,6 +119,26 @@
 
   .page-scroll {
     height: calc(100vh - 174rpx);
+  }
+
+  .content-state {
+    padding: 160rpx 40rpx;
+    color: #777;
+    font-size: 28rpx;
+    text-align: center;
+  }
+
+  .retry-btn {
+    display: inline-block;
+    height: 68rpx;
+    margin-top: 24rpx;
+    padding: 0 32rpx;
+    border: 0;
+    border-radius: 34rpx;
+    background: #ff5a1f;
+    color: #fff;
+    font-size: 26rpx;
+    line-height: 68rpx;
   }
 
   .rank-list {

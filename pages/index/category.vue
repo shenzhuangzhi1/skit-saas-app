@@ -12,44 +12,59 @@
     </view>
 
     <scroll-view scroll-y class="page-scroll">
-      <view class="hot-section">
-        <view class="section-head">
-          <view class="section-title">热播短剧</view>
-          <view class="section-more" @tap="goHot">更多</view>
-        </view>
-        <scroll-view scroll-x class="horizontal-scroll" :show-scrollbar="false">
-          <view class="horizontal-list">
-            <DramaCard
-              v-for="drama in hotList"
-              :key="drama.id"
-              mode="compact"
-              :drama="drama"
-              @select="goPlay(drama, 1)"
-            />
+      <view v-if="contentLoading" class="content-state">
+        <uni-icons type="spinner-cycle" size="28" color="#ff5a1f" />
+        <view class="state-title">正在加载真实剧场</view>
+        <view class="state-desc">内容由穿山甲短剧 SDK 提供</view>
+      </view>
+
+      <view v-else-if="contentError" class="content-state">
+        <uni-icons type="info-filled" size="28" color="#ff5a1f" />
+        <view class="state-title">真实剧场加载失败</view>
+        <view class="state-desc">{{ contentError }}</view>
+        <button class="retry-btn" @tap="refreshPangleContent">重新加载</button>
+      </view>
+
+      <template v-else>
+        <view class="hot-section">
+          <view class="section-head">
+            <view class="section-title">热播短剧</view>
+            <view class="section-more" @tap="goHot">更多</view>
           </view>
-        </scroll-view>
-      </view>
-
-      <view class="category-tabs">
-        <view
-          v-for="category in categories"
-          :key="category"
-          class="category-tab"
-          :class="{ active: activeCategory === category }"
-          @tap="activeCategory = category"
-        >
-          {{ category }}
+          <scroll-view scroll-x class="horizontal-scroll" :show-scrollbar="false">
+            <view class="horizontal-list">
+              <DramaCard
+                v-for="drama in hotList"
+                :key="drama.id"
+                mode="compact"
+                :drama="drama"
+                @select="goPlay(drama, 1)"
+              />
+            </view>
+          </scroll-view>
         </view>
-      </view>
 
-      <view class="drama-grid">
-        <DramaCard
-          v-for="drama in filteredList"
-          :key="drama.id"
-          :drama="drama"
-          @select="goPlay(drama, 1)"
-        />
-      </view>
+        <view class="category-tabs">
+          <view
+            v-for="category in categories"
+            :key="category"
+            class="category-tab"
+            :class="{ active: activeCategory === category }"
+            @tap="activeCategory = category"
+          >
+            {{ category }}
+          </view>
+        </view>
+
+        <view class="drama-grid">
+          <DramaCard
+            v-for="drama in filteredList"
+            :key="drama.id"
+            :drama="drama"
+            @select="goPlay(drama, 1)"
+          />
+        </view>
+      </template>
     </scroll-view>
 
     <DramaTabbar active="theater" />
@@ -67,19 +82,25 @@
     getHotDramas,
     saveHistory,
   } from '@/pages/drama/data';
-  import {
-    getPangleDramaList,
-    openDirectDramaPlayer,
-  } from '@/pages/drama/services/pangle-content';
+  import { getPangleDramaList, openDirectDramaPlayer } from '@/pages/drama/services/pangle-content';
 
   uni.hideTabBar({
     fail: () => {},
   });
 
-  const categories = DRAMA_CATEGORIES;
+  const requireRealContent = import.meta.env?.VITE_DRAMA_REAL_CONTENT_REQUIRED === 'true';
   const activeCategory = ref('全部');
   const sdkList = ref([]);
-  const hotList = ref(getHotDramas(6));
+  const hotList = ref(requireRealContent ? [] : getHotDramas(6));
+  const contentLoading = ref(requireRealContent);
+  const contentError = ref('');
+  const categories = computed(() => {
+    if (!requireRealContent) {
+      return DRAMA_CATEGORIES;
+    }
+    const sdkCategories = sdkList.value.map((item) => item.category).filter(Boolean);
+    return ['全部', '热播', ...new Set(sdkCategories)];
+  });
   const filteredList = computed(() => {
     if (sdkList.value.length > 0) {
       if (
@@ -91,23 +112,34 @@
       }
       return sdkList.value.filter((item) => item.category === activeCategory.value);
     }
-    return getDramasByCategory(activeCategory.value);
+    return requireRealContent ? [] : getDramasByCategory(activeCategory.value);
   });
 
   async function refreshPangleContent() {
+    contentLoading.value = true;
+    contentError.value = '';
     try {
       const result = await getPangleDramaList({
         page: 1,
         pageSize: 72,
-        category: activeCategory.value,
       });
       if (result.skipped || result.list.length === 0) {
+        if (requireRealContent) {
+          throw new Error(result.skipped ? '短剧原生 SDK 未接入' : 'SDK 暂未返回可用剧目');
+        }
         return;
       }
       sdkList.value = result.list;
       hotList.value = result.list.slice(0, 6);
     } catch (error) {
       console.warn('[drama] Pangle theater list unavailable:', error);
+      if (requireRealContent) {
+        sdkList.value = [];
+        hotList.value = [];
+        contentError.value = error?.message || '请检查内容授权和网络后重试';
+      }
+    } finally {
+      contentLoading.value = false;
     }
   }
 
@@ -124,7 +156,7 @@
 
   onShow(() => {
     const intent = uni.getStorageSync('skit_drama_category_intent');
-    if (intent && categories.includes(intent)) {
+    if (intent) {
       activeCategory.value = intent;
       uni.removeStorageSync('skit_drama_category_intent');
     }
@@ -178,6 +210,42 @@
 
   .page-scroll {
     height: calc(100vh - 164rpx);
+  }
+
+  .content-state {
+    display: flex;
+    min-height: 620rpx;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    padding: 48rpx;
+    text-align: center;
+  }
+
+  .state-title {
+    margin-top: 20rpx;
+    color: #1f1f1f;
+    font-size: 32rpx;
+    font-weight: 800;
+  }
+
+  .state-desc {
+    margin-top: 12rpx;
+    color: #888;
+    font-size: 24rpx;
+    line-height: 36rpx;
+  }
+
+  .retry-btn {
+    height: 68rpx;
+    margin-top: 28rpx;
+    padding: 0 32rpx;
+    border: 0;
+    border-radius: 34rpx;
+    background: #ff5a1f;
+    color: #fff;
+    font-size: 26rpx;
+    line-height: 68rpx;
   }
 
   .hot-section {

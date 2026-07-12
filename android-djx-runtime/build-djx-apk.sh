@@ -13,15 +13,55 @@ JAVA_HOME="${JAVA_HOME:-$(/usr/libexec/java_home -v 17)}"
 ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 export JAVA_HOME ANDROID_HOME
 
+PROFILE_FILE="${SKIT_PRODUCTION_PROFILE:-$RUNTIME_DIR/production-profile.json}"
+if [[ ! -f "$PROFILE_FILE" ]]; then
+  echo "Missing production profile: $PROFILE_FILE" >&2
+  exit 1
+fi
+
+profile_value() {
+  python3 - "$PROFILE_FILE" "$1" <<'PY'
+import json
+import sys
+
+value = json.load(open(sys.argv[1], encoding="utf-8"))
+for part in sys.argv[2].split("."):
+    value = value[part]
+print(value)
+PY
+}
+
+assert_profile_override() {
+  local name="$1"
+  local expected="$2"
+  if [[ -n "${!name:-}" && "${!name}" != "$expected" ]]; then
+    echo "$name=${!name} conflicts with production profile value $expected" >&2
+    exit 1
+  fi
+}
+
 AGENT_CODE="${SKIT_AGENT_CODE:-}"
-AD_PROVIDER="${SKIT_DRAMA_AD_PROVIDER:-taku}"
-PANGLE_SETTINGS_SOURCE="${SKIT_PANGLE_SETTINGS_JSON:-$ROOT_DIR/nativeplugins/SkitPangleDrama/android/assets/SDK_Setting_5850994.json}"
-PANGLE_APP_ID="${SKIT_PANGLE_APP_ID:-5850994}"
-APPLICATION_ID="${SKIT_APPLICATION_ID:-top.neoshen.xingheyingguan}"
-TAKU_APP_ID="${SKIT_TAKU_APP_ID:-a6a50ac83df403}"
+PROFILE_ID="$(profile_value profileId)"
+AD_PROVIDER="$(profile_value adProvider)"
+PANGLE_APP_ID="$(profile_value pangle.siteId)"
+PANGLE_CONTENT_APP_ID="$(profile_value pangle.contentAppId)"
+PANGLE_SETTING_ASSET="$(profile_value pangle.settingsAsset)"
+PANGLE_SETTINGS_RELATIVE="$(profile_value pangle.settingsSource)"
+PANGLE_SETTINGS_SOURCE="${SKIT_PANGLE_SETTINGS_JSON:-$ROOT_DIR/$PANGLE_SETTINGS_RELATIVE}"
+APPLICATION_ID="$(profile_value applicationId)"
+APP_NAME="$(profile_value appName)"
+TAKU_APP_ID="$(profile_value taku.appId)"
 TAKU_APP_KEY="${SKIT_TAKU_APP_KEY:-}"
-TAKU_PLACEMENT_ID="${SKIT_TAKU_REWARD_PLACEMENT_ID:-b6a50acf394505}"
+TAKU_PLACEMENT_ID="$(profile_value taku.rewardPlacementId)"
+OUTPUT_BASE_NAME="$(profile_value outputBaseName)"
 BUILD_TYPE="${SKIT_BUILD_TYPE:-debug}"
+
+assert_profile_override SKIT_DRAMA_AD_PROVIDER "$AD_PROVIDER"
+assert_profile_override SKIT_PANGLE_APP_ID "$PANGLE_APP_ID"
+assert_profile_override SKIT_APPLICATION_ID "$APPLICATION_ID"
+assert_profile_override SKIT_APP_NAME "$APP_NAME"
+assert_profile_override SKIT_TAKU_APP_ID "$TAKU_APP_ID"
+assert_profile_override SKIT_TAKU_REWARD_PLACEMENT_ID "$TAKU_PLACEMENT_ID"
 
 if [[ "$BUILD_TYPE" != "debug" && "$BUILD_TYPE" != "release" ]]; then
   echo "SKIT_BUILD_TYPE must be debug or release" >&2
@@ -82,8 +122,15 @@ if [[ -n "$AGENT_CODE" ]]; then
     exit 1
   fi
 fi
-export VITE_PANGLE_DRAMA_SETTING_FILE="SDK_Setting.json"
+export SKIT_APPLICATION_ID="$APPLICATION_ID"
+export SKIT_APP_NAME="$APP_NAME"
+export SKIT_PANGLE_APP_ID="$PANGLE_APP_ID"
+export SKIT_TAKU_APP_ID="$TAKU_APP_ID"
+export SKIT_TAKU_REWARD_PLACEMENT_ID="$TAKU_PLACEMENT_ID"
+export VITE_PANGLE_DRAMA_SETTING_FILE="$PANGLE_SETTING_ASSET"
 export VITE_DRAMA_AD_PROVIDER="$AD_PROVIDER"
+export VITE_DRAMA_MOCK_REWARD_AD="false"
+export VITE_DRAMA_REAL_CONTENT_REQUIRED="true"
 export VITE_PANGLE_APP_ID="$PANGLE_APP_ID"
 export VITE_TAKU_APP_ID="$TAKU_APP_ID"
 export VITE_TAKU_REWARD_PLACEMENT_ID="$TAKU_PLACEMENT_ID"
@@ -94,21 +141,31 @@ if [[ ! -f "$PANGLE_SETTINGS_SOURCE" ]]; then
   exit 1
 fi
 
-python3 - "$PANGLE_SETTINGS_SOURCE" "$PANGLE_APP_ID" "$APPLICATION_ID" <<'PY'
+python3 - "$PANGLE_SETTINGS_SOURCE" "$PANGLE_APP_ID" "$PANGLE_CONTENT_APP_ID" "$APPLICATION_ID" <<'PY'
 import json
 import sys
 
-path, expected_site_id, expected_package = sys.argv[1:]
+path, expected_site_id, expected_content_app_id, expected_package = sys.argv[1:]
 with open(path, "r", encoding="utf-8") as source:
     profile = json.load(source)
 site_id = str(profile.get("init", {}).get("site_id", ""))
+content_app_id = str(profile.get("init", {}).get("app_id", ""))
 licenses = profile.get("license_config") or []
 packages = {str(item.get("PackageName", "")) for item in licenses}
 if site_id != expected_site_id:
     raise SystemExit(f"Pangle site_id mismatch: expected {expected_site_id}, got {site_id}")
+if content_app_id != expected_content_app_id:
+    raise SystemExit(
+        f"Pangle content app_id mismatch: expected {expected_content_app_id}, got {content_app_id}"
+    )
 if expected_package not in packages:
     raise SystemExit(f"Pangle license does not include package {expected_package}")
 PY
+
+if [[ "$BUILD_TYPE" == "release" && "${SKIP_UNI_BUILD:-0}" == "1" ]]; then
+  echo "Release builds cannot use SKIP_UNI_BUILD=1" >&2
+  exit 1
+fi
 
 if [[ "$H5_DIR" == "$DEFAULT_H5_DIR" && "${SKIP_UNI_BUILD:-0}" != "1" ]]; then
   H5_DIR="$H5_DIR" "$RUNTIME_DIR/build-h5.sh"
@@ -128,7 +185,7 @@ if ! grep -q 'djx-runtime.js' "$APP_DIR/src/main/assets/www/index.html"; then
   perl -0pi -e 's#</body>#  <script src="./djx-runtime.js"></script>\n  </body>#' "$APP_DIR/src/main/assets/www/index.html"
 fi
 find "$APP_DIR/src/main/assets" -maxdepth 1 -type f -name 'SDK_Setting*.json' -delete
-cp "$PANGLE_SETTINGS_SOURCE" "$APP_DIR/src/main/assets/SDK_Setting.json"
+cp "$PANGLE_SETTINGS_SOURCE" "$APP_DIR/src/main/assets/$PANGLE_SETTING_ASSET"
 
 if [[ ! -x "$GRADLE_DIR/bin/gradle" ]]; then
   if [[ ! -f "$GRADLE_ZIP" ]]; then
@@ -159,20 +216,11 @@ else
   SOURCE_APK="$APP_DIR/build/outputs/apk/debug/app-debug.apk"
 fi
 mkdir -p "$ROOT_DIR/dist"
-if [[ -n "$AGENT_CODE" ]]; then
-  OUTPUT_NAME="skit-$AGENT_CODE-djx-$BUILD_TYPE.apk"
-else
-  OUTPUT_NAME="skit-djx-$BUILD_TYPE.apk"
-fi
+OUTPUT_NAME="$OUTPUT_BASE_NAME-$BUILD_TYPE.apk"
 cp "$SOURCE_APK" "$ROOT_DIR/dist/$OUTPUT_NAME"
 
-APK_ENTRIES="$(unzip -Z1 "$ROOT_DIR/dist/$OUTPUT_NAME")"
-if ! grep -Fx 'assets/SDK_Setting.json' <<<"$APK_ENTRIES" >/dev/null; then
-  echo "Built APK is missing assets/SDK_Setting.json" >&2
-  exit 1
-fi
-if [[ "$(grep -Ec 'assets/SDK_Setting[^/]*\.json' <<<"$APK_ENTRIES")" -ne 1 ]]; then
-  echo "Built APK contains multiple Pangle settings assets" >&2
-  exit 1
-fi
+APK_FILE="$ROOT_DIR/dist/$OUTPUT_NAME" \
+  SKIT_PRODUCTION_PROFILE="$PROFILE_FILE" \
+  "$RUNTIME_DIR/verify-production-apk.sh"
+echo "profile=$PROFILE_ID"
 echo "$ROOT_DIR/dist/$OUTPUT_NAME"

@@ -1,0 +1,62 @@
+name: Android production APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: xingheyingguan-android-production
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build the unique signed production APK
+    runs-on: [self-hosted, macOS, hbuilderx, android]
+    environment: android-production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Materialize protected inputs
+        env:
+          PANGLE_SETTINGS_JSON_BASE64: ${{ secrets.PANGLE_SETTINGS_JSON_BASE64 }}
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          : "${PANGLE_SETTINGS_JSON_BASE64:?Set PANGLE_SETTINGS_JSON_BASE64}"
+          : "${RELEASE_KEYSTORE_BASE64:?Set RELEASE_KEYSTORE_BASE64}"
+          mkdir -p "$RUNNER_TEMP/skit-production"
+          printf '%s' "$PANGLE_SETTINGS_JSON_BASE64" | \
+            python3 -c 'import base64,sys; sys.stdout.buffer.write(base64.b64decode(sys.stdin.buffer.read()))' \
+            > "$RUNNER_TEMP/skit-production/SDK_Setting.json"
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" | \
+            python3 -c 'import base64,sys; sys.stdout.buffer.write(base64.b64decode(sys.stdin.buffer.read()))' \
+            > "$RUNNER_TEMP/skit-production/release.keystore"
+          chmod 600 "$RUNNER_TEMP/skit-production/"*
+
+      - name: Build and verify production APK
+        env:
+          SKIT_BUILD_TYPE: release
+          SKIT_API_BASE_URL: ${{ secrets.SKIT_API_BASE_URL }}
+          SKIT_PANGLE_SETTINGS_JSON: ${{ runner.temp }}/skit-production/SDK_Setting.json
+          SKIT_TAKU_APP_KEY: ${{ secrets.SKIT_TAKU_APP_KEY }}
+          SKIT_RELEASE_STORE_FILE: ${{ runner.temp }}/skit-production/release.keystore
+          SKIT_RELEASE_STORE_PASSWORD: ${{ secrets.SKIT_RELEASE_STORE_PASSWORD }}
+          SKIT_RELEASE_KEY_ALIAS: ${{ secrets.SKIT_RELEASE_KEY_ALIAS }}
+          SKIT_RELEASE_KEY_PASSWORD: ${{ secrets.SKIT_RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          ./android-djx-runtime/build-djx-apk.sh
+          APK_FILE="$PWD/dist/xingheyingguan-release.apk" \
+            ./android-djx-runtime/verify-production-apk.sh
+
+      - name: Upload signed APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: xingheyingguan-production-${{ github.sha }}
+          path: dist/xingheyingguan-release.apk
+          if-no-files-found: error
+          retention-days: 30

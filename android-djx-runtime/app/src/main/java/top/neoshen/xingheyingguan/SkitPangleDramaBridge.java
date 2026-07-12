@@ -190,6 +190,7 @@ public class SkitPangleDramaBridge {
         return new IDJXService.IDJXCallback<List<? extends DJXDrama>>() {
             @Override
             public void onSuccess(List<? extends DJXDrama> data, DJXOthers others) {
+                Log.i(TAG, "real drama list success count=" + (data == null ? 0 : data.size()));
                 JSONObject result = ok();
                 put(result, "list", dramaList(data));
                 put(result, "extra", othersJson(others));
