@@ -47,8 +47,6 @@
     </view>
 
     <view class="page-modal">
-      <!-- 全局授权弹窗 -->
-      <s-auth-modal />
       <!-- 全局分享弹窗 -->
       <s-share-modal :shareInfo="shareInfo" />
       <!-- 全局快捷入口 -->

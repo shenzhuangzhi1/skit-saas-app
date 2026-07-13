@@ -5,6 +5,7 @@
   "version": "2026.06",
   "description": "短剧 SaaS 移动端，一套代码支持 H5、小程序和 App。",
   "scripts": {
+    "check:identity": "node scripts/check-member-identity-boundary.mjs",
     "prettier": "prettier --write  \"{pages,sheep}/**/*.{js,json,tsx,css,less,scss,vue,html,md}\""
   },
   "repository": "https://github.com/shenzhuangzhi1/skit-saas-app.git",

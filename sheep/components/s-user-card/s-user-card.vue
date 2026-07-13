@@ -4,11 +4,16 @@
     <view class="ss-flex ss-col-center ss-row-between ss-m-b-20">
       <view class="left-box ss-flex ss-col-center ss-m-l-36">
         <view class="avatar-box ss-m-r-24">
-          <image class="avatar-img" :src="
+          <image
+            class="avatar-img"
+            :src="
               isLogin && userInfo.avatar
                 ? sheep.$url.cdn(userInfo.avatar)
-                : sheep.$url.static('/static/img/shop/default_avatar.png')"
-                 mode="aspectFill" @tap="sheep.$router.go('/pages/user/info')">
+                : sheep.$url.static('/static/img/shop/default_avatar.png')
+            "
+            mode="aspectFill"
+            @tap="sheep.$router.go('/pages/user/info')"
+          >
           </image>
         </view>
         <view>
@@ -22,18 +27,6 @@
           <text class="sicon-qrcode"></text>
         </button>
       </view>
-    </view>
-
-    <!-- 提示绑定手机号 先隐藏 yudao 需要再修改 -->
-    <view
-      class="bind-mobile-box ss-flex ss-row-between ss-col-center"
-      v-if="isLogin && !userInfo.mobile"
-    >
-      <view class="ss-flex">
-        <text class="cicon-mobile-o" />
-        <view class="mobile-title ss-m-l-20"> 点击绑定手机号确保账户安全</view>
-      </view>
-      <button class="ss-reset-button bind-btn" @tap="onBind">去绑定</button>
     </view>
   </view>
 </template>
@@ -55,10 +48,7 @@
    */
   import { computed } from 'vue';
   import sheep from '@/sheep';
-  import {
-    showShareModal,
-    showAuthModal,
-  } from '@/sheep/hooks/useModal';
+  import { showShareModal } from '@/sheep/hooks/useModal';
 
   // 用户信息
   const userInfo = computed(() => sheep.$store('user').userInfo);
@@ -107,16 +97,9 @@
 
     // 根据 bgType 返回相应的样式
     return {
-      background: bgType === 'img'
-        ? `url(${bgImg}) no-repeat top center / 100% 100%`
-        : bgColor,
+      background: bgType === 'img' ? `url(${bgImg}) no-repeat top center / 100% 100%` : bgColor,
     };
   });
-
-  // 绑定手机号
-  function onBind() {
-    showAuthModal('changeMobile');
-  }
 </script>
 
 <style lang="scss" scoped>
@@ -149,36 +132,6 @@
 
     .sicon-qrcode {
       font-size: 40rpx;
-    }
-  }
-
-  .bind-mobile-box {
-    width: 100%;
-    height: 84rpx;
-    padding: 0 34rpx 0 44rpx;
-    box-sizing: border-box;
-    background: #ffffff;
-    box-shadow: 0px -8rpx 9rpx 0px rgba(#e0e0e0, 0.3);
-
-    .cicon-mobile-o {
-      font-size: 30rpx;
-      color: #ff690d;
-    }
-
-    .mobile-title {
-      font-size: 24rpx;
-      font-weight: 500;
-      color: #ff690d;
-    }
-
-    .bind-btn {
-      width: 100rpx;
-      height: 50rpx;
-      background: #ff6100;
-      border-radius: 25rpx;
-      font-size: 24rpx;
-      font-weight: 500;
-      color: #ffffff;
     }
   }
 </style>

@@ -56,12 +56,6 @@
       }
     },
     {
-      "path": "pages/index/login",
-      "style": {
-        "navigationBarTitleText": "登录"
-      }
-    },
-    {
       "path": "pages/auth/index",
       "style": {
         "navigationBarTitleText": "登录注册"

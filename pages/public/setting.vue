@@ -35,20 +35,9 @@
           class="list-border"
           @tap="
             sheep.$router.go('/pages/public/richtext', {
-              title: '关于我们'
+              title: '关于我们',
             })
           "
-        />
-        <!-- 为了过审 只有 iOS-App 有注销账号功能 -->
-        <uni-list-item
-          v-if="isLogin && sheep.$platform.os === 'ios' && sheep.$platform.name === 'App'"
-          title="注销账号"
-          rightText=""
-          showArrow
-          clickable
-          :border="false"
-          class="list-border"
-          @click="onLogoff"
         />
       </uni-list>
     </view>
@@ -59,7 +48,7 @@
             class="tcp-text"
             @tap="
               sheep.$router.go('/pages/public/richtext', {
-                title: '用户协议'
+                title: '用户协议',
               })
             "
           >
@@ -70,7 +59,7 @@
             class="tcp-text"
             @tap="
               sheep.$router.go('/pages/public/richtext', {
-                title: '隐私协议'
+                title: '隐私协议',
               })
             "
           >
@@ -112,25 +101,6 @@
     // 小程序初始化时已检查更新
     // H5实时更新无需检查
     // App 1.跳转应用市场更新 2.手动热更新 3.整包更新
-  }
-
-  // 注销账号
-  function onLogoff() {
-    uni.showModal({
-      title: '提示',
-      content: '确认注销账号？',
-      success: async function (res) {
-        if (!res.confirm) {
-          return;
-        }
-        const { code } = await AuthUtil.logout();
-        if (code !== 0) {
-          return;
-        }
-        sheep.$store('user').logout();
-        sheep.$router.go('/pages/index/user');
-      },
-    });
   }
 
   // 退出账号

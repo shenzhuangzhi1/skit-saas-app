@@ -6,7 +6,6 @@
 
 import jweixin from 'weixin-js-sdk';
 import $helper from '@/sheep/helper';
-import AuthUtil from '@/sheep/api/member/auth';
 
 let configSuccess = false;
 let configAppId = ''; // JSSDK 初始化所使用的公众号 appId，确认收款时需要
@@ -24,38 +23,35 @@ export default {
   },
 
   // 初始化 JSSDK
-  async init(callback) {
+  async init(data, callback) {
     if (!this.isWechat()) {
       $helper.toast('请使用微信网页浏览器打开');
-      return;
+      return false;
     }
 
-    // 调用后端接口，获得 JSSDK 初始化所需的签名
-    // 微信要求签名 URL 与当前页面去掉 hash 后完全一致；不能直接用 location.origin（会丢子路径与 query）
-    const signUrl = location.href.split('#')[0];
-    const { code, data } = await AuthUtil.createWeixinMpJsapiSignature(signUrl);
-    if (code === 0) {
-      jweixin.config({
-        debug: false,
-        appId: data.appId,
-        timestamp: data.timestamp,
-        nonceStr: data.nonceStr,
-        signature: data.signature,
-        jsApiList: [
-          'chooseWXPay',
-          'openLocation',
-          'getLocation',
-          'updateAppMessageShareData',
-          'updateTimelineShareData',
-          'scanQRCode',
-          // 'requestMerchantTransfer', // TODO @使用者：如果需要微信商家转账功能，请打开该注释；
-        ], // TODO 芋艿：后续可以设置更多权限；
-        openTagList: data.openTagList,
-      });
-      configAppId = data.appId;
-    } else {
-      console.log('请求 JSSDK 配置失败，错误码：', code);
+    // 签名必须由租户化业务接口提供。本模块只负责消费签名，不再调用通用会员认证接口。
+    if (!data?.appId || !data?.timestamp || !data?.nonceStr || !data?.signature) {
+      return false;
     }
+    const signUrl = location.href.split('#')[0];
+    jweixin.config({
+      debug: false,
+      appId: data.appId,
+      timestamp: data.timestamp,
+      nonceStr: data.nonceStr,
+      signature: data.signature,
+      jsApiList: [
+        'chooseWXPay',
+        'openLocation',
+        'getLocation',
+        'updateAppMessageShareData',
+        'updateTimelineShareData',
+        'scanQRCode',
+        // 'requestMerchantTransfer', // TODO @使用者：如果需要微信商家转账功能，请打开该注释；
+      ],
+      openTagList: data.openTagList,
+    });
+    configAppId = data.appId;
 
     // 监听结果
     configSuccess = true;
@@ -78,6 +74,7 @@ export default {
     if (callback) {
       callback(data);
     }
+    return true;
   },
 
   //在需要定位页面调用 TODO 芋艿：未测试

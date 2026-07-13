@@ -94,29 +94,30 @@ export default class SheepPay {
       // 特殊逻辑：微信公众号、小程序支付时，必须传入 openid
       if (['wx_pub', 'wx_lite'].includes(channel)) {
         const openid = await sheep.$platform.useProvider('wechat').getOpenid(true);
-        // 如果获取不到 openid，微信无法发起支付，此时需要引导
+        // 微信身份不属于短剧会员登录体系；没有宿主注入的 openid 时不自动绑定第二套身份。
         if (!openid) {
-          this.bindWeixin();
+          this.showWeixinIdentityUnavailable();
+          resolve({ code: -1, data: null });
           return;
         }
         data.channelExtras.openid = openid;
       }
       // 发起预支付 API 调用
-      PayOrderApi.submitOrder(data).then((res) => {
-        // 成功时
-        res.code === 0 && resolve(res);
-        // 失败时
-        if (res.code !== 0 && res.msg.indexOf('无效的openid') >= 0) {
-          // 特殊逻辑：微信公众号、小程序支付时，必须传入 openid 不正确的情况
-          if (
-            res.msg.indexOf('无效的openid') >= 0 || // 获取的 openid 不正确时，或者随便输入了个 openid
-            res.msg.indexOf('下单账号与支付账号不一致') >= 0
-          ) {
-            // https://developers.weixin.qq.com/community/develop/doc/00008c53c347804beec82aed051c00
-            this.bindWeixin();
+      PayOrderApi.submitOrder(data)
+        .then((res) => {
+          if (res.code !== 0 && res.msg.indexOf('无效的openid') >= 0) {
+            // 特殊逻辑：微信公众号、小程序支付时，必须传入 openid 不正确的情况
+            if (
+              res.msg.indexOf('无效的openid') >= 0 || // 获取的 openid 不正确时，或者随便输入了个 openid
+              res.msg.indexOf('下单账号与支付账号不一致') >= 0
+            ) {
+              // https://developers.weixin.qq.com/community/develop/doc/00008c53c347804beec82aed051c00
+              this.showWeixinIdentityUnavailable();
+            }
           }
-        }
-      });
+          resolve(res);
+        })
+        .catch(reject);
     });
   }
   // #ifdef H5
@@ -265,13 +266,13 @@ export default class SheepPay {
 
     // 解析支付参数
     let payConfig = JSON.parse(data.displayContent);
-    if(typeof payConfig.appId === 'undefined'){
+    if (typeof payConfig.appId === 'undefined') {
       payConfig.appId = payConfig.appid;
     }
-    if(typeof payConfig.nonceStr === 'undefined'){
+    if (typeof payConfig.nonceStr === 'undefined') {
       payConfig.nonceStr = payConfig.noncestr;
     }
-    if(typeof payConfig.timeStamp === 'undefined'){
+    if (typeof payConfig.timeStamp === 'undefined') {
       payConfig.timeStamp = payConfig.timestamp;
     }
     // 调用微信支付
@@ -301,9 +302,8 @@ export default class SheepPay {
     goPayResult(this.id, this.orderType, resultType);
   }
 
-  // 引导绑定微信
-  bindWeixin() {
-    goBindWeixin();
+  showWeixinIdentityUnavailable() {
+    showWeixinIdentityUnavailable();
   }
 }
 
@@ -385,15 +385,11 @@ export function goPayResult(id, orderType, resultType) {
   });
 }
 
-export function goBindWeixin() {
+export function showWeixinIdentityUnavailable() {
   uni.showModal({
     title: '微信支付',
-    content: '请先绑定微信再使用微信支付',
-    success: function (res) {
-      if (res.confirm) {
-        sheep.$platform.useProvider('wechat').bind();
-      }
-    },
+    content: '当前代理商 App 尚未配置微信支付身份，请选择其他支付方式或联系代理商。',
+    showCancel: false,
   });
 }
 

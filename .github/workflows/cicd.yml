@@ -36,6 +36,9 @@ jobs:
           }
           NODE
 
+      - name: Enforce Skit member identity boundary
+        run: node scripts/check-member-identity-boundary.mjs
+
       - name: Package source bundle
         run: |
           set -euo pipefail
