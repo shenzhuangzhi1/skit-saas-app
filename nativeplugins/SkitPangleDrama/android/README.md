@@ -79,6 +79,6 @@ DJXSdk.factory().createDramaDetail(...);
 
 - 首页 / 剧场：优先使用 `list` 拉取真实穿山甲短剧列表。
 - 播放页：用 `openPlayer` 打开穿山甲短剧原生播放器。
-- 解锁：当前页面层仍保留 GroMore/Taku 激励广告控制，后续要切成 DJX 非完全封装模式的自定义解锁时，再实现 `IDJXDramaUnlockListener` 里的广告展示回调。
+- 解锁：页面先向服务端创建一次性广告会话，再由 Taku 原生桥按该会话加载和展示广告；客户端回调只上报过程，必须等服务端签名奖励回调生成权益后才能播放付费剧集。GroMore 与本地兜底解锁均已移除。
 
 当前仓库的 WebView 预览 APK 不包含本原生 SDK，只能验证 UI 和广告回调占位。真实短剧播放必须通过 HBuilderX 自定义基座/云打包或 Android 离线打包工程验证。
