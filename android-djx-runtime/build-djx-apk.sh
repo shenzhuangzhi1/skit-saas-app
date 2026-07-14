@@ -13,11 +13,21 @@ JAVA_HOME="${JAVA_HOME:-$(/usr/libexec/java_home -v 17)}"
 ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 export JAVA_HOME ANDROID_HOME
 
-PROFILE_FILE="${SKIT_PRODUCTION_PROFILE:-$RUNTIME_DIR/production-profile.json}"
-if [[ ! -f "$PROFILE_FILE" ]]; then
-  echo "Missing production profile: $PROFILE_FILE" >&2
+PROFILE_CODE="${SKIT_PROFILE_CODE:-${SKIT_AGENT_CODE:-}}"
+if [[ ! "$PROFILE_CODE" =~ ^[A-Z0-9_-]{3,32}$ ]]; then
+  echo "SKIT_PROFILE_CODE must be the canonical uppercase release profile code" >&2
   exit 1
 fi
+PROFILE_FILE="$RUNTIME_DIR/profiles/$PROFILE_CODE.json"
+if [[ -n "${SKIT_PRODUCTION_PROFILE:-}" && "$SKIT_PRODUCTION_PROFILE" != "$PROFILE_FILE" ]]; then
+  echo "SKIT_PRODUCTION_PROFILE must be the controlled profile $PROFILE_FILE" >&2
+  exit 1
+fi
+node "$RUNTIME_DIR/resolve-build-profile.mjs" \
+  --profile-code "$PROFILE_CODE" \
+  --profiles-dir "$RUNTIME_DIR/profiles"
+export SKIT_PROFILE_CODE="$PROFILE_CODE"
+export SKIT_PRODUCTION_PROFILE="$PROFILE_FILE"
 
 profile_value() {
   python3 - "$PROFILE_FILE" "$1" <<'PY'
@@ -40,7 +50,10 @@ assert_profile_override() {
   fi
 }
 
-AGENT_CODE="${SKIT_AGENT_CODE:-}"
+AGENT_CODE="${SKIT_AGENT_CODE:-$PROFILE_CODE}"
+PROFILE_CODE_VALUE="$(profile_value profileCode)"
+PROFILE_VERSION="$(profile_value profileVersion)"
+PROFILE_TENANT_ID="$(profile_value tenantId)"
 PROFILE_ID="$(profile_value profileId)"
 AD_PROVIDER="$(profile_value adProvider)"
 PANGLE_APP_ID="$(profile_value pangle.siteId)"
@@ -55,6 +68,21 @@ TAKU_APP_KEY="${SKIT_TAKU_APP_KEY:-}"
 TAKU_PLACEMENT_ID="$(profile_value taku.rewardPlacementId)"
 OUTPUT_BASE_NAME="$(profile_value outputBaseName)"
 BUILD_TYPE="${SKIT_BUILD_TYPE:-debug}"
+
+if [[ "$PROFILE_CODE_VALUE" != "$PROFILE_CODE" ]]; then
+  echo "Profile profileCode must equal SKIT_PROFILE_CODE" >&2
+  exit 1
+fi
+if [[ "$AGENT_CODE" != "$PROFILE_CODE" ]]; then
+  echo "SKIT_AGENT_CODE must equal SKIT_PROFILE_CODE" >&2
+  exit 1
+fi
+if [[ -n "${SKIT_TENANT_ID:-}" && "$SKIT_TENANT_ID" != "$PROFILE_TENANT_ID" ]]; then
+  echo "SKIT_TENANT_ID must equal SKIT_AGENT_CODE" >&2
+  exit 1
+fi
+export SKIT_AGENT_CODE="$AGENT_CODE"
+export SKIT_TENANT_ID="$PROFILE_TENANT_ID"
 
 assert_profile_override SKIT_DRAMA_AD_PROVIDER "$AD_PROVIDER"
 assert_profile_override SKIT_PANGLE_APP_ID "$PANGLE_APP_ID"
@@ -288,4 +316,5 @@ else
     "$RUNTIME_DIR/verify-production-apk.sh"
 fi
 echo "profile=$PROFILE_ID"
+echo "profile_code=$PROFILE_CODE profile_version=$PROFILE_VERSION"
 echo "$ROOT_DIR/dist/$OUTPUT_NAME"

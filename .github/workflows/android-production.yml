@@ -24,18 +24,29 @@ permissions:
   contents: read
 
 concurrency:
-  group: xingheyingguan-android-production
+  group: android-production-${{ inputs.profile_code }}
   cancel-in-progress: false
 
 jobs:
   build:
     name: Build the unique signed production APK
     runs-on: [self-hosted, macOS, hbuilderx, android]
-    environment: android-production
+    environment: android-production-${{ inputs.profile_code }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+
+      - name: Resolve exact versioned agent profile
+        id: profile
+        env:
+          PROFILE_CODE: ${{ inputs.profile_code }}
+        run: |
+          set -euo pipefail
+          node android-djx-runtime/resolve-build-profile.mjs \
+            --profile-code "$PROFILE_CODE" \
+            --github-env "$GITHUB_ENV" \
+            --github-output "$GITHUB_OUTPUT"
 
       - name: Materialize protected inputs
         env:
@@ -57,14 +68,11 @@ jobs:
       - name: Build and verify production APK
         env:
           SKIT_BUILD_TYPE: release
+          SKIT_PROFILE_CODE: ${{ inputs.profile_code }}
           SKIT_AGENT_CODE: ${{ inputs.profile_code }}
           SKIT_API_BASE_URL: ${{ secrets.SKIT_API_BASE_URL }}
-          SKIT_APPLICATION_ID: ${{ vars.SKIT_APPLICATION_ID }}
-          SKIT_PANGLE_APP_ID: ${{ vars.SKIT_PANGLE_APP_ID }}
           SKIT_PANGLE_SETTINGS_JSON: ${{ runner.temp }}/skit-production/SDK_Setting.json
-          SKIT_TAKU_APP_ID: ${{ vars.SKIT_TAKU_APP_ID }}
           SKIT_TAKU_APP_KEY: ${{ secrets.SKIT_TAKU_APP_KEY }}
-          SKIT_TAKU_REWARD_PLACEMENT_ID: ${{ vars.SKIT_TAKU_REWARD_PLACEMENT_ID }}
           SKIT_RELEASE_STORE_FILE: ${{ runner.temp }}/skit-production/release.keystore
           SKIT_RELEASE_STORE_PASSWORD: ${{ secrets.SKIT_RELEASE_STORE_PASSWORD }}
           SKIT_RELEASE_KEY_ALIAS: ${{ secrets.SKIT_RELEASE_KEY_ALIAS }}
@@ -79,13 +87,13 @@ jobs:
         run: |
           set -euo pipefail
           ./android-djx-runtime/build-djx-apk.sh
-          APK_FILE="$PWD/dist/xingheyingguan-release.apk" \
+          APK_FILE="$PWD/dist/${SKIT_OUTPUT_BASE_NAME}-release.apk" \
             ./android-djx-runtime/verify-production-apk.sh
 
       - name: Upload signed APK
         uses: actions/upload-artifact@v4
         with:
-          name: xingheyingguan-production-${{ github.sha }}
-          path: dist/xingheyingguan-release.apk
+          name: android-production-${{ inputs.profile_code }}-v${{ steps.profile.outputs.profile_version }}-${{ github.sha }}
+          path: dist/${{ steps.profile.outputs.output_base_name }}-release.apk
           if-no-files-found: error
           retention-days: 30

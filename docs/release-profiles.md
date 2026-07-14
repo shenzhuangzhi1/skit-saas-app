@@ -1,5 +1,10 @@
 # Agent App release profiles
 
+本文的 SaaS `skit_app_release_profile` 是已构建产物的发布元数据，不是 Android 原生构建
+档案。原生包名和广告 SDK 身份由仓库中的
+`android-djx-runtime/profiles/<PROFILE_CODE>.json` 管理；两者使用相同 `profileCode` 关联，
+但后台发布表绝不保存构建 Secret。
+
 Each agent has one public release profile, using its agent code as `profileCode`. The profile is stored by the SaaS backend in `skit_app_release_profile` and contains only delivery data:
 
 - `channel`, `minNativeVersion`, `hotVersion`

@@ -2,11 +2,40 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-AGENT_CODE="${SKIT_AGENT_CODE:-}"
+RUNTIME_DIR="$ROOT_DIR/android-djx-runtime"
+PROFILE_CODE="${SKIT_PROFILE_CODE:-${SKIT_AGENT_CODE:-}}"
+if [[ ! "$PROFILE_CODE" =~ ^[A-Z0-9_-]{3,32}$ ]]; then
+  echo "SKIT_PROFILE_CODE must be the canonical uppercase release profile code" >&2
+  exit 1
+fi
+PROFILE_FILE="$RUNTIME_DIR/profiles/$PROFILE_CODE.json"
+if [[ -n "${SKIT_PRODUCTION_PROFILE:-}" && "$SKIT_PRODUCTION_PROFILE" != "$PROFILE_FILE" ]]; then
+  echo "SKIT_PRODUCTION_PROFILE must be the controlled profile $PROFILE_FILE" >&2
+  exit 1
+fi
+node "$RUNTIME_DIR/resolve-build-profile.mjs" \
+  --profile-code "$PROFILE_CODE" \
+  --profiles-dir "$RUNTIME_DIR/profiles"
+
+profile_value() {
+  python3 - "$PROFILE_FILE" "$1" <<'PY'
+import json
+import sys
+
+value = json.load(open(sys.argv[1], encoding="utf-8"))
+for part in sys.argv[2].split("."):
+    value = value[part]
+print(value)
+PY
+}
+
+PROFILE_TENANT_ID="$(profile_value tenantId)"
+PROFILE_APPLICATION_ID="$(profile_value applicationId)"
+AGENT_CODE="${SKIT_AGENT_CODE:-$PROFILE_CODE}"
 HOT_VERSION="${SKIT_HOT_VERSION:-}"
 HOT_RELEASE_NO="${SKIT_HOT_RELEASE_NO:-}"
-TENANT_ID="${SKIT_TENANT_ID:-}"
-APPLICATION_ID="${SKIT_APPLICATION_ID:-}"
+TENANT_ID="${SKIT_TENANT_ID:-$PROFILE_TENANT_ID}"
+APPLICATION_ID="${SKIT_APPLICATION_ID:-$PROFILE_APPLICATION_ID}"
 PROTOCOL_VERSION="${SKIT_RUNTIME_PROTOCOL_VERSION:-}"
 BUNDLE_URL="${SKIT_HOT_BUNDLE_URL:-}"
 SIGNING_KEY="${SKIT_HOT_MANIFEST_SIGNING_KEY:-}"
@@ -17,6 +46,10 @@ H5_DIR="${H5_DIR:-$ROOT_DIR/unpackage/dist/build/hot-update}"
 
 if [[ ! "$AGENT_CODE" =~ ^[A-Z0-9_-]{3,32}$ ]]; then
   echo "SKIT_AGENT_CODE is required and has an invalid format" >&2
+  exit 1
+fi
+if [[ "$AGENT_CODE" != "$PROFILE_CODE" ]]; then
+  echo "SKIT_AGENT_CODE must equal SKIT_PROFILE_CODE" >&2
   exit 1
 fi
 if [[ ! "$HOT_VERSION" =~ ^[0-9]+(\.[0-9]+){1,3}([-.][A-Za-z0-9._-]+)?$ ]]; then
@@ -35,8 +68,16 @@ if [[ "$TENANT_ID" != "$AGENT_CODE" ]]; then
   echo "SKIT_TENANT_ID must equal SKIT_AGENT_CODE" >&2
   exit 1
 fi
+if [[ "$TENANT_ID" != "$PROFILE_TENANT_ID" ]]; then
+  echo "SKIT_TENANT_ID conflicts with the selected build profile" >&2
+  exit 1
+fi
 if [[ ! "$APPLICATION_ID" =~ ^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$ ]]; then
   echo "SKIT_APPLICATION_ID is required and has an invalid format" >&2
+  exit 1
+fi
+if [[ "$APPLICATION_ID" != "$PROFILE_APPLICATION_ID" ]]; then
+  echo "SKIT_APPLICATION_ID conflicts with the selected build profile" >&2
   exit 1
 fi
 if [[ ! "$PROTOCOL_VERSION" =~ ^[1-9][0-9]*$ ]]; then
@@ -82,6 +123,10 @@ if [[ "$DERIVED_PUBLIC_KEY" != "$EMBEDDED_PUBLIC_KEY" ]]; then
 fi
 
 export SKIT_AGENT_CODE="$AGENT_CODE"
+export SKIT_PROFILE_CODE="$PROFILE_CODE"
+export SKIT_PRODUCTION_PROFILE="$PROFILE_FILE"
+export SKIT_TENANT_ID="$TENANT_ID"
+export SKIT_APPLICATION_ID="$APPLICATION_ID"
 export SKIT_API_BASE_URL="$API_BASE_URL"
 export H5_DIR
 "$ROOT_DIR/android-djx-runtime/build-h5.sh"

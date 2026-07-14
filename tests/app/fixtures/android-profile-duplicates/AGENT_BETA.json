@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 2,
+  "profileVersion": 1,
+  "profileCode": "AGENT_BETA",
+  "tenantId": "AGENT_BETA",
+  "profileId": "agent-beta",
+  "applicationId": "com.example.shared",
+  "appName": "Beta",
+  "adProvider": "pangle",
+  "pangle": {
+    "siteId": "110002",
+    "contentAppId": "210002",
+    "settingsAsset": "SDK_Setting.json",
+    "settingsSource": "secure/beta/SDK_Setting.json",
+    "adSdkVersion": "7.1.0.5",
+    "contentSdkVersion": "2.9.0.9"
+  },
+  "taku": {
+    "appId": "beta-app",
+    "rewardPlacementId": "beta-placement",
+    "sdkVersion": "6.6.22"
+  },
+  "outputBaseName": "beta"
+}

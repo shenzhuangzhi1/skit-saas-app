@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 2,
+  "profileVersion": 1,
+  "profileCode": "AGENT_ALPHA",
+  "tenantId": "AGENT_ALPHA",
+  "profileId": "agent-alpha",
+  "applicationId": "com.example.shared",
+  "appName": "Alpha",
+  "adProvider": "taku",
+  "pangle": {
+    "siteId": "110001",
+    "contentAppId": "210001",
+    "settingsAsset": "SDK_Setting.json",
+    "settingsSource": "secure/alpha/SDK_Setting.json",
+    "adSdkVersion": "7.1.0.5",
+    "contentSdkVersion": "2.9.0.9"
+  },
+  "taku": {
+    "appId": "alpha-app",
+    "rewardPlacementId": "alpha-placement",
+    "sdkVersion": "6.6.22"
+  },
+  "outputBaseName": "alpha"
+}

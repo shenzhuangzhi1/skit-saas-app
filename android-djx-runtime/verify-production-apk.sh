@@ -2,8 +2,21 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-PROFILE_FILE="${SKIT_PRODUCTION_PROFILE:-$ROOT_DIR/android-djx-runtime/production-profile.json}"
-APK_FILE="${APK_FILE:-${1:-$ROOT_DIR/dist/xingheyingguan-debug.apk}}"
+RUNTIME_DIR="$ROOT_DIR/android-djx-runtime"
+PROFILE_CODE="${SKIT_PROFILE_CODE:-${SKIT_AGENT_CODE:-}}"
+if [[ ! "$PROFILE_CODE" =~ ^[A-Z0-9_-]{3,32}$ ]]; then
+  echo "Production APK verification failed: SKIT_PROFILE_CODE is missing or invalid" >&2
+  exit 1
+fi
+PROFILE_FILE="$RUNTIME_DIR/profiles/$PROFILE_CODE.json"
+if [[ -n "${SKIT_PRODUCTION_PROFILE:-}" && "$SKIT_PRODUCTION_PROFILE" != "$PROFILE_FILE" ]]; then
+  echo "Production APK verification failed: SKIT_PRODUCTION_PROFILE is not controlled" >&2
+  exit 1
+fi
+node "$RUNTIME_DIR/resolve-build-profile.mjs" \
+  --profile-code "$PROFILE_CODE" \
+  --profiles-dir "$RUNTIME_DIR/profiles" >/dev/null
+APK_FILE_OVERRIDE="${APK_FILE:-${1:-}}"
 ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 ALLOW_DEBUG_RUNTIME_DEFAULTS="${SKIT_ALLOW_DEBUG_RUNTIME_DEFAULTS:-0}"
 
@@ -25,9 +38,12 @@ PY
 }
 
 [[ -f "$PROFILE_FILE" ]] || fail "missing profile $PROFILE_FILE"
-[[ -f "$APK_FILE" ]] || fail "missing APK $APK_FILE"
 
 PROFILE_ID="$(profile_value profileId)"
+PROFILE_CODE_VALUE="$(profile_value profileCode)"
+EXPECTED_OUTPUT_BASE_NAME="$(profile_value outputBaseName)"
+APK_FILE="${APK_FILE_OVERRIDE:-$ROOT_DIR/dist/${EXPECTED_OUTPUT_BASE_NAME}-debug.apk}"
+[[ -f "$APK_FILE" ]] || fail "missing APK $APK_FILE"
 EXPECTED_PACKAGE="$(profile_value applicationId)"
 EXPECTED_ASSET="$(profile_value pangle.settingsAsset)"
 EXPECTED_SITE_ID="$(profile_value pangle.siteId)"
@@ -46,6 +62,8 @@ EXPECTED_VERSION_NAME="${SKIT_VERSION_NAME:-2026.07.10-djx}"
 EXPECTED_RELEASE_CERT_SHA256="$(
   printf '%s' "${SKIT_RELEASE_CERT_SHA256:-}" | tr -d ':' | tr '[:upper:]' '[:lower:]'
 )"
+
+[[ "$PROFILE_CODE_VALUE" == "$PROFILE_CODE" ]] || fail "profileCode does not match SKIT_PROFILE_CODE"
 
 if [[ "$ALLOW_DEBUG_RUNTIME_DEFAULTS" == "1" ]]; then
   [[ "$EXPECTED_TENANT_ID" =~ ^[A-Za-z0-9._-]{1,128}$ ]] || \
