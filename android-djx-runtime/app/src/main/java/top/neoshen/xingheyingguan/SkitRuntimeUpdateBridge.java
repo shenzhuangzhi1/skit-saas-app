@@ -13,12 +13,13 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.HttpsURLConnection;
 import java.net.URL;
 import java.security.MessageDigest;
 import java.util.Locale;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
+
+import javax.net.ssl.HttpsURLConnection;
 
 /**
  * Installs a verified web bundle for the custom WebView runtime. The bundle may update UI code only;
