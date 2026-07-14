@@ -1,0 +1,2 @@
+# HBuilder emits byte-for-byte packaged assets; do not rewrite or whitespace-normalize them.
+android-djx-runtime/static-www/** -text -whitespace
