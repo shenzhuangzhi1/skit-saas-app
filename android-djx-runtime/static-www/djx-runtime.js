@@ -25,8 +25,8 @@
       window.__SkitNativeBridgeEmit(id, rawResult, true);
     };
 
-    function callNative(nativeBridge, nativeName, method, payload, callback) {
-      if (!nativeBridge || typeof nativeBridge.postMessage !== 'function') {
+    function callNative(bridge, nativeName, method, payload, callback) {
+      if (!window.SkitNativeBridge || typeof window.SkitNativeBridge.postMessage !== 'function') {
         if (typeof callback === 'function') {
           callback({ success: false, message: nativeName + ' missing' });
         }
@@ -34,7 +34,8 @@
       }
       var id = 'djx_' + Date.now() + '_' + sequence++;
       callbacks[id] = typeof callback === 'function' ? callback : function () {};
-      nativeBridge.postMessage(JSON.stringify({
+      window.SkitNativeBridge.postMessage(JSON.stringify({
+        bridge: bridge,
         id: id,
         method: method,
         payload: payload || {},
@@ -42,15 +43,15 @@
     }
 
     function callPangle(method, payload, callback) {
-      callNative(window.SkitPangleDramaNative, 'SkitPangleDramaNative', method, payload, callback);
+      callNative('PANGLE', 'SkitPangleDrama', method, payload, callback);
     }
 
     function callTaku(method, payload, callback) {
-      callNative(window.SkitTakuAdNative, 'SkitTakuAdNative', method, payload, callback);
+      callNative('TAKU', 'SkitTakuAd', method, payload, callback);
     }
 
     function callRuntimeUpdate(method, payload, callback) {
-      callNative(window.SkitRuntimeUpdateNative, 'SkitRuntimeUpdateNative', method, payload, callback);
+      callNative('RUNTIME_UPDATE', 'SkitRuntimeUpdate', method, payload, callback);
     }
 
     var originalRequire = window.uni.requireNativePlugin;

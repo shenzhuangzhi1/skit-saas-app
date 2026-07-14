@@ -63,6 +63,18 @@ public class RuntimeUpdateManifestVerifierTest {
     }
 
     @Test
+    public void verifiesAnAlreadyActiveSignedMarkerWithoutApplyingCandidateReplayRules()
+            throws Exception {
+        RuntimeUpdateManifest unsigned = manifest(
+                "tenant-11", "com.example.agent", repeat('a', 64), 1, 42L, new byte[0]);
+        RuntimeUpdateManifest signed = unsigned.withSignature(sign(unsigned.canonicalBytes()));
+
+        assertEquals(42L, verifier.verifyActive(signed).getReleaseNo());
+        assertThrows(SecurityException.class,
+                () -> verifier.verifyActive(unsigned.withSignature(new byte[] {1, 2, 3})));
+    }
+
+    @Test
     public void rejectsMissingEmbeddedPublicKey() {
         assertThrows(IllegalStateException.class,
                 () -> new RuntimeUpdateManifestVerifier(new byte[0], "tenant-11", "com.example.agent", 1));

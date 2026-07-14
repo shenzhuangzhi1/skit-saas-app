@@ -5,7 +5,6 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.util.Base64;
 import android.util.Log;
-import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
 
 import org.json.JSONObject;
@@ -28,9 +27,11 @@ import java.util.zip.ZipInputStream;
 
 import javax.net.ssl.HttpsURLConnection;
 
+import top.neoshen.xingheyingguan.update.RuntimeUpdateActiveMarker;
+import top.neoshen.xingheyingguan.update.RuntimeUpdateCommitter;
+import top.neoshen.xingheyingguan.update.RuntimeUpdateFileTransaction;
 import top.neoshen.xingheyingguan.update.RuntimeUpdateManifest;
 import top.neoshen.xingheyingguan.update.RuntimeUpdateManifestVerifier;
-import top.neoshen.xingheyingguan.update.RuntimeUpdateCommitter;
 
 /** Installs UI-only bundles after scoped signature, hash, and anti-rollback verification. */
 public class SkitRuntimeUpdateBridge {
@@ -41,6 +42,8 @@ public class SkitRuntimeUpdateBridge {
     private static final long MAX_BUNDLE_BYTES = 50L * 1024L * 1024L;
     private static final long MAX_EXTRACTED_BYTES = 150L * 1024L * 1024L;
     private static final int MAX_ZIP_ENTRIES = 10_000;
+    private static final int MAX_ACTIVE_MARKER_BYTES = 4096;
+    private static final Object UPDATE_LOCK = new Object();
     private static final Set<String> MANIFEST_FIELDS = new HashSet<>(Arrays.asList(
             "tenantId", "applicationId", "bundleUrl", "bundleSha256",
             "protocolVersion", "releaseNo", "signature"));
@@ -50,7 +53,6 @@ public class SkitRuntimeUpdateBridge {
     private final BridgeOriginGuard originGuard;
     private final SharedPreferences preferences;
     private final RuntimeUpdateManifestVerifier manifestVerifier;
-    private final Object updateLock = new Object();
 
     public SkitRuntimeUpdateBridge(Activity activity, WebView webView,
                                    BridgeOriginGuard originGuard) {
@@ -60,9 +62,9 @@ public class SkitRuntimeUpdateBridge {
         this.preferences = activity.getSharedPreferences(
                 UPDATE_PREFERENCES, Context.MODE_PRIVATE);
         this.manifestVerifier = buildVerifier();
+        recoverRuntimeState();
     }
 
-    @JavascriptInterface
     public void postMessage(String rawMessage) {
         try {
             originGuard.requireTrustedTopLevel();
@@ -101,13 +103,18 @@ public class SkitRuntimeUpdateBridge {
     }
 
     private void install(JSONObject payload, String id) {
-        synchronized (updateLock) {
+        synchronized (UPDATE_LOCK) {
             File downloaded = null;
             File staging = null;
             try {
                 originGuard.requireTrustedTopLevel();
                 if (manifestVerifier == null) {
                     throw new SecurityException("Runtime updates are disabled in this build");
+                }
+                recoverRuntimeState();
+                if (RuntimeUpdateFileTransaction.hasPendingTransaction(
+                        activity.getFilesDir(), UPDATE_DIRECTORY)) {
+                    throw new IOException("Runtime update recovery is still pending");
                 }
                 RuntimeUpdateManifest manifest = parseManifest(payload);
                 manifestVerifier.verify(manifest, highestAcceptedRelease());
@@ -116,20 +123,21 @@ public class SkitRuntimeUpdateBridge {
                 downloaded = new File(filesDir, "skit-hot-update-download.zip");
                 staging = new File(filesDir,
                         UPDATE_DIRECTORY + "-staging-" + manifest.getReleaseNo());
-                File active = new File(filesDir, UPDATE_DIRECTORY);
-                File backup = new File(filesDir, UPDATE_DIRECTORY + "-backup");
+                RuntimeUpdateFileTransaction.deleteBackupIfDurable(
+                        filesDir, UPDATE_DIRECTORY, persistedHighestRelease(),
+                        this::verifiedActiveRelease);
                 deleteRecursively(downloaded);
                 deleteRecursively(staging);
-                deleteRecursively(backup);
                 downloadAndVerify(
                         manifest.getBundleUrl(), manifest.getBundleSha256(), downloaded);
                 extractBundle(downloaded, staging);
                 if (!new File(staging, "index.html").isFile()) {
                     throw new IOException("Hot update bundle is incomplete");
                 }
-                File preparedStaging = staging;
-                RuntimeUpdateCommitter.activateThenPersist(manifest.getReleaseNo(),
-                        () -> activate(preparedStaging, active, backup),
+                writeActiveMarker(staging, manifest);
+                RuntimeUpdateFileTransaction transaction = new RuntimeUpdateFileTransaction(
+                        filesDir, UPDATE_DIRECTORY, manifest.getReleaseNo(), staging);
+                RuntimeUpdateCommitter.commit(manifest.getReleaseNo(), transaction,
                         releaseNo -> preferences.edit().putLong(
                                 HIGHEST_RELEASE_KEY, releaseNo).commit());
                 deleteRecursively(downloaded);
@@ -141,7 +149,10 @@ public class SkitRuntimeUpdateBridge {
                 Log.w(TAG, "Runtime update rejected type="
                         + failure.getClass().getSimpleName());
                 deleteRecursively(downloaded);
-                deleteRecursively(staging);
+                if (!RuntimeUpdateFileTransaction.hasPendingTransaction(
+                        activity.getFilesDir(), UPDATE_DIRECTORY)) {
+                    deleteRecursively(staging);
+                }
                 resolve(id, failure("Hot update rejected"));
             }
         }
@@ -198,8 +209,86 @@ public class SkitRuntimeUpdateBridge {
     }
 
     private long highestAcceptedRelease() {
+        long verifiedActive = verifiedActiveRelease(
+                new File(activity.getFilesDir(), UPDATE_DIRECTORY));
+        return Math.max(persistedHighestRelease(), verifiedActive);
+    }
+
+    private long persistedHighestRelease() {
         return Math.max(BuildConfig.RUNTIME_RELEASE_NO,
                 preferences.getLong(HIGHEST_RELEASE_KEY, BuildConfig.RUNTIME_RELEASE_NO));
+    }
+
+    private void recoverRuntimeState() {
+        if (manifestVerifier == null) {
+            return;
+        }
+        synchronized (UPDATE_LOCK) {
+            try {
+                RuntimeUpdateFileTransaction.recover(
+                        activity.getFilesDir(),
+                        UPDATE_DIRECTORY,
+                        BuildConfig.RUNTIME_RELEASE_NO,
+                        persistedHighestRelease(),
+                        this::verifiedActiveRelease,
+                        releaseNo -> preferences.edit().putLong(
+                                HIGHEST_RELEASE_KEY, releaseNo).commit());
+            } catch (Throwable recoveryFailure) {
+                Log.w(TAG, "Runtime update recovery deferred type="
+                        + recoveryFailure.getClass().getSimpleName());
+            }
+        }
+    }
+
+    private long verifiedActiveRelease(File runtimeDirectory) {
+        if (manifestVerifier == null || runtimeDirectory == null
+                || !runtimeDirectory.isDirectory()
+                || !new File(runtimeDirectory, "index.html").isFile()) {
+            return 0L;
+        }
+        File marker = new File(runtimeDirectory, RuntimeUpdateActiveMarker.FILE_NAME);
+        if (!marker.isFile() || marker.length() <= 0L
+                || marker.length() > MAX_ACTIVE_MARKER_BYTES) {
+            return 0L;
+        }
+        try {
+            byte[] encoded = new byte[(int) marker.length()];
+            int offset = 0;
+            try (FileInputStream input = new FileInputStream(marker)) {
+                while (offset < encoded.length) {
+                    int count = input.read(encoded, offset, encoded.length - offset);
+                    if (count < 0) {
+                        break;
+                    }
+                    offset += count;
+                }
+                if (offset != encoded.length || input.read() != -1) {
+                    return 0L;
+                }
+            }
+            return manifestVerifier.verifyActive(
+                    RuntimeUpdateActiveMarker.decode(encoded)).getReleaseNo();
+        } catch (Throwable invalidMarker) {
+            return 0L;
+        }
+    }
+
+    private void writeActiveMarker(File staging, RuntimeUpdateManifest manifest)
+            throws IOException {
+        File marker = new File(staging, RuntimeUpdateActiveMarker.FILE_NAME);
+        File temporary = new File(staging, RuntimeUpdateActiveMarker.FILE_NAME + ".tmp");
+        if (marker.exists() || temporary.exists()) {
+            throw new IOException("Hot update bundle uses a reserved marker path");
+        }
+        byte[] encoded = RuntimeUpdateActiveMarker.encode(manifest);
+        try (FileOutputStream output = new FileOutputStream(temporary)) {
+            output.write(encoded);
+            output.getFD().sync();
+        }
+        if (!temporary.renameTo(marker)) {
+            deleteRecursively(temporary);
+            throw new IOException("Could not commit verified runtime marker");
+        }
     }
 
     private void downloadAndVerify(String source, String expectedSha256, File target)
@@ -285,19 +374,6 @@ public class SkitRuntimeUpdateBridge {
                 zip.closeEntry();
             }
         }
-    }
-
-    private void activate(File staging, File active, File backup) throws IOException {
-        if (active.exists() && !active.renameTo(backup)) {
-            throw new IOException("Could not prepare active runtime update");
-        }
-        if (!staging.renameTo(active)) {
-            if (backup.exists() && !backup.renameTo(active)) {
-                Log.e(TAG, "Could not restore prior runtime update");
-            }
-            throw new IOException("Could not activate runtime update");
-        }
-        deleteRecursively(backup);
     }
 
     private void resolve(String id, JSONObject result) {

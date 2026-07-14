@@ -40,6 +40,22 @@ public final class RuntimeUpdateManifestVerifier {
 
     public RuntimeUpdateManifest verify(RuntimeUpdateManifest manifest,
                                         long highestAcceptedRelease) {
+        requireExpectedScope(manifest);
+        if (manifest.getReleaseNo() <= highestAcceptedRelease) {
+            throw new SecurityException("Runtime update rollback or replay rejected");
+        }
+        verifySignature(manifest);
+        return manifest;
+    }
+
+    /** Verifies the signed identity of the bundle that is already active on disk. */
+    public RuntimeUpdateManifest verifyActive(RuntimeUpdateManifest manifest) {
+        requireExpectedScope(manifest);
+        verifySignature(manifest);
+        return manifest;
+    }
+
+    private void requireExpectedScope(RuntimeUpdateManifest manifest) {
         if (manifest == null) {
             throw new SecurityException("Runtime update manifest is missing");
         }
@@ -48,9 +64,9 @@ public final class RuntimeUpdateManifestVerifier {
                 || expectedProtocolVersion != manifest.getProtocolVersion()) {
             throw new SecurityException("Runtime update scope does not match this APK");
         }
-        if (manifest.getReleaseNo() <= highestAcceptedRelease) {
-            throw new SecurityException("Runtime update rollback or replay rejected");
-        }
+    }
+
+    private void verifySignature(RuntimeUpdateManifest manifest) {
         byte[] signatureBytes = manifest.getSignature();
         if (signatureBytes.length == 0) {
             throw new SecurityException("Runtime update signature is missing");
@@ -68,6 +84,5 @@ public final class RuntimeUpdateManifestVerifier {
             throw new SecurityException("Runtime update signature could not be verified",
                     verificationFailure);
         }
-        return manifest;
     }
 }

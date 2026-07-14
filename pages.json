@@ -537,12 +537,6 @@
           "style": {
             "navigationBarTitleText": "错误页面"
           }
-        },
-        {
-          "path": "webview",
-          "style": {
-            "navigationBarTitleText": ""
-          }
         }
       ]
     },

@@ -31,6 +31,18 @@ final class BridgeOriginGuard {
                 && candidate.getUserInfo() == null;
     }
 
+    String trustedOriginRule() {
+        return expectedScheme + "://" + expectedHost + ":" + expectedPort;
+    }
+
+    boolean isTrustedMessageOrigin(Uri sourceOrigin) {
+        return sourceOrigin != null
+                && expectedScheme.equals(sourceOrigin.getScheme())
+                && expectedHost.equals(sourceOrigin.getHost())
+                && expectedPort == sourceOrigin.getPort()
+                && sourceOrigin.getUserInfo() == null;
+    }
+
     void updateTopLevel(String candidateUrl) {
         currentTopLevelUrl = candidateUrl;
     }

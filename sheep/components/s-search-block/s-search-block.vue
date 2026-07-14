@@ -232,23 +232,12 @@
    * @param {string} url 要访问的URL
    */
   function handleUrl(url) {
-    // 方案1：跳转到webview页面（推荐）
-    uni.navigateTo({
-      url: `/pages/public/webview?url=${encodeURIComponent(url)}`,
-    });
-
-    // 方案2：直接复制链接（备选方案）
-    /*
-    uni.setClipboardData({
-      data: url,
-      success: () => {
-        uni.showToast({
-          title: '链接已复制，请在浏览器打开',
-          icon: 'success',
-        });
-      },
-    });
-    */
+    // #ifdef H5
+    window.location.href = url;
+    // #endif
+    // #ifdef APP-PLUS
+    plus.runtime.openURL(url);
+    // #endif
   }
 
   /**

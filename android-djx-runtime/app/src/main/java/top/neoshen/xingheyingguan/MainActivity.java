@@ -14,6 +14,13 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
+import androidx.webkit.JavaScriptReplyProxy;
+import androidx.webkit.WebMessageCompat;
+import androidx.webkit.WebViewCompat;
+import androidx.webkit.WebViewFeature;
+
+import org.json.JSONObject;
+
 import java.io.BufferedOutputStream;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -28,6 +35,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import java.util.Locale;
 
 public class MainActivity extends Activity {
@@ -37,8 +45,10 @@ public class MainActivity extends Activity {
     private WebView webView;
     private LocalAssetServer assetServer;
     private BridgeOriginGuard originGuard;
+    private SkitPangleDramaBridge pangleDramaBridge;
     private SkitTakuAdBridge takuAdBridge;
-    private boolean bridgesAttached;
+    private SkitRuntimeUpdateBridge runtimeUpdateBridge;
+    private boolean nativeMessageListenerAttached;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -75,7 +85,11 @@ public class MainActivity extends Activity {
                     @Override
                     public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                         if (!request.isForMainFrame()) {
-                            return false;
+                            Uri frameUri = request.getUrl();
+                            if (frameUri == null) {
+                                return true;
+                            }
+                            return !originGuard.isTrustedTopLevel(frameUri.toString());
                         }
                         Uri uri = request.getUrl();
                         if (uri != null && originGuard.isTrustedTopLevel(uri.toString())) {
@@ -93,9 +107,6 @@ public class MainActivity extends Activity {
                                               android.graphics.Bitmap favicon) {
                         super.onPageStarted(view, url, favicon);
                         originGuard.updateTopLevel(url);
-                        if (!originGuard.isTrustedTopLevel(url)) {
-                            detachBridges();
-                        }
                     }
 
                     @Override
@@ -103,14 +114,12 @@ public class MainActivity extends Activity {
                         super.onPageFinished(view, url);
                         originGuard.updateTopLevel(url);
                         if (originGuard.isTrustedTopLevel(url)) {
-                            attachBridges();
                             Log.d(TAG, "trusted local page finished");
-                        } else {
-                            detachBridges();
                         }
                     }
                 });
 
+        attachNativeMessageChannel();
         webView.loadUrl(assetServer.getBaseUrl() + "index.html");
     }
 
@@ -125,7 +134,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        detachBridges();
+        detachNativeMessageChannel();
         if (originGuard != null) {
             originGuard.updateTopLevel(null);
         }
@@ -140,31 +149,72 @@ public class MainActivity extends Activity {
         super.onDestroy();
     }
 
-    private void attachBridges() {
-        if (bridgesAttached) {
+    private void attachNativeMessageChannel() {
+        if (nativeMessageListenerAttached) {
             return;
         }
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+            throw new IllegalStateException("Secure native WebView messaging is unavailable");
+        }
+        pangleDramaBridge = new SkitPangleDramaBridge(this, webView, originGuard);
         takuAdBridge = new SkitTakuAdBridge(this, webView, originGuard);
-        webView.addJavascriptInterface(
-                new SkitPangleDramaBridge(this, webView, originGuard), "SkitPangleDramaNative");
-        webView.addJavascriptInterface(takuAdBridge, "SkitTakuAdNative");
-        webView.addJavascriptInterface(
-                new SkitRuntimeUpdateBridge(this, webView, originGuard), "SkitRuntimeUpdateNative");
-        bridgesAttached = true;
+        runtimeUpdateBridge = new SkitRuntimeUpdateBridge(this, webView, originGuard);
+        WebViewCompat.addWebMessageListener(
+                webView,
+                "SkitNativeBridge",
+                Collections.singleton(originGuard.trustedOriginRule()),
+                this::onNativeMessage);
+        nativeMessageListenerAttached = true;
     }
 
-    private void detachBridges() {
-        if (webView == null || !bridgesAttached) {
+    private void onNativeMessage(WebView sourceWebView,
+                                 WebMessageCompat message,
+                                 Uri sourceOrigin,
+                                 boolean isMainFrame,
+                                 JavaScriptReplyProxy replyProxy) {
+        if (!isMainFrame || !originGuard.isTrustedMessageOrigin(sourceOrigin)) {
+            Log.w(TAG, "Rejected native message outside the trusted main frame");
             return;
         }
-        webView.removeJavascriptInterface("SkitPangleDramaNative");
-        webView.removeJavascriptInterface("SkitTakuAdNative");
-        webView.removeJavascriptInterface("SkitRuntimeUpdateNative");
+        if (message.getType() != WebMessageCompat.TYPE_STRING || message.getData() == null) {
+            Log.w(TAG, "Rejected non-string native message");
+            return;
+        }
+        try {
+            originGuard.requireTrustedTopLevel();
+            String rawMessage = message.getData();
+            JSONObject envelope = new JSONObject(rawMessage);
+            switch (envelope.optString("bridge", "")) {
+                case "PANGLE":
+                    pangleDramaBridge.postMessage(rawMessage);
+                    break;
+                case "TAKU":
+                    takuAdBridge.postMessage(rawMessage);
+                    break;
+                case "RUNTIME_UPDATE":
+                    runtimeUpdateBridge.postMessage(rawMessage);
+                    break;
+                default:
+                    Log.w(TAG, "Rejected unknown native bridge route");
+                    break;
+            }
+        } catch (Throwable rejectedMessage) {
+            Log.w(TAG, "Rejected malformed native message");
+        }
+    }
+
+    private void detachNativeMessageChannel() {
+        if (webView == null || !nativeMessageListenerAttached) {
+            return;
+        }
+        WebViewCompat.removeWebMessageListener(webView, "SkitNativeBridge");
         if (takuAdBridge != null) {
             takuAdBridge.destroy();
             takuAdBridge = null;
         }
-        bridgesAttached = false;
+        pangleDramaBridge = null;
+        runtimeUpdateBridge = null;
+        nativeMessageListenerAttached = false;
     }
 
     private void openExternal(Uri uri) {

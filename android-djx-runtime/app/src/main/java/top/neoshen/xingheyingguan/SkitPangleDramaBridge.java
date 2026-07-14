@@ -3,7 +3,6 @@ package top.neoshen.xingheyingguan;
 import android.app.Activity;
 import android.content.Intent;
 import android.util.Log;
-import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
 
 import com.bytedance.sdk.djx.DJXSdk;
@@ -38,7 +37,6 @@ public class SkitPangleDramaBridge {
         this.originGuard = originGuard;
     }
 
-    @JavascriptInterface
     public void postMessage(String rawMessage) {
         activity.runOnUiThread(() -> {
             try {

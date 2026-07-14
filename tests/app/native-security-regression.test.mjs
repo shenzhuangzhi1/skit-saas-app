@@ -77,22 +77,27 @@ test('native player requires and server-validates the short-lived player grant',
   assert.match(player, /cancelActiveSession\s*\(/);
 });
 
-test('WebView bridges are origin-gated per call and external navigation leaves the WebView', () => {
+test('native capabilities use a main-frame origin-aware message channel and external pages leave the WebView', () => {
   const main = read(mainActivityPath);
   const guard = read(originGuardPath);
-  for (const file of [
-    playerBridgePath,
-    'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/SkitTakuAdBridge.java',
-    runtimeBridgePath,
-  ]) {
-    assert.match(read(file), /originGuard\.requireTrustedTopLevel\s*\(/);
-  }
-  assert.match(main, /removeJavascriptInterface/);
+  const runtimeJs = read('android-djx-runtime/djx-runtime.js');
+  assert.doesNotMatch(main, /addJavascriptInterface/);
+  assert.match(main, /WebViewCompat\.addWebMessageListener/);
+  assert.match(main, /isMainFrame/);
+  assert.match(main, /isTrustedMessageOrigin/);
+  assert.match(main, /WebViewCompat\.removeWebMessageListener/);
   assert.match(main, /Intent\.ACTION_VIEW/);
   assert.match(main, /isTrustedTopLevel/);
   assert.match(main, /originGuard\.updateTopLevel\s*\(\s*url\s*\)/);
+  assert.match(main, /if\s*\(\s*!request\.isForMainFrame\(\)\s*\)/);
+  assert.match(main, /return\s+!originGuard\.isTrustedTopLevel/);
   assert.match(guard, /volatile String currentTopLevelUrl/);
+  assert.match(guard, /isTrustedMessageOrigin/);
   assert.doesNotMatch(guard, /webView\.getUrl\s*\(/);
+  assert.match(runtimeJs, /window\.SkitNativeBridge/);
+  assert.doesNotMatch(runtimeJs, /window\.Skit(?:PangleDrama|TakuAd|RuntimeUpdate)Native/);
+  assert.doesNotMatch(read('sheep/router/index.js'), /pages\/public\/webview/);
+  assert.doesNotMatch(read('sheep/components/s-search-block/s-search-block.vue'), /pages\/public\/webview/);
 });
 
 test('hot updates require signed scoped manifests and monotonic release state', () => {

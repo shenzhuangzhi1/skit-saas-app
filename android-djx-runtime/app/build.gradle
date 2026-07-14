@@ -177,6 +177,7 @@ dependencies {
             'libs/taku/anythink_adx_sdk_kuying_6.5.75_necessary.aar'
     )
     implementation 'androidx.core:core:1.13.1'
+    implementation 'androidx.webkit:webkit:1.16.0'
     implementation 'com.pangle_beta.cn:mediation-sdk:7.1.0.5'
     implementation 'com.pangle.cn:pangrowth-base:2.9.0.9'
     implementation 'com.pangle.cn:pangrowth-djx-sdk-lite:2.9.0.9'
