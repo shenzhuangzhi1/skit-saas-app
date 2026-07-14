@@ -140,27 +140,30 @@
   import { computed, ref, watch } from 'vue';
   import { onLoad, onShow } from '@dcloudio/uni-app';
   import sheep from '@/sheep';
-  import AdRevenueApi from '@/sheep/api/member/ad-revenue';
   import {
     getDramaById,
-    getUnlockRange,
     isEpisodeUnlocked,
     isFollowed,
     saveHistory,
     toggleFollow,
-    unlockEpisodes,
   } from '@/pages/drama/data';
   import {
     hasPangleDramaId,
     isPangleContentReady,
     openPangleDramaPlayer,
   } from '@/pages/drama/services/pangle-content';
+  import {
+    adSessionOrchestrator,
+    recoverPendingAdSessions,
+  } from '@/pages/drama/services/ad-session-runtime';
   import { showDramaRewardedVideoAd } from '@/pages/drama/services/reward-ad';
 
   const drama = ref(getDramaById());
   const currentEpisode = ref(1);
   const followed = ref(false);
-  const unlockedVersion = ref(0);
+  const grantedEpisodeNos = ref([]);
+  const authoritativeIdentity = ref('');
+  const activePlaybackEpisode = ref(null);
   const showEpisodePanel = ref(false);
   const unlocking = ref(false);
   const videoErrored = ref(false);
@@ -168,8 +171,7 @@
   const userStore = sheep.$store('user');
 
   const locked = computed(() => {
-    unlockedVersion.value;
-    return !isEpisodeUnlocked(drama.value, currentEpisode.value);
+    return !isEpisodeUnlocked(drama.value, currentEpisode.value, grantedEpisodeNos.value);
   });
 
   const currentEpisodeTitle = computed(() => {
@@ -181,31 +183,106 @@
     return lines[(currentEpisode.value - 1) % lines.length] || drama.value.desc;
   });
 
-  const currentVideoUrl = computed(() => {
+  const rawCurrentVideoUrl = computed(() => {
     return drama.value.episodes[currentEpisode.value - 1]?.videoUrl || drama.value.videoUrl || '';
+  });
+
+  const currentVideoUrl = computed(() => {
+    return activePlaybackEpisode.value === currentEpisode.value ? rawCurrentVideoUrl.value : '';
   });
 
   const canOpenPanglePlayer = computed(() => {
     return (
-      pangleReady.value && hasPangleDramaId(drama.value) && !currentVideoUrl.value && !locked.value
+      pangleReady.value &&
+      hasPangleDramaId(drama.value) &&
+      !rawCurrentVideoUrl.value &&
+      !locked.value
     );
   });
 
   const unlockRangeText = computed(() => {
-    const range = getUnlockRange(drama.value, currentEpisode.value);
-    if (range.length === 0) {
-      return currentEpisode.value;
-    }
-    if (range.length === 1) {
-      return range[0];
-    }
-    return `${range[0]}-${range[range.length - 1]}`;
+    return currentEpisode.value;
   });
 
   function refresh() {
     followed.value = isFollowed(drama.value.id);
     pangleReady.value = isPangleContentReady() && hasPangleDramaId(drama.value);
-    unlockedVersion.value += 1;
+  }
+
+  function resolveServerDramaId() {
+    const value =
+      drama.value?.pangleDramaId ??
+      drama.value?.contentId ??
+      drama.value?.nativeId ??
+      drama.value?.id;
+    const number = Number(value);
+    if (!Number.isSafeInteger(number) || number <= 0) {
+      throw new Error('当前剧目没有可验证的服务端短剧编号');
+    }
+    return number;
+  }
+
+  function currentIdentity() {
+    const profile = userStore.userInfo || {};
+    const tenantId = profile.tenantId;
+    const memberId = profile.userId ?? profile.id;
+    if (
+      tenantId === undefined ||
+      tenantId === null ||
+      memberId === undefined ||
+      memberId === null
+    ) {
+      throw new Error('当前登录身份尚未同步完成');
+    }
+    return { tenantId, memberId };
+  }
+
+  function identitySignature(identity) {
+    return `${String(identity.tenantId)}:${String(identity.memberId)}`;
+  }
+
+  async function refreshAuthoritativeEntitlements(identity = currentIdentity()) {
+    const signature = identitySignature(identity);
+    if (authoritativeIdentity.value !== signature) {
+      authoritativeIdentity.value = signature;
+      grantedEpisodeNos.value = [];
+      activePlaybackEpisode.value = null;
+    }
+    const dramaId = resolveServerDramaId();
+    grantedEpisodeNos.value = [];
+    const snapshot = await adSessionOrchestrator.refreshEntitlements(identity, dramaId);
+    grantedEpisodeNos.value = snapshot.grantedEpisodeNos;
+    return snapshot;
+  }
+
+  async function recoverPendingSessions(identity) {
+    const results = await recoverPendingAdSessions(identity);
+    if (results.some((result) => result.resolution === 'GRANTED')) {
+      await refreshAuthoritativeEntitlements(identity);
+      uni.showToast({ title: '广告奖励已通过服务端验证', icon: 'none' });
+    }
+    return results;
+  }
+
+  async function syncServerState() {
+    refresh();
+    if (!userStore.isLogin) {
+      authoritativeIdentity.value = '';
+      grantedEpisodeNos.value = [];
+      activePlaybackEpisode.value = null;
+      return;
+    }
+    try {
+      const identity = currentIdentity();
+      await refreshAuthoritativeEntitlements(identity);
+      recoverPendingSessions(identity).catch((error) => {
+        console.warn('[ad-session] pending recovery unavailable', error?.message || error);
+      });
+    } catch (error) {
+      grantedEpisodeNos.value = [];
+      activePlaybackEpisode.value = null;
+      console.warn('[entitlement] server refresh unavailable', error?.message || error);
+    }
   }
 
   function goBack() {
@@ -220,8 +297,7 @@
   }
 
   function isUnlocked(episode) {
-    unlockedVersion.value;
-    return isEpisodeUnlocked(drama.value, episode);
+    return isEpisodeUnlocked(drama.value, episode, grantedEpisodeNos.value);
   }
 
   function handleVideoPlay() {
@@ -230,69 +306,27 @@
 
   function handleVideoError(error) {
     videoErrored.value = true;
-    console.warn('[drama] video playback failed:', currentVideoUrl.value, error);
-  }
-
-  function assertAdBuildProfile(provider, providerConfig) {
-    const expectedAgentCode = String(import.meta.env?.VITE_SKIT_AGENT_CODE || '').toUpperCase();
-    const currentTenantCode = String(userStore.userInfo?.tenantCode || '').toUpperCase();
-    if (!expectedAgentCode || !currentTenantCode) {
-      throw new Error('代理商白标身份尚未就绪，暂不能展示广告');
-    }
-    if (expectedAgentCode !== currentTenantCode) {
-      throw new Error('当前安装包不属于该代理商，请使用所属代理商的白标 App');
-    }
-    const builtAppId = String(
-      provider === 'taku'
-        ? import.meta.env?.VITE_TAKU_APP_ID || ''
-        : import.meta.env?.VITE_PANGLE_APP_ID || '',
-    );
-    const configuredAppId = String(providerConfig?.appId || '');
-    if (!builtAppId || !configuredAppId) {
-      throw new Error('广告 App ID 未完整配置，暂不能展示广告');
-    }
-    if (builtAppId !== configuredAppId) {
-      throw new Error('广告账号与当前白标包不匹配，请重新安装正确版本');
-    }
-  }
-
-  function resolveVerifiedAdConfig() {
-    const adConfig = userStore.adConfig || {};
-    const configuredProvider = String(adConfig.provider || '').toLowerCase();
-    const builtProvider = String(import.meta.env?.VITE_DRAMA_AD_PROVIDER || '').toLowerCase();
-    if (configuredProvider === 'none' || !configuredProvider) {
-      throw new Error('当前代理商未启用广告账号');
-    }
-
-    const provider = configuredProvider === 'multi' ? builtProvider : configuredProvider;
-    if (!['pangle', 'taku'].includes(provider)) {
-      throw new Error('当前白标包未指定可用的广告平台');
-    }
-    if (!builtProvider || builtProvider !== provider) {
-      throw new Error('广告平台与当前白标包不匹配，请重新安装正确版本');
-    }
-
-    const providerConfig = adConfig[provider];
-    if (!providerConfig || providerConfig.enabled !== true) {
-      throw new Error('当前代理商的广告账号未启用');
-    }
-    const placementId = String(providerConfig.placementId || '').trim();
-    if (!placementId) {
-      throw new Error('当前代理商未配置广告位');
-    }
-    assertAdBuildProfile(provider, providerConfig);
-    return { provider, placementId };
+    console.warn('[drama] video playback failed');
   }
 
   async function playCurrentEpisode(source) {
-    if (!isUnlocked(currentEpisode.value)) {
+    if (!userStore.isLogin) {
       return;
     }
-
-    if (currentVideoUrl.value) {
+    const identity = currentIdentity();
+    const dramaId = resolveServerDramaId();
+    if (currentEpisode.value > drama.value.freeEpisodes) {
+      const snapshot = await refreshAuthoritativeEntitlements(identity);
+      if (!snapshot.grantedEpisodeNos.includes(currentEpisode.value)) {
+        activePlaybackEpisode.value = null;
+        return;
+      }
+    }
+    const playerGrant = await adSessionOrchestrator.issuePlayerGrant(identity, dramaId);
+    if (rawCurrentVideoUrl.value) {
+      activePlaybackEpisode.value = currentEpisode.value;
       return;
     }
-
     if (!hasPangleDramaId(drama.value)) {
       return;
     }
@@ -301,9 +335,10 @@
       drama: drama.value,
       episode: currentEpisode.value,
       source,
+      playerGrant,
     }).catch((error) => {
-      console.warn('[drama] Pangle player open failed:', error);
-      return { skipped: true, reason: error?.message || 'pangle-open-failed' };
+      console.warn('[drama] protected player open failed:', error?.message || error);
+      return { skipped: true, reason: error?.message || 'protected-player-open-failed' };
     });
 
     if (result?.skipped && source === 'manual_open') {
@@ -332,8 +367,7 @@
     if (unlocking.value) {
       return;
     }
-    const range = getUnlockRange(drama.value, currentEpisode.value);
-    if (range.length === 0) {
+    if (isUnlocked(currentEpisode.value)) {
       return;
     }
     if (!userStore.isLogin) {
@@ -345,26 +379,53 @@
 
     unlocking.value = true;
     try {
-      const { provider, placementId } = resolveVerifiedAdConfig();
-      const reward = await showDramaRewardedVideoAd({
-        provider,
-        placementId,
-        scene: 'drama_unlock',
-        dramaId: drama.value.id,
-        episode: currentEpisode.value,
-        unlockRange: range,
-      });
-      const unlockedText = range.length === 1 ? range[0] : `${range[0]}-${range[range.length - 1]}`;
-      unlockEpisodes(drama.value.id, range);
-      unlockedVersion.value += 1;
-      reportAdRevenue(reward, provider, placementId);
-      uni.showToast({
-        title: reward.mock
-          ? `开发模拟广告，已解锁第${unlockedText}集`
-          : `已解锁第${unlockedText}集`,
-        icon: 'none',
-      });
-      playCurrentEpisode('reward_unlock');
+      const identity = currentIdentity();
+      const dramaId = resolveServerDramaId();
+      const existing = adSessionOrchestrator
+        .getPendingSessions(identity)
+        .find((item) => item.dramaId === dramaId && item.episodeNo === currentEpisode.value);
+      let result;
+      if (existing) {
+        result = await adSessionOrchestrator.pollSession(identity, existing.sessionId);
+      } else {
+        const created = await adSessionOrchestrator.createSession(identity, {
+          dramaId,
+          episodeNo: currentEpisode.value,
+        });
+        if (created.outcome === 'ALREADY_ENTITLED') {
+          const snapshot = await refreshAuthoritativeEntitlements(identity);
+          if (!snapshot.grantedEpisodeNos.includes(currentEpisode.value)) {
+            throw new Error('服务端权益尚未同步，请稍后重试');
+          }
+          await playCurrentEpisode('server_entitled');
+          return;
+        }
+        if (!created.requiresVerificationPoll) {
+          await showDramaRewardedVideoAd({
+            protocol: created.nativeProtocol,
+            onClientEvent: (clientEvent) =>
+              adSessionOrchestrator.recordClientEvent(
+                identity,
+                created.nativeProtocol,
+                clientEvent,
+              ),
+          });
+        }
+        result = await adSessionOrchestrator.pollSession(
+          identity,
+          created.nativeProtocol.sessionId,
+        );
+      }
+
+      if (result.resolution === 'GRANTED') {
+        grantedEpisodeNos.value = result.entitlements.grantedEpisodeNos;
+        uni.showToast({ title: `已通过服务端验奖解锁第${currentEpisode.value}集`, icon: 'none' });
+        await playCurrentEpisode('server_verified_reward');
+      } else if (result.resolution === 'VERIFYING') {
+        uni.showToast({ title: '奖励验证中，可稍后返回查看', icon: 'none' });
+      } else {
+        throw new Error('本次广告未通过服务端奖励验证');
+      }
     } catch (error) {
       uni.showToast({
         title: error?.message || '广告暂不可用',
@@ -373,39 +434,6 @@
     } finally {
       unlocking.value = false;
     }
-  }
-
-  function reportAdRevenue(reward, fallbackProvider, fallbackPlacementId) {
-    if (!reward?.completed || reward.mock) {
-      return;
-    }
-    const raw = reward.raw || {};
-    const adInfo = raw.adInfo || raw.ad_info || {};
-    const externalEventId = String(
-      adInfo.requestId || raw.requestId || raw.request_id || '',
-    ).trim();
-    const ecpm = Number(adInfo.ecpm ?? raw.ecpm);
-    if (!externalEventId || !Number.isFinite(ecpm) || ecpm <= 0) {
-      console.warn('[ad-revenue] missing requestId/ecpm; skip estimated commission report');
-      return;
-    }
-    const provider = String(
-      reward.provider || raw.provider || fallbackProvider || '',
-    ).toUpperCase();
-    const placementId =
-      reward.placementId || adInfo.placementId || raw.placementId || fallbackPlacementId || '';
-    AdRevenueApi.report({
-      provider: provider === 'GROMORE' ? 'PANGLE' : provider,
-      externalEventId,
-      placementId,
-      grossAmount: (ecpm / 1000).toFixed(8),
-      occurredTime: new Date().toISOString(),
-      completed: true,
-      mock: false,
-      rawData: raw,
-    }).catch((error) => {
-      console.warn('[ad-revenue] report failed', error);
-    });
   }
 
   function nextEpisode() {
@@ -433,14 +461,33 @@
     currentEpisode.value = Math.max(1, Math.min(Number(options.episode) || 1, drama.value.total));
     saveHistory(drama.value.id, currentEpisode.value);
     refresh();
-    setTimeout(() => playCurrentEpisode('page_load'), 0);
+    setTimeout(() => {
+      syncServerState()
+        .then(() => playCurrentEpisode('page_load'))
+        .catch((error) =>
+          console.warn('[drama] page authorization unavailable', error?.message || error),
+        );
+    }, 0);
   });
 
-  onShow(refresh);
+  onShow(syncServerState);
 
   watch(currentEpisode, () => {
     videoErrored.value = false;
+    activePlaybackEpisode.value = null;
   });
+
+  watch(
+    () => [userStore.userInfo?.tenantId, userStore.userInfo?.userId ?? userStore.userInfo?.id],
+    (nextIdentity, previousIdentity) => {
+      if (nextIdentity[0] === previousIdentity?.[0] && nextIdentity[1] === previousIdentity?.[1]) {
+        return;
+      }
+      syncServerState().catch((error) => {
+        console.warn('[entitlement] identity refresh unavailable', error?.message || error);
+      });
+    },
+  );
 </script>
 
 <style lang="scss" scoped>

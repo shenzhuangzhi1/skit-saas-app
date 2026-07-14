@@ -3,4 +3,5 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APK_FILE="${APK_FILE:-$ROOT_DIR/dist/xingheyingguan-debug.apk}" \
+  SKIT_ALLOW_DEBUG_RUNTIME_DEFAULTS=1 \
   "$ROOT_DIR/android-djx-runtime/verify-production-apk.sh"

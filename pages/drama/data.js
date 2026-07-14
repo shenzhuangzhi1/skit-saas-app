@@ -1,6 +1,5 @@
 const HISTORY_KEY = 'skit_drama_history_v1';
 const FOLLOW_KEY = 'skit_drama_follow_v1';
-const UNLOCK_KEY = 'skit_drama_unlock_v1';
 const EXTERNAL_DRAMA_CACHE_KEY = 'skit_external_drama_cache_v1';
 const REQUIRE_REAL_CONTENT = import.meta.env?.VITE_DRAMA_REAL_CONTENT_REQUIRED === 'true';
 
@@ -251,21 +250,17 @@ export function getFollowList() {
     .filter((item) => item.drama);
 }
 
-export function getUnlockedEpisodes(id) {
-  const map = readStorage(UNLOCK_KEY, {});
-  return map[id] || [];
-}
-
-export function isEpisodeUnlocked(drama, episode) {
+export function isEpisodeUnlocked(drama, episode, grantedEpisodeNos = []) {
   const safeEpisode = Number(episode) || 1;
-  return safeEpisode <= drama.freeEpisodes || getUnlockedEpisodes(drama.id).includes(safeEpisode);
+  const serverGranted = Array.isArray(grantedEpisodeNos) ? grantedEpisodeNos : [];
+  return safeEpisode <= drama.freeEpisodes || serverGranted.includes(safeEpisode);
 }
 
-export function getUnlockRange(drama, startEpisode) {
-  const unlocked = getUnlockedEpisodes(drama.id);
+export function getUnlockRange(drama, startEpisode, grantedEpisodeNos = []) {
+  const serverGranted = Array.isArray(grantedEpisodeNos) ? grantedEpisodeNos : [];
   const range = [];
   for (let episode = Number(startEpisode) || 1; episode <= drama.total; episode += 1) {
-    if (episode <= drama.freeEpisodes || unlocked.includes(episode)) {
+    if (episode <= drama.freeEpisodes || serverGranted.includes(episode)) {
       continue;
     }
     range.push(episode);
@@ -274,12 +269,4 @@ export function getUnlockRange(drama, startEpisode) {
     }
   }
   return range;
-}
-
-export function unlockEpisodes(id, episodes) {
-  const map = readStorage(UNLOCK_KEY, {});
-  const current = new Set(map[id] || []);
-  episodes.forEach((episode) => current.add(Number(episode)));
-  map[id] = [...current].sort((a, b) => a - b);
-  writeStorage(UNLOCK_KEY, map);
 }

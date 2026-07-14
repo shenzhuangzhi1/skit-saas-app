@@ -7,9 +7,6 @@ import android.util.Log;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
-import android.widget.Toast;
-
-import com.bytedance.sdk.djx.DJXRewardAdResult;
 import com.bytedance.sdk.djx.DJXSdk;
 import com.bytedance.sdk.djx.IDJXWidget;
 import com.bytedance.sdk.djx.interfaces.listener.IDJXAdListener;
@@ -23,7 +20,6 @@ import com.bytedance.sdk.djx.model.DJXDramaUnlockMethod;
 import com.bytedance.sdk.djx.model.DJXUnlockModeType;
 import com.bytedance.sdk.djx.params.DJXWidgetDramaDetailParams;
 
-import java.util.HashMap;
 import java.util.Map;
 
 public class SkitPangleDramaActivity extends Activity {
@@ -130,13 +126,8 @@ public class SkitPangleDramaActivity extends Activity {
                 if (callback == null) {
                     return;
                 }
-                Log.i(TAG, "showCustomAd using local unlock fallback");
-                HashMap<String, Object> extra = new HashMap<>();
-                extra.put("provider", "skit-local-unlock");
-                extra.put("reason", "pangle-default-reward-unavailable");
-                callback.onShow("skit-local-unlock");
-                callback.onRewardVerify(new DJXRewardAdResult(true, extra));
-                Toast.makeText(SkitPangleDramaActivity.this, "已解锁本集", Toast.LENGTH_SHORT).show();
+                Log.w(TAG, "custom reward unavailable without server-verified entitlement");
+                callback.onError();
             }
         };
     }

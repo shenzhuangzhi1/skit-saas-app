@@ -2,6 +2,23 @@ name: Android production APK
 
 on:
   workflow_dispatch:
+    inputs:
+      profile_code:
+        description: Agent release profile code and signed runtime tenant ID
+        required: true
+        type: string
+      runtime_release_no:
+        description: Monotonic base APK runtime release number
+        required: true
+        type: string
+      native_version_code:
+        description: Monotonic Android versionCode, 1..2100000000
+        required: true
+        type: string
+      native_version_name:
+        description: Native release version, for example 2.3.0
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -40,13 +57,25 @@ jobs:
       - name: Build and verify production APK
         env:
           SKIT_BUILD_TYPE: release
+          SKIT_AGENT_CODE: ${{ inputs.profile_code }}
           SKIT_API_BASE_URL: ${{ secrets.SKIT_API_BASE_URL }}
+          SKIT_APPLICATION_ID: ${{ vars.SKIT_APPLICATION_ID }}
+          SKIT_PANGLE_APP_ID: ${{ vars.SKIT_PANGLE_APP_ID }}
           SKIT_PANGLE_SETTINGS_JSON: ${{ runner.temp }}/skit-production/SDK_Setting.json
+          SKIT_TAKU_APP_ID: ${{ vars.SKIT_TAKU_APP_ID }}
           SKIT_TAKU_APP_KEY: ${{ secrets.SKIT_TAKU_APP_KEY }}
+          SKIT_TAKU_REWARD_PLACEMENT_ID: ${{ vars.SKIT_TAKU_REWARD_PLACEMENT_ID }}
           SKIT_RELEASE_STORE_FILE: ${{ runner.temp }}/skit-production/release.keystore
           SKIT_RELEASE_STORE_PASSWORD: ${{ secrets.SKIT_RELEASE_STORE_PASSWORD }}
           SKIT_RELEASE_KEY_ALIAS: ${{ secrets.SKIT_RELEASE_KEY_ALIAS }}
           SKIT_RELEASE_KEY_PASSWORD: ${{ secrets.SKIT_RELEASE_KEY_PASSWORD }}
+          SKIT_RELEASE_CERT_SHA256: ${{ vars.SKIT_RELEASE_CERT_SHA256 }}
+          SKIT_TENANT_ID: ${{ inputs.profile_code }}
+          SKIT_RUNTIME_UPDATE_PUBLIC_KEY: ${{ vars.SKIT_RUNTIME_UPDATE_PUBLIC_KEY }}
+          SKIT_RUNTIME_PROTOCOL_VERSION: ${{ vars.SKIT_RUNTIME_PROTOCOL_VERSION }}
+          SKIT_RUNTIME_RELEASE_NO: ${{ inputs.runtime_release_no }}
+          SKIT_VERSION_CODE: ${{ inputs.native_version_code }}
+          SKIT_VERSION_NAME: ${{ inputs.native_version_name }}
         run: |
           set -euo pipefail
           ./android-djx-runtime/build-djx-apk.sh

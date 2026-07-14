@@ -18,7 +18,31 @@ def pangleSettingAsset = 'SDK_Setting.json'
 def takuAppId = configValue('SKIT_TAKU_APP_ID', 'a6a50ac83df403')
 def takuAppKey = configValue('SKIT_TAKU_APP_KEY', '')
 def takuRewardPlacementId = configValue('SKIT_TAKU_REWARD_PLACEMENT_ID', 'b6a50acf394505')
+def apiBaseUrl = configValue('SKIT_API_BASE_URL', 'http://127.0.0.1:48080')
+def apiPath = configValue('SKIT_API_PATH', '/app-api')
+def skitTenantId = configValue('SKIT_TENANT_ID', 'debug-local')
+def runtimeUpdatePublicKey = configValue('SKIT_RUNTIME_UPDATE_PUBLIC_KEY', '')
+def runtimeProtocolVersion = configValue('SKIT_RUNTIME_PROTOCOL_VERSION', '1')
+def runtimeReleaseNo = configValue('SKIT_RUNTIME_RELEASE_NO', '0')
+def configuredVersionCode = providers.gradleProperty('SKIT_VERSION_CODE').orNull ?:
+        providers.environmentVariable('SKIT_VERSION_CODE').orNull
+def configuredVersionName = providers.gradleProperty('SKIT_VERSION_NAME').orNull ?:
+        providers.environmentVariable('SKIT_VERSION_NAME').orNull
+def skitVersionCode = configuredVersionCode ?: '3'
+def skitVersionName = configuredVersionName ?: '2026.07.10-djx'
 def releaseStoreFile = configValue('SKIT_RELEASE_STORE_FILE', '')
+def releaseStorePassword = configValue('SKIT_RELEASE_STORE_PASSWORD', '')
+def releaseKeyAlias = configValue('SKIT_RELEASE_KEY_ALIAS', '')
+def releaseKeyPassword = configValue('SKIT_RELEASE_KEY_PASSWORD', '')
+def releaseCertSha256 = configValue('SKIT_RELEASE_CERT_SHA256', '')
+
+if (!skitVersionCode.matches('[1-9][0-9]{0,9}')
+        || Long.parseLong(skitVersionCode) > 2100000000L) {
+    throw new GradleException('SKIT_VERSION_CODE must be between 1 and 2100000000')
+}
+if (!skitVersionName.matches('[0-9]+(\\.[0-9]+){1,3}([-.][A-Za-z0-9._-]+)?')) {
+    throw new GradleException('SKIT_VERSION_NAME must be a release version such as 2.3.0')
+}
 
 android {
     namespace 'top.neoshen.xingheyingguan'
@@ -28,13 +52,23 @@ android {
         applicationId skitApplicationId
         minSdk 24
         targetSdk 36
-        versionCode 3
-        versionName '2026.07.10-djx'
+        versionCode Integer.parseInt(skitVersionCode)
+        versionName skitVersionName
         buildConfigField 'String', 'PANGLE_APP_ID', javaString(pangleAppId)
         buildConfigField 'String', 'PANGLE_SETTING_ASSET', javaString(pangleSettingAsset)
         buildConfigField 'String', 'TAKU_APP_ID', javaString(takuAppId)
         buildConfigField 'String', 'TAKU_APP_KEY', javaString(takuAppKey)
         buildConfigField 'String', 'TAKU_REWARD_PLACEMENT_ID', javaString(takuRewardPlacementId)
+        buildConfigField 'String', 'API_BASE_URL', javaString(apiBaseUrl)
+        buildConfigField 'String', 'API_PATH', javaString(apiPath)
+        buildConfigField 'String', 'TENANT_ID', javaString(skitTenantId)
+        buildConfigField 'String', 'RUNTIME_UPDATE_PUBLIC_KEY', javaString(runtimeUpdatePublicKey)
+        buildConfigField 'int', 'RUNTIME_PROTOCOL_VERSION', runtimeProtocolVersion
+        buildConfigField 'long', 'RUNTIME_RELEASE_NO', runtimeReleaseNo + 'L'
+        buildConfigField 'String', 'RUNTIME_PROTOCOL_MARKER',
+                javaString('skit-runtime-protocol-v' + runtimeProtocolVersion)
+        buildConfigField 'String', 'RUNTIME_RELEASE_MARKER',
+                javaString('skit-runtime-release-' + runtimeReleaseNo)
         resValue 'string', 'skit_agent_app_name', skitAppName
     }
 
@@ -52,9 +86,9 @@ android {
         if (releaseStoreFile) {
             release {
                 storeFile file(releaseStoreFile)
-                storePassword configValue('SKIT_RELEASE_STORE_PASSWORD', '')
-                keyAlias configValue('SKIT_RELEASE_KEY_ALIAS', '')
-                keyPassword configValue('SKIT_RELEASE_KEY_PASSWORD', '')
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
             }
         }
     }
@@ -89,6 +123,37 @@ android {
     }
 }
 
+tasks.configureEach { task ->
+    if (task.name == 'assembleRelease' || task.name == 'packageRelease'
+            || task.name == 'bundleRelease') {
+        task.doFirst {
+            if (!skitTenantId.matches('[A-Z0-9_-]{3,32}')) {
+                throw new GradleException('Release build requires SKIT_TENANT_ID')
+            }
+            if (!runtimeUpdatePublicKey.matches('[A-Za-z0-9+/=]{128,2048}')) {
+                throw new GradleException('Release build requires SKIT_RUNTIME_UPDATE_PUBLIC_KEY')
+            }
+            if (!runtimeProtocolVersion.matches('[1-9][0-9]*')) {
+                throw new GradleException('Release build requires a positive SKIT_RUNTIME_PROTOCOL_VERSION')
+            }
+            if (!runtimeReleaseNo.matches('[1-9][0-9]*')) {
+                throw new GradleException('Release build requires a positive SKIT_RUNTIME_RELEASE_NO')
+            }
+            if (!apiBaseUrl.startsWith('https://')) {
+                throw new GradleException('Release build requires an HTTPS SKIT_API_BASE_URL')
+            }
+            if (configuredVersionCode == null || configuredVersionName == null) {
+                throw new GradleException('Release build requires SKIT_VERSION_CODE and SKIT_VERSION_NAME')
+            }
+            if (!releaseStoreFile || !file(releaseStoreFile).isFile()
+                    || !releaseStorePassword || !releaseKeyAlias || !releaseKeyPassword
+                    || !releaseCertSha256.matches('[A-Fa-f0-9]{64}')) {
+                throw new GradleException('Release build requires complete pinned APK signing metadata')
+            }
+        }
+    }
+}
+
 configurations.configureEach {
     resolutionStrategy {
         force 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22'
@@ -116,4 +181,5 @@ dependencies {
     implementation 'com.pangle.cn:pangrowth-base:2.9.0.9'
     implementation 'com.pangle.cn:pangrowth-djx-sdk-lite:2.9.0.9'
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    testImplementation 'junit:junit:4.13.2'
 }

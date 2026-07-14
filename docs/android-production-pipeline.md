@@ -23,6 +23,20 @@ The `Android production APK` workflow runs on a macOS self-hosted runner carryin
 - `SKIT_RELEASE_STORE_PASSWORD`
 - `SKIT_RELEASE_KEY_ALIAS`
 - `SKIT_RELEASE_KEY_PASSWORD`
+- `RUNTIME_UPDATE_SIGNING_KEY_BASE64` (RSA private key, used only by the hot-update workflow)
+
+Configure these non-secret environment variables:
+
+- `SKIT_TENANT_ID`
+- `SKIT_APPLICATION_ID`
+- `SKIT_RUNTIME_UPDATE_PUBLIC_KEY` (base64 X.509 RSA public key, at least 2048 bits)
+- `SKIT_RUNTIME_PROTOCOL_VERSION`
+- `SKIT_RELEASE_CERT_SHA256` (pinned APK signing certificate)
+
+Each native release supplies explicit `native_version_code`, `native_version_name`, and a monotonic
+`runtime_release_no`. Android `versionCode` must increase for installable App upgrades. The runtime release
+number is the anti-rollback floor for WebView bundles and must be lower than every later hot-update
+`releaseNo`.
 
 The Pangle settings JSON and signing key are protected inputs and must not be committed. The source-packaging workflow in `cicd.yml` is not allowed to create a production APK.
 
@@ -35,5 +49,12 @@ The Pangle settings JSON and signing key are protected inputs and must not be co
 3. Pangle site ID, content app ID, and licensed package match the profile.
 4. The APK contains both SDK classes and the exact Pangle/Taku versions from the profile.
 5. The APK contains the profile's Taku app ID and rewarded placement ID.
+6. Tenant, application, runtime protocol, anti-rollback floor, and the embedded update public key match the release inputs.
+7. The APK is non-debuggable, has exactly one signer, and its signing certificate matches `SKIT_RELEASE_CERT_SHA256`.
+8. The packaged WebView code contains no local reward fallback.
+
+The private runtime-manifest key and the Android keystore are separate credentials. The APK contains only
+the runtime public key. Rotate either key through an audited native release; never place either private key
+in the repository, release profile, App bundle, or backend response.
 
 Before store release, also gate rewards using consistent results from the client callback, the third-party ad platform server callback, and the Taku server callback. A client-only reward callback is suitable for integration testing, not production settlement.

@@ -13,7 +13,7 @@
         android:label="@string/skit_agent_app_name"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="${skitUsesCleartextTraffic}"
-        tools:replace="android:allowBackup,android:label">
+        tools:replace="android:allowBackup,android:label,android:usesCleartextTraffic">
         <uses-library android:name="org.apache.http.legacy" android:required="false"/>
         <activity
             android:name=".DramaPlayerActivity"

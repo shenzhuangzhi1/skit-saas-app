@@ -39,6 +39,9 @@ jobs:
       - name: Enforce Skit member identity boundary
         run: node scripts/check-member-identity-boundary.mjs
 
+      - name: Enforce server-verified ad session boundary
+        run: node --test tests/app/*.test.mjs
+
       - name: Package source bundle
         run: |
           set -euo pipefail

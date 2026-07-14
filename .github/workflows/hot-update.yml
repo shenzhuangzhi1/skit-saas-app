@@ -11,6 +11,14 @@ on:
         description: Hot update version, for example 2.3.0
         required: true
         type: string
+      release_no:
+        description: Monotonic runtime release number; must exceed every accepted release
+        required: true
+        type: string
+      bundle_url:
+        description: Final HTTPS URL where the zip will be published
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -22,11 +30,29 @@ jobs:
     environment: android-production
     steps:
       - uses: actions/checkout@v5
+      - name: Materialize protected manifest signing key
+        env:
+          RUNTIME_UPDATE_SIGNING_KEY_BASE64: ${{ secrets.RUNTIME_UPDATE_SIGNING_KEY_BASE64 }}
+        run: |
+          set -euo pipefail
+          : "${RUNTIME_UPDATE_SIGNING_KEY_BASE64:?Set RUNTIME_UPDATE_SIGNING_KEY_BASE64}"
+          mkdir -p "$RUNNER_TEMP/skit-hot-update"
+          printf '%s' "$RUNTIME_UPDATE_SIGNING_KEY_BASE64" | \
+            python3 -c 'import base64,sys; sys.stdout.buffer.write(base64.b64decode(sys.stdin.buffer.read()))' \
+            > "$RUNNER_TEMP/skit-hot-update/manifest-signing.pem"
+          chmod 600 "$RUNNER_TEMP/skit-hot-update/manifest-signing.pem"
       - name: Build agent-specific bundle
         env:
           SKIT_AGENT_CODE: ${{ inputs.profile_code }}
           SKIT_HOT_VERSION: ${{ inputs.hot_version }}
+          SKIT_HOT_RELEASE_NO: ${{ inputs.release_no }}
+          SKIT_HOT_BUNDLE_URL: ${{ inputs.bundle_url }}
           SKIT_API_BASE_URL: ${{ secrets.SKIT_API_BASE_URL }}
+          SKIT_TENANT_ID: ${{ inputs.profile_code }}
+          SKIT_APPLICATION_ID: ${{ vars.SKIT_APPLICATION_ID }}
+          SKIT_RUNTIME_PROTOCOL_VERSION: ${{ vars.SKIT_RUNTIME_PROTOCOL_VERSION }}
+          SKIT_RUNTIME_UPDATE_PUBLIC_KEY: ${{ vars.SKIT_RUNTIME_UPDATE_PUBLIC_KEY }}
+          SKIT_HOT_MANIFEST_SIGNING_KEY: ${{ runner.temp }}/skit-hot-update/manifest-signing.pem
         run: ./android-djx-runtime/build-hot-bundle.sh
       - name: Publish build metadata for release profile
         id: bundle
@@ -36,11 +62,15 @@ jobs:
         run: |
           set -euo pipefail
           ARCHIVE="dist/hot-updates/${PROFILE_CODE}/${HOT_VERSION}.zip"
+          MANIFEST="dist/hot-updates/${PROFILE_CODE}/${HOT_VERSION}.manifest.json"
           SHA256="$(shasum -a 256 "$ARCHIVE" | awk '{print $1}')"
-          printf 'archive=%s\nsha256=%s\n' "$ARCHIVE" "$SHA256" >> "$GITHUB_OUTPUT"
+          printf 'archive=%s\nmanifest=%s\nsha256=%s\n' \
+            "$ARCHIVE" "$MANIFEST" "$SHA256" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
           name: hot-update-${{ inputs.profile_code }}-${{ inputs.hot_version }}
-          path: ${{ steps.bundle.outputs.archive }}
+          path: |
+            ${{ steps.bundle.outputs.archive }}
+            ${{ steps.bundle.outputs.manifest }}
           if-no-files-found: error
           retention-days: 30

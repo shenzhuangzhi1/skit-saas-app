@@ -4,43 +4,36 @@ import android.app.Activity;
 import android.content.Context;
 import android.util.Log;
 
+import com.anythink.core.api.ATAdConst;
 import com.anythink.core.api.ATAdInfo;
 import com.anythink.core.api.ATSDK;
+import com.anythink.core.api.ATShowConfig;
 import com.anythink.core.api.AdError;
 import com.anythink.rewardvideo.api.ATRewardVideoAd;
 import com.anythink.rewardvideo.api.ATRewardVideoListener;
 
-/**
- * Owns the Taku rewarded-video lifecycle for one visible Activity.
- *
- * The SDK keeps its ad instance and listener weakly, so this object must be retained by the
- * Activity that asks it to load or show an advertisement.
- */
+import java.util.HashMap;
+import java.util.Map;
+
+import top.neoshen.xingheyingguan.ad.AdSessionProtocol;
+import top.neoshen.xingheyingguan.ad.TakuSessionStateMachine;
+import top.neoshen.xingheyingguan.ad.TakuTelemetry;
+
+/** Owns one Taku ad object at a time and never reuses it across server sessions. */
 final class TakuRewardedAdController {
     static final String APP_ID = BuildConfig.TAKU_APP_ID;
     static final String APP_KEY = BuildConfig.TAKU_APP_KEY;
-    static final String DEFAULT_REWARD_PLACEMENT_ID = BuildConfig.TAKU_REWARD_PLACEMENT_ID;
 
     private static final String TAG = "SkitTakuAd";
     private static boolean initialized;
 
-    interface RewardListener {
-        void onAdStarted(ATAdInfo adInfo);
-
-        void onReward(ATAdInfo adInfo);
-
-        void onAdClosed(ATAdInfo adInfo, boolean rewarded);
-
-        void onAdFailed(AdError error);
+    interface EventListener {
+        void onTelemetry(TakuTelemetry telemetry);
     }
 
     private final Activity activity;
-    private ATRewardVideoAd rewardVideoAd;
-    private String placementId = DEFAULT_REWARD_PLACEMENT_ID;
-    private RewardListener pendingListener;
-    private boolean loading;
-    private boolean showing;
-    private boolean rewardGranted;
+    private ATRewardVideoAd activeAd;
+    private ActiveSession activeSession;
     private boolean destroyed;
 
     TakuRewardedAdController(Activity activity) {
@@ -54,7 +47,6 @@ final class TakuRewardedAdController {
         ATSDK.setNetworkLogDebug(BuildConfig.DEBUG);
         ATSDK.init(context.getApplicationContext(), APP_ID, APP_KEY);
         try {
-            // Required by current mainland-China SDK releases after ATSDK.init().
             ATSDK.start();
         } catch (Throwable error) {
             Log.w(TAG, "Taku SDK start failed", error);
@@ -63,173 +55,241 @@ final class TakuRewardedAdController {
         Log.i(TAG, "Taku SDK initialized: " + ATSDK.getSDKVersionName());
     }
 
-    void preload() {
+    void start(AdSessionProtocol protocol, EventListener listener) {
         if (destroyed) {
-            return;
+            throw new IllegalStateException("Taku controller is destroyed");
         }
-        initialize(activity);
-        ensureRewardAd(DEFAULT_REWARD_PLACEMENT_ID);
-        loadIfNeeded();
-    }
-
-    void show(String desiredPlacementId, RewardListener listener) {
-        if (listener == null) {
-            return;
+        if (protocol == null || listener == null) {
+            throw new IllegalArgumentException("Protocol and listener are required");
         }
-        if (destroyed) {
-            listener.onAdFailed(null);
-            return;
-        }
-        if (pendingListener != null || showing) {
-            listener.onAdFailed(null);
-            return;
+        if (activeSession != null || activeAd != null) {
+            throw new IllegalStateException("Another Taku session is active");
         }
 
         initialize(activity);
-        ensureRewardAd(desiredPlacementId == null || desiredPlacementId.length() == 0
-                ? DEFAULT_REWARD_PLACEMENT_ID : desiredPlacementId);
-        pendingListener = listener;
-        rewardGranted = false;
+        String sdkRequestId = "native-" + protocol.getSessionId();
+        ActiveSession session = new ActiveSession(
+                protocol, listener, new TakuSessionStateMachine(protocol, sdkRequestId));
+        session.machine.initializing();
+        ATRewardVideoAd ad = new ATRewardVideoAd(activity, protocol.getPlacementId());
+        activeSession = session;
+        activeAd = ad;
+        ad.setAdListener(listenerFor(session, ad));
 
-        if (rewardVideoAd != null && rewardVideoAd.isAdReady()) {
-            showLoadedAd();
-            return;
+        Map<String, Object> localExtra = new HashMap<>();
+        localExtra.put(ATAdConst.KEY.USER_ID, protocol.getUserId());
+        localExtra.put(ATAdConst.KEY.USER_CUSTOM_DATA, protocol.getCustomData());
+        ad.setLocalExtra(localExtra);
+        emit(session, session.machine.loading());
+        try {
+            ad.load(activity);
+        } catch (Throwable error) {
+            Log.w(TAG, "Taku load failed", error);
+            fail(session, ad, null);
         }
-        loadIfNeeded();
     }
 
     void destroy() {
         destroyed = true;
-        pendingListener = null;
-        loading = false;
-        showing = false;
-        rewardGranted = false;
-        if (rewardVideoAd != null) {
-            rewardVideoAd.destroyAd();
-            rewardVideoAd = null;
-        }
+        releaseActive();
     }
 
-    private void ensureRewardAd(String desiredPlacementId) {
-        if (rewardVideoAd != null && desiredPlacementId.equals(placementId)) {
-            return;
-        }
-        if (rewardVideoAd != null) {
-            rewardVideoAd.destroyAd();
-        }
-        placementId = desiredPlacementId;
-        rewardVideoAd = new ATRewardVideoAd(activity, placementId);
-        rewardVideoAd.setAdListener(new ATRewardVideoListener() {
+    void cancelActiveSession() {
+        releaseActive();
+    }
+
+    private ATRewardVideoListener listenerFor(ActiveSession session, ATRewardVideoAd ad) {
+        return new ATRewardVideoListener() {
             @Override
             public void onRewardedVideoAdLoaded() {
-                loading = false;
-                if (destroyed) {
+                if (!isActive(session, ad)) {
                     return;
                 }
-                Log.i(TAG, "rewarded video loaded placementId=" + placementId);
-                if (pendingListener != null && !showing) {
-                    showLoadedAd();
+                try {
+                    emit(session, session.machine.loaded());
+                    AdSessionProtocol protocol = session.protocol;
+                    ATShowConfig showConfig = new ATShowConfig.Builder()
+                            .showCustomExt(protocol.getSessionId())
+                            .build();
+                    ad.show(activity, showConfig);
+                } catch (Throwable error) {
+                    Log.w(TAG, "Taku show failed", error);
+                    fail(session, ad, null);
                 }
             }
 
             @Override
             public void onRewardedVideoAdFailed(AdError error) {
-                loading = false;
-                Log.w(TAG, "rewarded video load failed: " + errorMessage(error));
-                finishFailure(error);
+                fail(session, ad, null);
             }
 
             @Override
             public void onRewardedVideoAdPlayStart(ATAdInfo adInfo) {
-                showing = true;
-                Log.i(TAG, "rewarded video play start");
-                if (pendingListener != null) {
-                    pendingListener.onAdStarted(adInfo);
+                if (!isActive(session, ad)) {
+                    return;
+                }
+                try {
+                    emit(session, session.machine.showing(
+                            showId(adInfo), networkFirmId(adInfo), adsourceId(adInfo)));
+                } catch (Throwable invalidCallback) {
+                    Log.w(TAG, "Taku play-start identity rejected", invalidCallback);
+                    fail(session, ad, adInfo);
                 }
             }
 
             @Override
             public void onRewardedVideoAdPlayEnd(ATAdInfo adInfo) {
-                Log.i(TAG, "rewarded video play end");
+                validateRelatedCallback(session, ad, adInfo, "play-end");
             }
 
             @Override
             public void onRewardedVideoAdPlayFailed(AdError error, ATAdInfo adInfo) {
-                Log.w(TAG, "rewarded video play failed: " + errorMessage(error));
-                finishFailure(error);
+                fail(session, ad, adInfo);
             }
 
             @Override
             public void onRewardedVideoAdClosed(ATAdInfo adInfo) {
-                RewardListener listener = pendingListener;
-                boolean rewarded = rewardGranted;
-                pendingListener = null;
-                showing = false;
-                rewardGranted = false;
-                if (listener != null) {
-                    listener.onAdClosed(adInfo, rewarded);
+                if (!isActive(session, ad)) {
+                    return;
                 }
-                if (!destroyed) {
-                    preload();
+                try {
+                    TakuTelemetry telemetry = session.machine.closed(
+                            showId(adInfo), networkFirmId(adInfo), adsourceId(adInfo));
+                    emit(session, telemetry);
+                } catch (Throwable invalidCallback) {
+                    Log.w(TAG, "Taku close identity rejected", invalidCallback);
+                    fail(session, ad, adInfo);
+                    return;
                 }
+                release(session, ad);
             }
 
             @Override
             public void onRewardedVideoAdPlayClicked(ATAdInfo adInfo) {
-                Log.i(TAG, "rewarded video clicked");
+                validateRelatedCallback(session, ad, adInfo, "click");
             }
 
             @Override
             public void onReward(ATAdInfo adInfo) {
-                rewardGranted = true;
-                if (pendingListener != null) {
-                    pendingListener.onReward(adInfo);
+                if (!isActive(session, ad)) {
+                    return;
+                }
+                try {
+                    emit(session, session.machine.rewardObserved(
+                            showId(adInfo), networkFirmId(adInfo), adsourceId(adInfo)));
+                } catch (Throwable invalidCallback) {
+                    Log.w(TAG, "Taku reward identity rejected", invalidCallback);
+                    fail(session, ad, adInfo);
                 }
             }
-        });
+        };
     }
 
-    private void loadIfNeeded() {
-        if (rewardVideoAd == null || loading || showing || rewardVideoAd.isAdReady()) {
+    private void validateRelatedCallback(ActiveSession session, ATRewardVideoAd ad,
+                                         ATAdInfo adInfo, String callback) {
+        if (!isActive(session, ad)) {
             return;
         }
         try {
-            loading = true;
-            rewardVideoAd.load(activity);
-        } catch (Throwable error) {
-            loading = false;
-            Log.e(TAG, "rewarded video load threw", error);
-            finishFailure(null);
+            String showId = showId(adInfo);
+            if (!showId.equals(session.showId)) {
+                throw new IllegalStateException("Provider show ID changed");
+            }
+        } catch (Throwable invalidCallback) {
+            Log.w(TAG, "Taku " + callback + " identity rejected", invalidCallback);
+            fail(session, ad, adInfo);
         }
     }
 
-    private void showLoadedAd() {
-        if (rewardVideoAd == null || pendingListener == null || showing) {
+    private void emit(ActiveSession session, TakuTelemetry telemetry) {
+        if (telemetry.getProviderShowId() != null) {
+            if (session.showId == null) {
+                session.showId = telemetry.getProviderShowId();
+            } else if (!session.showId.equals(telemetry.getProviderShowId())) {
+                throw new IllegalStateException("Provider show ID changed");
+            }
+        }
+        session.listener.onTelemetry(telemetry);
+    }
+
+    private void fail(ActiveSession session, ATRewardVideoAd ad, ATAdInfo adInfo) {
+        if (!isActive(session, ad)) {
             return;
         }
         try {
-            rewardVideoAd.show(activity);
-        } catch (Throwable error) {
-            Log.e(TAG, "rewarded video show threw", error);
-            finishFailure(null);
+            TakuTelemetry failure;
+            if (adInfo == null || session.showId == null) {
+                failure = session.machine.failed(null, null, null);
+            } else {
+                failure = session.machine.failed(
+                        showId(adInfo), networkFirmId(adInfo), adsourceId(adInfo));
+            }
+            emit(session, failure);
+        } catch (Throwable ignored) {
+            Log.w(TAG, "Taku terminal failure callback was rejected", ignored);
+        } finally {
+            release(session, ad);
         }
     }
 
-    private void finishFailure(AdError error) {
-        RewardListener listener = pendingListener;
-        pendingListener = null;
-        showing = false;
-        rewardGranted = false;
-        if (listener != null) {
-            listener.onAdFailed(error);
+    private boolean isActive(ActiveSession session, ATRewardVideoAd ad) {
+        return !destroyed && activeSession == session && activeAd == ad;
+    }
+
+    private void release(ActiveSession session, ATRewardVideoAd ad) {
+        if (activeSession == session) {
+            activeSession = null;
+        }
+        if (activeAd == ad) {
+            activeAd = null;
+        }
+        ad.destroyAd();
+    }
+
+    private void releaseActive() {
+        ATRewardVideoAd ad = activeAd;
+        activeAd = null;
+        activeSession = null;
+        if (ad != null) {
+            ad.destroyAd();
         }
     }
 
-    private static String errorMessage(AdError error) {
-        if (error == null) {
-            return "unknown error";
+    private static String showId(ATAdInfo adInfo) {
+        String value = adInfo == null ? null : adInfo.getShowId();
+        if (value == null || value.length() == 0) {
+            throw new IllegalStateException("Taku provider show ID is missing");
         }
-        String full = error.getFullErrorInfo();
-        return full == null || full.length() == 0 ? error.getDesc() : full;
+        return value;
+    }
+
+    private static Integer networkFirmId(ATAdInfo adInfo) {
+        int value = adInfo == null ? 0 : adInfo.getNetworkFirmId();
+        if (value <= 0) {
+            throw new IllegalStateException("Taku network firm ID is missing");
+        }
+        return value;
+    }
+
+    private static String adsourceId(ATAdInfo adInfo) {
+        String value = adInfo == null ? null : adInfo.getAdsourceId();
+        if (value == null || value.length() == 0) {
+            throw new IllegalStateException("Taku adsource ID is missing");
+        }
+        return value;
+    }
+
+    private static final class ActiveSession {
+        private final AdSessionProtocol protocol;
+        private final EventListener listener;
+        private final TakuSessionStateMachine machine;
+        private String showId;
+
+        private ActiveSession(AdSessionProtocol protocol, EventListener listener,
+                              TakuSessionStateMachine machine) {
+            this.protocol = protocol;
+            this.listener = listener;
+            this.machine = machine;
+        }
     }
 }

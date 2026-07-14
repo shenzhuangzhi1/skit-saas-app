@@ -1,6 +1,8 @@
 package top.neoshen.xingheyingguan;
 
 import android.app.Activity;
+import android.content.ActivityNotFoundException;
+import android.content.Intent;
 import android.content.res.AssetManager;
 import android.net.Uri;
 import android.os.Bundle;
@@ -34,6 +36,9 @@ public class MainActivity extends Activity {
     private static final int ASSET_PORT = 18765;
     private WebView webView;
     private LocalAssetServer assetServer;
+    private BridgeOriginGuard originGuard;
+    private SkitTakuAdBridge takuAdBridge;
+    private boolean bridgesAttached;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -45,6 +50,7 @@ public class MainActivity extends Activity {
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
         webView = new WebView(this);
         setContentView(webView);
+        originGuard = new BridgeOriginGuard(assetServer.getBaseUrl());
 
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -53,25 +59,14 @@ public class MainActivity extends Activity {
         settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setLoadWithOverviewMode(true);
         settings.setUseWideViewPort(true);
-        settings.setAllowFileAccess(true);
-
-        webView.addJavascriptInterface(new SkitPangleDramaBridge(this, webView), "SkitPangleDramaNative");
-        webView.addJavascriptInterface(new SkitTakuAdBridge(this, webView), "SkitTakuAdNative");
-        webView.addJavascriptInterface(new SkitRuntimeUpdateBridge(this, webView), "SkitRuntimeUpdateNative");
+        settings.setAllowFileAccess(false);
+        settings.setAllowContentAccess(false);
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         webView.setWebChromeClient(
                 new WebChromeClient() {
                     @Override
                     public boolean onConsoleMessage(ConsoleMessage consoleMessage) {
-                        Log.d(
-                                TAG,
-                                "console "
-                                        + consoleMessage.messageLevel()
-                                        + " "
-                                        + consoleMessage.sourceId()
-                                        + ":"
-                                        + consoleMessage.lineNumber()
-                                        + " "
-                                        + consoleMessage.message());
+                        Log.d(TAG, "web console level=" + consoleMessage.messageLevel());
                         return true;
                     }
                 });
@@ -79,14 +74,40 @@ public class MainActivity extends Activity {
                 new WebViewClient() {
                     @Override
                     public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                        if (!request.isForMainFrame()) {
+                            return false;
+                        }
                         Uri uri = request.getUrl();
-                        return uri == null || !("http".equals(uri.getScheme()) || "https".equals(uri.getScheme()));
+                        if (uri != null && originGuard.isTrustedTopLevel(uri.toString())) {
+                            return false;
+                        }
+                        if (uri != null && ("http".equalsIgnoreCase(uri.getScheme())
+                                || "https".equalsIgnoreCase(uri.getScheme()))) {
+                            openExternal(uri);
+                        }
+                        return true;
+                    }
+
+                    @Override
+                    public void onPageStarted(WebView view, String url,
+                                              android.graphics.Bitmap favicon) {
+                        super.onPageStarted(view, url, favicon);
+                        originGuard.updateTopLevel(url);
+                        if (!originGuard.isTrustedTopLevel(url)) {
+                            detachBridges();
+                        }
                     }
 
                     @Override
                     public void onPageFinished(WebView view, String url) {
                         super.onPageFinished(view, url);
-                        Log.d(TAG, "page finished " + url);
+                        originGuard.updateTopLevel(url);
+                        if (originGuard.isTrustedTopLevel(url)) {
+                            attachBridges();
+                            Log.d(TAG, "trusted local page finished");
+                        } else {
+                            detachBridges();
+                        }
                     }
                 });
 
@@ -104,6 +125,10 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        detachBridges();
+        if (originGuard != null) {
+            originGuard.updateTopLevel(null);
+        }
         if (webView != null) {
             webView.destroy();
             webView = null;
@@ -113,6 +138,41 @@ public class MainActivity extends Activity {
             assetServer = null;
         }
         super.onDestroy();
+    }
+
+    private void attachBridges() {
+        if (bridgesAttached) {
+            return;
+        }
+        takuAdBridge = new SkitTakuAdBridge(this, webView, originGuard);
+        webView.addJavascriptInterface(
+                new SkitPangleDramaBridge(this, webView, originGuard), "SkitPangleDramaNative");
+        webView.addJavascriptInterface(takuAdBridge, "SkitTakuAdNative");
+        webView.addJavascriptInterface(
+                new SkitRuntimeUpdateBridge(this, webView, originGuard), "SkitRuntimeUpdateNative");
+        bridgesAttached = true;
+    }
+
+    private void detachBridges() {
+        if (webView == null || !bridgesAttached) {
+            return;
+        }
+        webView.removeJavascriptInterface("SkitPangleDramaNative");
+        webView.removeJavascriptInterface("SkitTakuAdNative");
+        webView.removeJavascriptInterface("SkitRuntimeUpdateNative");
+        if (takuAdBridge != null) {
+            takuAdBridge.destroy();
+            takuAdBridge = null;
+        }
+        bridgesAttached = false;
+    }
+
+    private void openExternal(Uri uri) {
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, uri));
+        } catch (ActivityNotFoundException noBrowser) {
+            Log.w(TAG, "No system browser available for external navigation");
+        }
     }
 
     private static final class LocalAssetServer implements Closeable, Runnable {
