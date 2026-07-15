@@ -55,9 +55,14 @@ jobs:
         run: node --test tests/app/*.test.mjs
 
       - name: Compile and test Android debug runtime
-        run: >-
-          gradle --no-daemon -p android-djx-runtime
-          :app:testDebugUnitTest :app:assembleDebug
+        run: |
+          set -euo pipefail
+          gradle --no-daemon -p android-djx-runtime \
+            :app:testDebugUnitTest :app:assembleDebug
+          jar tf android-djx-runtime/app/build/outputs/apk/debug/app-debug.apk \
+            > "${RUNNER_TEMP}/skit-debug-apk-entries.txt"
+          grep -Fxq 'assets/www/index.html' "${RUNNER_TEMP}/skit-debug-apk-entries.txt"
+          grep -Fxq 'assets/www/djx-runtime.js' "${RUNNER_TEMP}/skit-debug-apk-entries.txt"
 
       - name: Package source bundle
         run: |

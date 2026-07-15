@@ -262,16 +262,9 @@ if [[ ! -d "$H5_DIR" ]]; then
   exit 1
 fi
 
-mkdir -p "$APP_DIR/src/main/assets/www" "$APP_DIR/src/main/assets" "$RUNTIME_DIR/.gradle-dist"
-rm -rf "$APP_DIR/src/main/assets/www"
-mkdir -p "$APP_DIR/src/main/assets/www"
-cp -R "$H5_DIR"/. "$APP_DIR/src/main/assets/www/"
-cp "$RUNTIME_DIR/djx-runtime.js" "$APP_DIR/src/main/assets/www/djx-runtime.js"
-if ! grep -q 'djx-runtime.js' "$APP_DIR/src/main/assets/www/index.html"; then
-  perl -0pi -e 's#</body>#  <script src="./djx-runtime.js"></script>\n  </body>#' "$APP_DIR/src/main/assets/www/index.html"
-fi
-find "$APP_DIR/src/main/assets" -maxdepth 1 -type f -name 'SDK_Setting*.json' -delete
-cp "$PANGLE_SETTINGS_SOURCE" "$APP_DIR/src/main/assets/$PANGLE_SETTING_ASSET"
+export SKIT_H5_DIR="$H5_DIR"
+export SKIT_PANGLE_SETTINGS_JSON="$PANGLE_SETTINGS_SOURCE"
+mkdir -p "$RUNTIME_DIR/.gradle-dist"
 
 if [[ ! -x "$GRADLE_DIR/bin/gradle" ]]; then
   if [[ ! -f "$GRADLE_ZIP" ]]; then
@@ -279,18 +272,6 @@ if [[ ! -x "$GRADLE_DIR/bin/gradle" ]]; then
   fi
   rm -rf "$GRADLE_DIR"
   unzip -q "$GRADLE_ZIP" -d "$RUNTIME_DIR/.gradle-dist"
-fi
-
-if [[ ! -f "$RUNTIME_DIR/debug.keystore" ]]; then
-  keytool -genkeypair \
-    -keystore "$RUNTIME_DIR/debug.keystore" \
-    -storepass android \
-    -keypass android \
-    -alias androiddebugkey \
-    -keyalg RSA \
-    -keysize 2048 \
-    -validity 10000 \
-    -dname "CN=Android Debug,O=Skit,C=CN" >/dev/null
 fi
 
 cd "$RUNTIME_DIR"
