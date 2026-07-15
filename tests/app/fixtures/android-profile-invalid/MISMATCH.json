@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 2,
+  "profileVersion": 1,
+  "profileCode": "AGENT_ALPHA",
+  "tenantId": "AGENT_ALPHA",
+  "profileId": "mismatched-profile",
+  "applicationId": "com.example.mismatch",
+  "appName": "Mismatch",
+  "adProvider": "taku",
+  "pangle": {
+    "siteId": "100003",
+    "contentAppId": "200003",
+    "settingsAsset": "SDK_Setting.json",
+    "settingsSource": "secure/mismatch/SDK_Setting.json",
+    "adSdkVersion": "7.1.0.5",
+    "contentSdkVersion": "2.9.0.9"
+  },
+  "taku": {
+    "appId": "mismatch-taku-app",
+    "rewardPlacementId": "mismatch-placement",
+    "sdkVersion": "6.6.22"
+  },
+  "outputBaseName": "mismatch"
+}

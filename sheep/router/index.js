@@ -18,13 +18,12 @@ const _go = (
     // 判断跳转类型是 path ｜ 还是http
     if (startsWith(path, 'http')) {
       // #ifdef H5
-      window.location = path;
+      window.location.href = path;
+      // #endif
+      // #ifdef APP-PLUS
+      plus.runtime.openURL(path);
+      // #endif
       return;
-      // #endif
-      // #ifndef H5
-      page = `/pages/public/webview`;
-      query = `url=${encodeURIComponent(path)}`;
-      // #endif
     } else if (startsWith(path, 'action:')) {
       handleAction(path);
       return;

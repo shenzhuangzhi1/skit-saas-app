@@ -1,5 +1,8 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
+  "profileVersion": 1,
+  "profileCode": "XINGHEYINGGUAN",
+  "tenantId": "XINGHEYINGGUAN",
   "profileId": "xingheyingguan-cn-production",
   "applicationId": "top.neoshen.xingheyingguan",
   "appName": "短剧 SaaS",

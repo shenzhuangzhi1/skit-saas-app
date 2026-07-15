@@ -1,7 +1,8 @@
 import AppReleaseApi from '@/sheep/api/app/release';
-import safeUni from '@/sheep/helper/uni';
 
-const INSTALLED_VERSION_KEY = 'skit-installed-hot-update';
+const SCOPE_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const SIGNATURE_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
 
 function getRuntimePlugin() {
   if (typeof uni === 'undefined' || typeof uni.requireNativePlugin !== 'function') {
@@ -26,13 +27,49 @@ function invoke(plugin, method, payload = {}) {
   });
 }
 
-function isSafeManifest(manifest) {
-  return (
-    manifest?.updateAvailable === true &&
-    /^https:\/\//i.test(String(manifest.bundleUrl || '')) &&
-    /^[a-f0-9]{64}$/i.test(String(manifest.sha256 || '')) &&
-    !!manifest.hotVersion
-  );
+export function normalizeSignedManifest(manifest, runtime) {
+  const tenantId = String(manifest?.tenantId || '');
+  const applicationId = String(manifest?.applicationId || '');
+  const bundleUrl = String(manifest?.bundleUrl || '');
+  const bundleSha256 = String(manifest?.bundleSha256 || '').toLowerCase();
+  const protocolVersion = Number(manifest?.protocolVersion);
+  const releaseNo = Number(manifest?.releaseNo);
+  const signature = String(manifest?.signature || '');
+  const highestAcceptedRelease = Number(runtime?.highestAcceptedRelease);
+
+  if (
+    manifest?.updateAvailable !== true ||
+    !runtime?.updatesEnabled ||
+    !SCOPE_PATTERN.test(tenantId) ||
+    !SCOPE_PATTERN.test(applicationId) ||
+    tenantId !== runtime.tenantId ||
+    applicationId !== runtime.applicationId ||
+    !/^https:\/\//i.test(bundleUrl) ||
+    !SHA256_PATTERN.test(bundleSha256) ||
+    !Number.isSafeInteger(protocolVersion) ||
+    protocolVersion <= 0 ||
+    protocolVersion !== Number(runtime.protocolVersion) ||
+    !Number.isSafeInteger(releaseNo) ||
+    releaseNo <= 0 ||
+    !Number.isSafeInteger(highestAcceptedRelease) ||
+    releaseNo <= highestAcceptedRelease ||
+    signature.length < 344 ||
+    signature.length > 1024 ||
+    signature.length % 4 !== 0 ||
+    !SIGNATURE_PATTERN.test(signature)
+  ) {
+    throw new Error('服务端热更新签名清单不完整或与当前 App 不匹配');
+  }
+
+  return Object.freeze({
+    tenantId,
+    applicationId,
+    bundleUrl,
+    bundleSha256,
+    protocolVersion,
+    releaseNo,
+    signature,
+  });
 }
 
 export async function checkAndInstallUpdate({ profileCode } = {}) {
@@ -46,38 +83,29 @@ export async function checkAndInstallUpdate({ profileCode } = {}) {
 
   const runtime = await invoke(plugin, 'getInfo');
   const nativeVersion = String(runtime.nativeVersion || '').trim();
-  if (!nativeVersion) {
+  if (!nativeVersion || !runtime.updatesEnabled) {
     return { skipped: true };
   }
   const result = await AppReleaseApi.current({
     profileCode: normalizedProfileCode,
     nativeVersion,
   });
-  const manifest = result?.data;
-  if (result?.code !== 0 || !isSafeManifest(manifest)) {
+  if (result?.code !== 0 || result?.data?.updateAvailable !== true) {
     return { skipped: true };
   }
-
-  const installed = safeUni.getStorageSync(INSTALLED_VERSION_KEY) || {};
-  if (
-    installed.profileCode === normalizedProfileCode &&
-    installed.hotVersion === manifest.hotVersion
-  ) {
-    return { skipped: true };
+  const manifest = normalizeSignedManifest(result.data, runtime);
+  const installResult = await invoke(plugin, 'installWebBundle', manifest);
+  if (Number(installResult.releaseNo) !== manifest.releaseNo) {
+    throw new Error('原生运行时返回了不匹配的热更新版本');
   }
-
-  await invoke(plugin, 'installWebBundle', {
-    bundleUrl: manifest.bundleUrl,
-    sha256: String(manifest.sha256).toLowerCase(),
-  });
-  safeUni.setStorageSync(INSTALLED_VERSION_KEY, {
-    profileCode: normalizedProfileCode,
-    hotVersion: manifest.hotVersion,
-  });
 
   // Native bridge atomically activates the verified bundle; reload only after that succeeds.
   if (typeof window !== 'undefined' && window.location) {
     window.location.reload();
   }
-  return { installed: true, hotVersion: manifest.hotVersion };
+  return {
+    installed: true,
+    hotVersion: result.data.hotVersion,
+    releaseNo: manifest.releaseNo,
+  };
 }

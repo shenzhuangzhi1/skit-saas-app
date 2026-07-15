@@ -3,6 +3,8 @@ package top.neoshen.xingheyingguan;
 import android.app.Activity;
 import android.app.Fragment;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.view.View;
 import android.view.WindowManager;
@@ -17,58 +19,106 @@ import com.bytedance.sdk.djx.interfaces.listener.IDJXDramaListener;
 import com.bytedance.sdk.djx.interfaces.listener.IDJXDramaUnlockListener;
 import com.bytedance.sdk.djx.model.DJXDrama;
 import com.bytedance.sdk.djx.model.DJXDramaDetailConfig;
+import com.bytedance.sdk.djx.model.DJXDramaUnlockAdMode;
 import com.bytedance.sdk.djx.model.DJXDramaUnlockInfo;
 import com.bytedance.sdk.djx.model.DJXDramaUnlockMethod;
-import com.bytedance.sdk.djx.model.DJXDramaUnlockAdMode;
 import com.bytedance.sdk.djx.model.DJXUnlockModeType;
 import com.bytedance.sdk.djx.params.DJXWidgetDramaDetailParams;
-import com.anythink.core.api.ATAdInfo;
-import com.anythink.core.api.AdError;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
+import top.neoshen.xingheyingguan.ad.AdSessionProtocol;
+import top.neoshen.xingheyingguan.ad.NativeEpisodeUnlockPolicy;
+import top.neoshen.xingheyingguan.ad.NativePlayerGrant;
+import top.neoshen.xingheyingguan.ad.NativeRewardGate;
+import top.neoshen.xingheyingguan.ad.TakuNativeState;
+import top.neoshen.xingheyingguan.ad.TakuTelemetry;
+
+/** DJX content player whose unlock authority is the server entitlement endpoint. */
 public class DramaPlayerActivity extends Activity {
     private static final String TAG = "SkitDramaPlayer";
+    private static final long[] STATUS_POLL_DELAYS_MS = {500L, 1_000L, 2_000L, 3_000L, 3_000L};
+
+    private final Handler handler = new Handler(Looper.getMainLooper());
     private IDJXWidget widget;
     private TakuRewardedAdController takuRewardedAdController;
+    private SkitNativeApiClient nativeApiClient;
+    private NativePlayerGrant playerGrant;
+    private FrameLayout root;
+    private long dramaId;
+    private int initialEpisode;
+    private boolean destroyed;
+    private final NativeEpisodeUnlockPolicy unlockPolicy = new NativeEpisodeUnlockPolicy();
+    private IDJXDramaUnlockListener.CustomAdCallback activeUnlockCallback;
+    private AdSessionProtocol activeProtocol;
+    private String activeProviderShowId;
+    private int pollAttempt;
+    private long unlockGeneration;
+    private int activeUnlockEpisode;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-
-        FrameLayout root = new FrameLayout(this);
+        root = new FrameLayout(this);
         root.setId(View.generateViewId());
         setContentView(root, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-        ));
-        takuRewardedAdController = new TakuRewardedAdController(this);
-        takuRewardedAdController.preload();
+                FrameLayout.LayoutParams.MATCH_PARENT));
 
         if (!DJXSdk.isStartSuccess()) {
             finish();
             return;
         }
-
-        long dramaId = getIntent().getLongExtra("dramaId", 0L);
-        if (dramaId <= 0L) {
+        dramaId = getIntent().getLongExtra("dramaId", 0L);
+        initialEpisode = getIntent().getIntExtra("episode", 1);
+        int progress = getIntent().getIntExtra("progress", 0);
+        if (dramaId <= 0L || initialEpisode <= 0) {
             finish();
             return;
         }
-        int episode = getIntent().getIntExtra("episode", 1);
-        int freeSet = getIntent().getIntExtra("freeSet", 8);
-        int lockSet = getIntent().getIntExtra("lockSet", 5);
-        int progress = getIntent().getIntExtra("progress", 0);
-        String unlockMode = getIntent().getStringExtra("unlockMode");
+        try {
+            playerGrant = readPlayerGrant();
+            playerGrant.requireDrama(dramaId);
+            nativeApiClient = new SkitNativeApiClient(this, playerGrant);
+        } catch (Throwable invalidGrant) {
+            failAndFinish("播放器权限无效，请返回重试");
+            return;
+        }
 
-        boolean useCommonUnlock = "common".equalsIgnoreCase(unlockMode);
-        DJXDramaUnlockAdMode mode = useCommonUnlock
-                ? DJXDramaUnlockAdMode.MODE_COMMON
-                : DJXDramaUnlockAdMode.MODE_SPECIFIC;
+        takuRewardedAdController = new TakuRewardedAdController(this);
+        nativeApiClient.getEntitlements(new SkitNativeApiClient.Callback<List<Integer>>() {
+            @Override
+            public void onSuccess(List<Integer> ignoredServerEntitlements) {
+                if (!destroyed) {
+                    initializePlayer(progress);
+                }
+            }
 
+            @Override
+            public void onFailure() {
+                if (!destroyed) {
+                    failAndFinish("播放器权限已失效，请返回重试");
+                }
+            }
+        });
+    }
+
+    private NativePlayerGrant readPlayerGrant() {
+        return new NativePlayerGrant(
+                getIntent().getLongExtra("playerGrantId", 0L),
+                getIntent().getLongExtra("playerGrantDramaId", 0L),
+                getIntent().getStringExtra("playerGrantToken"),
+                getIntent().getLongExtra("playerGrantExpiresAt", 0L),
+                System.currentTimeMillis());
+    }
+
+    private void initializePlayer(int progress) {
         DJXDramaDetailConfig detailConfig = DJXDramaDetailConfig
-                .obtain(mode, freeSet, useCommonUnlock ? null : createUnlockListener(dramaId, lockSet))
+                .obtain(DJXDramaUnlockAdMode.MODE_SPECIFIC,
+                        NativeEpisodeUnlockPolicy.FREE_SET,
+                        createUnlockListener(dramaId))
                 .infiniteScrollEnabled(false)
                 .hideCellularToast(true)
                 .adListener(createAdListener())
@@ -79,38 +129,34 @@ public class DramaPlayerActivity extends Activity {
                     }
 
                     @Override
-                    public void onDJXRequestFail(int code, String message, Map<String, Object> extra) {
-                        super.onDJXRequestFail(code, message, extra);
+                    public void onDJXRequestFail(int code, String message,
+                                                 Map<String, Object> extra) {
+                        Log.w(TAG, "DJX request failed code=" + code);
                     }
                 });
 
         DJXWidgetDramaDetailParams params = DJXWidgetDramaDetailParams
-                .obtain(dramaId, episode, detailConfig)
+                .obtain(dramaId, initialEpisode, detailConfig)
                 .currentDuration(progress);
-
         widget = DJXSdk.factory().createDramaDetail(params);
         Fragment fragment = widget.getFragment2();
-        getFragmentManager()
-                .beginTransaction()
+        getFragmentManager().beginTransaction()
                 .replace(root.getId(), fragment, String.valueOf(root.getId()))
                 .commit();
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     }
 
-    private IDJXDramaUnlockListener createUnlockListener(long fallbackDramaId, int fallbackLockSet) {
-        int safeLockSet = Math.max(1, fallbackLockSet);
+    private IDJXDramaUnlockListener createUnlockListener(long fallbackDramaId) {
         return new IDJXDramaUnlockListener() {
             @Override
-            public void unlockFlowStart(
-                    DJXDrama drama,
-                    IDJXDramaUnlockListener.UnlockCallback callback,
-                    Map<String, ? extends Object> extra) {
+            public void unlockFlowStart(DJXDrama drama,
+                                        IDJXDramaUnlockListener.UnlockCallback callback,
+                                        Map<String, ? extends Object> extra) {
                 long targetDramaId = drama == null || drama.id <= 0L ? fallbackDramaId : drama.id;
-                Log.i(TAG, "unlockFlowStart dramaId=" + targetDramaId + ", lockSet=" + safeLockSet);
                 if (callback != null) {
                     callback.onConfirm(new DJXDramaUnlockInfo(
                             targetDramaId,
-                            safeLockSet,
+                            NativeEpisodeUnlockPolicy.LOCK_SET,
                             DJXDramaUnlockMethod.METHOD_AD,
                             false,
                             null,
@@ -120,74 +166,316 @@ public class DramaPlayerActivity extends Activity {
             }
 
             @Override
-            public void unlockFlowEnd(
-                    DJXDrama drama,
-                    IDJXDramaUnlockListener.UnlockErrorStatus status,
-                    Map<String, ? extends Object> extra) {
-                Log.i(TAG, "unlockFlowEnd status=" + status + ", extra=" + extra);
+            public void unlockFlowEnd(DJXDrama drama,
+                                      IDJXDramaUnlockListener.UnlockErrorStatus status,
+                                      Map<String, ? extends Object> extra) {
+                Log.i(TAG, "server-gated unlock flow ended status=" + status);
             }
 
             @Override
-            public void showCustomAd(
-                    DJXDrama drama,
-                    IDJXDramaUnlockListener.CustomAdCallback callback) {
-                if (callback == null) {
+            public void showCustomAd(DJXDrama drama,
+                                     IDJXDramaUnlockListener.CustomAdCallback callback) {
+                if (callback == null || activeUnlockCallback != null || destroyed) {
+                    if (callback != null) {
+                        callback.onError();
+                    }
                     return;
                 }
-                Log.i(TAG, "showCustomAd using Taku rewarded video");
-                takuRewardedAdController.show(TakuRewardedAdController.DEFAULT_REWARD_PLACEMENT_ID,
-                        new TakuRewardedAdController.RewardListener() {
-                    private boolean rewardIssued;
-
-                    @Override
-                    public void onAdStarted(ATAdInfo adInfo) {
-                        callback.onShow("taku:" + TakuRewardedAdController.DEFAULT_REWARD_PLACEMENT_ID);
-                    }
-
-                    @Override
-                    public void onReward(ATAdInfo adInfo) {
-                        if (rewardIssued) {
-                            return;
-                        }
-                        rewardIssued = true;
-                        HashMap<String, Object> extra = new HashMap<>();
-                        extra.put("provider", "taku");
-                        extra.put("placementId", TakuRewardedAdController.DEFAULT_REWARD_PLACEMENT_ID);
-                        extra.put("network", adInfo == null ? "" : adInfo.getNetworkName());
-                        callback.onRewardVerify(new DJXRewardAdResult(true, extra));
-                        Toast.makeText(DramaPlayerActivity.this, "广告奖励到账，已解锁", Toast.LENGTH_SHORT).show();
-                    }
-
-                    @Override
-                    public void onAdClosed(ATAdInfo adInfo, boolean rewarded) {
-                        if (!rewarded) {
-                            callback.onError();
-                            Toast.makeText(DramaPlayerActivity.this, "完整观看广告后才能解锁", Toast.LENGTH_SHORT).show();
-                        }
-                    }
-
-                    @Override
-                    public void onAdFailed(AdError error) {
-                        callback.onError();
-                        String message = error == null ? "广告暂时不可用，请稍后重试" : error.getDesc();
-                        Toast.makeText(DramaPlayerActivity.this, message, Toast.LENGTH_SHORT).show();
-                    }
-                });
+                long targetDramaId = drama == null || drama.id <= 0L ? fallbackDramaId : drama.id;
+                int targetEpisode = drama == null || drama.index <= 0
+                        ? initialEpisode : drama.index;
+                if (targetDramaId != dramaId) {
+                    callback.onError();
+                    return;
+                }
+                try {
+                    unlockGeneration = unlockPolicy.begin(targetDramaId, targetEpisode);
+                } catch (IllegalArgumentException invalidScope) {
+                    callback.onError();
+                    return;
+                }
+                activeUnlockEpisode = targetEpisode;
+                activeUnlockCallback = callback;
+                verifyExistingEntitlementOrStartAd(targetEpisode, unlockGeneration);
             }
         };
+    }
+
+    private void verifyExistingEntitlementOrStartAd(int targetEpisode, long generation) {
+        nativeApiClient.getEntitlements(new SkitNativeApiClient.Callback<List<Integer>>() {
+            @Override
+            public void onSuccess(List<Integer> grantedEpisodes) {
+                if (!isActiveUnlock(generation, targetEpisode)) {
+                    return;
+                }
+                if (grantedEpisodes != null && grantedEpisodes.contains(targetEpisode)) {
+                    completeFromServerEntitlement(
+                            generation, targetEpisode, null, null, grantedEpisodes);
+                    return;
+                }
+                createServerAdSession(targetEpisode, generation);
+            }
+
+            @Override
+            public void onFailure() {
+                failActiveUnlock(generation, targetEpisode, "服务端权益校验失败");
+            }
+        });
+    }
+
+    private void createServerAdSession(int targetEpisode, long generation) {
+        nativeApiClient.createAdSession(dramaId, targetEpisode,
+                new SkitNativeApiClient.Callback<SkitNativeApiClient.CreateResult>() {
+                    @Override
+                    public void onSuccess(SkitNativeApiClient.CreateResult result) {
+                        if (!isActiveUnlock(generation, targetEpisode)) {
+                            return;
+                        }
+                        if ("ALREADY_ENTITLED".equals(result.getOutcome())) {
+                            verifyAuthoritativeEpisodeEntitlement(
+                                    targetEpisode, generation, null, null);
+                            return;
+                        }
+                        activeProtocol = result.getProtocol();
+                        activeProviderShowId = null;
+                        pollAttempt = 0;
+                        try {
+                            takuRewardedAdController.start(activeProtocol,
+                                    DramaPlayerActivity.this::onTakuTelemetry);
+                        } catch (Throwable startFailure) {
+                            failActiveUnlock(generation, targetEpisode, "广告暂不可用");
+                        }
+                    }
+
+                    @Override
+                    public void onFailure() {
+                        failActiveUnlock(generation, targetEpisode, "广告会话创建失败");
+                    }
+                });
+    }
+
+    private void onTakuTelemetry(TakuTelemetry telemetry) {
+        if (destroyed || activeUnlockCallback == null || activeProtocol == null
+                || !activeProtocol.getSessionId().equals(telemetry.getProtocol().getSessionId())) {
+            return;
+        }
+        int targetEpisode = activeUnlockEpisode;
+        long generation = unlockGeneration;
+        if (!isActiveUnlock(generation, targetEpisode)) {
+            return;
+        }
+        if (telemetry.getProviderShowId() != null) {
+            if (activeProviderShowId == null) {
+                activeProviderShowId = telemetry.getProviderShowId();
+                activeUnlockCallback.onShow(activeProviderShowId);
+            } else if (!activeProviderShowId.equals(telemetry.getProviderShowId())) {
+                failActiveUnlock(generation, targetEpisode, "广告展示编号不一致");
+                return;
+            }
+        }
+        nativeApiClient.recordTelemetry(telemetry,
+                new SkitNativeApiClient.Callback<SkitNativeApiClient.SessionStatus>() {
+                    @Override
+                    public void onSuccess(SkitNativeApiClient.SessionStatus ignored) {
+                        afterTelemetryRecorded(telemetry, generation, targetEpisode);
+                    }
+
+                    @Override
+                    public void onFailure() {
+                        afterTelemetryRecorded(telemetry, generation, targetEpisode);
+                    }
+                });
+    }
+
+    private void afterTelemetryRecorded(TakuTelemetry telemetry, long generation,
+                                        int targetEpisode) {
+        if (!isActiveUnlock(generation, targetEpisode) || activeProtocol == null
+                || !activeProtocol.getSessionId().equals(
+                        telemetry.getProtocol().getSessionId())) {
+            return;
+        }
+        if (telemetry.getState() == TakuNativeState.ERROR) {
+            failActiveUnlock(generation, targetEpisode, "广告播放失败");
+        } else if (telemetry.getState() == TakuNativeState.CLOSED) {
+            scheduleNextPoll(
+                    generation, targetEpisode, activeProtocol.getSessionId(), activeProviderShowId);
+        }
+    }
+
+    private void scheduleNextPoll(long generation, int targetEpisode, String expectedSessionId,
+                                  String expectedShowId) {
+        if (!isActiveAd(generation, targetEpisode, expectedSessionId, expectedShowId)) {
+            return;
+        }
+        if (pollAttempt >= STATUS_POLL_DELAYS_MS.length) {
+            failActiveUnlock(generation, targetEpisode, "奖励仍在服务端验证中，请稍后重试");
+            return;
+        }
+        long delay = STATUS_POLL_DELAYS_MS[pollAttempt++];
+        handler.postDelayed(
+                () -> pollServerReward(
+                        generation, targetEpisode, expectedSessionId, expectedShowId), delay);
+    }
+
+    private void pollServerReward(long generation, int targetEpisode, String expectedSessionId,
+                                  String expectedShowId) {
+        if (!isActiveAd(generation, targetEpisode, expectedSessionId, expectedShowId)) {
+            return;
+        }
+        nativeApiClient.getSession(expectedSessionId,
+                new SkitNativeApiClient.Callback<SkitNativeApiClient.SessionStatus>() {
+                    @Override
+                    public void onSuccess(SkitNativeApiClient.SessionStatus status) {
+                        if (!isActiveAd(
+                                generation, targetEpisode, expectedSessionId, expectedShowId)) {
+                            return;
+                        }
+                        try {
+                            NativeRewardGate gate = new NativeRewardGate(
+                                    expectedSessionId, expectedShowId);
+                            NativeRewardGate.Decision decision = gate.evaluate(
+                                    new NativeRewardGate.Evidence(
+                                            status.getSessionId(),
+                                            status.getRewardVerificationStatus(),
+                                            status.getEntitlementStatus(),
+                                            status.getProviderShowId()));
+                            if (decision == NativeRewardGate.Decision.GRANT) {
+                                verifyAuthoritativeEpisodeEntitlement(
+                                        targetEpisode, generation,
+                                        expectedSessionId, expectedShowId);
+                            } else if (decision == NativeRewardGate.Decision.REJECT) {
+                                failActiveUnlock(
+                                        generation, targetEpisode, "本次广告未通过服务端验奖");
+                            } else {
+                                scheduleNextPoll(
+                                        generation, targetEpisode,
+                                        expectedSessionId, expectedShowId);
+                            }
+                        } catch (SecurityException mismatchedEvidence) {
+                            failActiveUnlock(
+                                    generation, targetEpisode, "服务端奖励证明不匹配");
+                        }
+                    }
+
+                    @Override
+                    public void onFailure() {
+                        scheduleNextPoll(
+                                generation, targetEpisode, expectedSessionId, expectedShowId);
+                    }
+                });
+    }
+
+    private void verifyAuthoritativeEpisodeEntitlement(int targetEpisode, long generation,
+                                                       String sessionId, String providerShowId) {
+        if (!isActiveUnlock(generation, targetEpisode)) {
+            return;
+        }
+        nativeApiClient.getEntitlements(new SkitNativeApiClient.Callback<List<Integer>>() {
+            @Override
+            public void onSuccess(List<Integer> grantedEpisodes) {
+                completeFromServerEntitlement(
+                        generation, targetEpisode, sessionId, providerShowId, grantedEpisodes);
+            }
+
+            @Override
+            public void onFailure() {
+                failActiveUnlock(generation, targetEpisode, "服务端权益复核失败");
+            }
+        });
+    }
+
+    private void completeFromServerEntitlement(long generation, int targetEpisode,
+                                               String sessionId, String providerShowId,
+                                               List<Integer> grantedEpisodes) {
+        if (!isActiveUnlock(generation, targetEpisode)) {
+            return;
+        }
+        if (!unlockPolicy.consumeIfEntitled(
+                generation, dramaId, targetEpisode, grantedEpisodes)) {
+            failActiveUnlock(generation, targetEpisode, "目标剧集尚未获得服务端权益");
+            return;
+        }
+        IDJXDramaUnlockListener.CustomAdCallback callback = activeUnlockCallback;
+        clearActiveUnlock();
+        if (callback == null || destroyed) {
+            return;
+        }
+        HashMap<String, Object> evidence = new HashMap<>();
+        evidence.put("authority", "server_entitlement");
+        evidence.put("dramaId", dramaId);
+        evidence.put("episode", targetEpisode);
+        if (sessionId != null) {
+            evidence.put("sessionId", sessionId);
+        }
+        if (providerShowId != null) {
+            evidence.put("providerShowId", providerShowId);
+        }
+        boolean serverEntitled = true;
+        callback.onRewardVerify(new DJXRewardAdResult(serverEntitled, evidence));
+        Toast.makeText(this, "服务端验奖通过，已解锁", Toast.LENGTH_SHORT).show();
+    }
+
+    private void failActiveUnlock(long generation, int targetEpisode, String message) {
+        if (!isActiveUnlock(generation, targetEpisode)) {
+            return;
+        }
+        IDJXDramaUnlockListener.CustomAdCallback callback = activeUnlockCallback;
+        clearActiveUnlock();
+        if (callback != null && !destroyed) {
+            callback.onError();
+            Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void clearActiveUnlock() {
+        unlockPolicy.cancel(unlockGeneration);
+        handler.removeCallbacksAndMessages(null);
+        if (takuRewardedAdController != null) {
+            takuRewardedAdController.cancelActiveSession();
+        }
+        activeUnlockCallback = null;
+        activeProtocol = null;
+        activeProviderShowId = null;
+        pollAttempt = 0;
+        unlockGeneration = 0L;
+        activeUnlockEpisode = 0;
+    }
+
+    private boolean isActiveUnlock(long generation, int targetEpisode) {
+        return !destroyed && generation > 0L && generation == unlockGeneration
+                && targetEpisode == activeUnlockEpisode
+                && activeUnlockCallback != null
+                && unlockPolicy.isActive(generation, dramaId, targetEpisode);
+    }
+
+    private boolean isActiveAd(long generation, int targetEpisode, String expectedSessionId,
+                               String expectedShowId) {
+        return isActiveUnlock(generation, targetEpisode) && activeProtocol != null
+                && expectedSessionId != null
+                && expectedSessionId.equals(activeProtocol.getSessionId())
+                && expectedShowId != null
+                && expectedShowId.equals(activeProviderShowId);
     }
 
     private IDJXAdListener createAdListener() {
         return new IDJXAdListener() {
             @Override
             public void onDJXAdRequestFail(int code, String message, Map<String, Object> extra) {
-                Log.w(TAG, "DJX ad request failed code=" + code + ", message=" + message + ", extra=" + extra);
+                Log.w(TAG, "DJX content ad request failed code=" + code);
             }
         };
     }
 
+    private void failAndFinish(String message) {
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
+        finish();
+    }
+
     @Override
     protected void onDestroy() {
+        destroyed = true;
+        unlockPolicy.cancel(unlockGeneration);
+        handler.removeCallbacksAndMessages(null);
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         if (widget != null) {
             widget.destroy();
@@ -197,6 +485,11 @@ public class DramaPlayerActivity extends Activity {
             takuRewardedAdController.destroy();
             takuRewardedAdController = null;
         }
+        if (nativeApiClient != null) {
+            nativeApiClient.close();
+            nativeApiClient = null;
+        }
+        activeUnlockCallback = null;
         super.onDestroy();
     }
 }

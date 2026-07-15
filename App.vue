@@ -1,8 +1,9 @@
 <script setup>
   import { onLaunch, onShow, onError } from '@dcloudio/uni-app';
-  import { ShoproInit } from './sheep';
+  import sheep, { ShoproInit } from './sheep';
   import safeUni from './sheep/helper/uni';
   import { checkAndInstallUpdate } from './sheep/services/app-update';
+  import { recoverPendingAdSessions } from './pages/drama/services/ad-session-runtime';
 
   const builtAgentCode = String(import.meta.env?.VITE_SKIT_AGENT_CODE || '')
     .trim()
@@ -14,6 +15,24 @@
         console.warn('[app-update] check failed; current bundle remains active', error);
       });
     }, 700);
+  }
+
+  function resumePendingAdVerification() {
+    const userStore = sheep.$store('user');
+    const profile = userStore.userInfo || {};
+    const memberId = profile.userId ?? profile.id;
+    if (!userStore.isLogin || profile.tenantId === undefined || memberId === undefined) {
+      return;
+    }
+    recoverPendingAdSessions({ tenantId: profile.tenantId, memberId })
+      .then((results) => {
+        if (results.some((result) => result.resolution === 'GRANTED')) {
+          safeUni.showToast({ title: '广告奖励已通过服务端验证', icon: 'none' });
+        }
+      })
+      .catch((error) => {
+        console.warn('[ad-session] foreground recovery unavailable', error?.message || error);
+      });
   }
 
   onLaunch(() => {
@@ -28,6 +47,7 @@
 
   onShow(() => {
     scheduleHotUpdateCheck();
+    resumePendingAdVerification();
     // #ifdef APP-PLUS
     // 获取urlSchemes参数
     const args = plus.runtime.arguments;

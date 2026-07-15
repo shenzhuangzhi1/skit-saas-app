@@ -60,6 +60,26 @@ function getPositiveDramaId(drama = {}) {
   return Number.isFinite(numericId) && numericId > 0 ? numericId : null;
 }
 
+function normalizePlayerGrant(playerGrant, dramaId) {
+  if (
+    !playerGrant ||
+    !Number.isSafeInteger(Number(playerGrant.grantId)) ||
+    Number(playerGrant.grantId) <= 0 ||
+    Number(playerGrant.dramaId) !== dramaId ||
+    typeof playerGrant.grantToken !== 'string' ||
+    !/^[A-Za-z0-9_-]{22,256}$/.test(playerGrant.grantToken) ||
+    !playerGrant.expiresAt
+  ) {
+    throw new Error('服务端播放器权限无效');
+  }
+  return {
+    grantId: Number(playerGrant.grantId),
+    dramaId,
+    expiresAt: playerGrant.expiresAt,
+    grantToken: playerGrant.grantToken,
+  };
+}
+
 export function hasPangleDramaId(drama = {}) {
   return getPositiveDramaId(drama) !== null;
 }
@@ -113,6 +133,7 @@ export async function openPangleDramaPlayer(options = {}) {
   if (!dramaId) {
     return { skipped: true, reason: 'pangle-drama-id-missing' };
   }
+  const playerGrant = normalizePlayerGrant(options.playerGrant, dramaId);
   return callNativeMethod(
     plugin,
     'openPlayer',
@@ -121,10 +142,8 @@ export async function openPangleDramaPlayer(options = {}) {
       episode: options.episode || 1,
       progress: options.progress || 0,
       source: options.source || 'drama_page',
-      freeSet: options.freeSet ?? drama.freeEpisodes ?? DEFAULT_FREE_SET,
-      lockSet: options.lockSet ?? drama.unlockSize ?? DEFAULT_LOCK_SET,
-      unlockMode: options.unlockMode || 'specific',
       settingFile: options.settingFile || DEFAULT_SETTING_FILE,
+      playerGrant,
     },
     { timeoutMs: 10000 },
   );
@@ -138,23 +157,13 @@ export async function openDirectDramaPlayer(drama, episode = 1, source = 'drama_
     });
     return false;
   }
-  try {
-    const result = await openPangleDramaPlayer({
-      drama,
-      episode,
-      source,
-    });
-    if (result?.skipped) {
-      throw new Error('原生播放器未接入');
-    }
-    return true;
-  } catch (error) {
-    uni.showToast({
-      title: error?.message || '真实播放器打开失败',
-      icon: 'none',
-    });
-    return false;
-  }
+  uni.navigateTo({
+    url: `/pages/drama/play?id=${encodeURIComponent(String(drama.id))}&episode=${Math.max(
+      1,
+      Number(episode) || 1,
+    )}&source=${encodeURIComponent(source)}`,
+  });
+  return true;
 }
 
 export async function getPangleDramaList(params = {}) {

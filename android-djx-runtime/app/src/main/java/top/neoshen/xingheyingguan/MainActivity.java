@@ -1,6 +1,8 @@
 package top.neoshen.xingheyingguan;
 
 import android.app.Activity;
+import android.content.ActivityNotFoundException;
+import android.content.Intent;
 import android.content.res.AssetManager;
 import android.net.Uri;
 import android.os.Bundle;
@@ -11,6 +13,13 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+
+import androidx.webkit.JavaScriptReplyProxy;
+import androidx.webkit.WebMessageCompat;
+import androidx.webkit.WebViewCompat;
+import androidx.webkit.WebViewFeature;
+
+import org.json.JSONObject;
 
 import java.io.BufferedOutputStream;
 import java.io.ByteArrayInputStream;
@@ -26,7 +35,17 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import java.util.Locale;
+import java.util.Set;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class MainActivity extends Activity {
     private static final String TAG = "SkitDjxRuntime";
@@ -34,6 +53,11 @@ public class MainActivity extends Activity {
     private static final int ASSET_PORT = 18765;
     private WebView webView;
     private LocalAssetServer assetServer;
+    private BridgeOriginGuard originGuard;
+    private SkitPangleDramaBridge pangleDramaBridge;
+    private SkitTakuAdBridge takuAdBridge;
+    private SkitRuntimeUpdateBridge runtimeUpdateBridge;
+    private boolean nativeMessageListenerAttached;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -45,6 +69,7 @@ public class MainActivity extends Activity {
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
         webView = new WebView(this);
         setContentView(webView);
+        originGuard = new BridgeOriginGuard(assetServer.getBaseUrl());
 
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -53,25 +78,14 @@ public class MainActivity extends Activity {
         settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setLoadWithOverviewMode(true);
         settings.setUseWideViewPort(true);
-        settings.setAllowFileAccess(true);
-
-        webView.addJavascriptInterface(new SkitPangleDramaBridge(this, webView), "SkitPangleDramaNative");
-        webView.addJavascriptInterface(new SkitTakuAdBridge(this, webView), "SkitTakuAdNative");
-        webView.addJavascriptInterface(new SkitRuntimeUpdateBridge(this, webView), "SkitRuntimeUpdateNative");
+        settings.setAllowFileAccess(false);
+        settings.setAllowContentAccess(false);
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         webView.setWebChromeClient(
                 new WebChromeClient() {
                     @Override
                     public boolean onConsoleMessage(ConsoleMessage consoleMessage) {
-                        Log.d(
-                                TAG,
-                                "console "
-                                        + consoleMessage.messageLevel()
-                                        + " "
-                                        + consoleMessage.sourceId()
-                                        + ":"
-                                        + consoleMessage.lineNumber()
-                                        + " "
-                                        + consoleMessage.message());
+                        Log.d(TAG, "web console level=" + consoleMessage.messageLevel());
                         return true;
                     }
                 });
@@ -79,17 +93,42 @@ public class MainActivity extends Activity {
                 new WebViewClient() {
                     @Override
                     public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                        if (!request.isForMainFrame()) {
+                            Uri frameUri = request.getUrl();
+                            if (frameUri == null) {
+                                return true;
+                            }
+                            return !originGuard.isTrustedTopLevel(frameUri.toString());
+                        }
                         Uri uri = request.getUrl();
-                        return uri == null || !("http".equals(uri.getScheme()) || "https".equals(uri.getScheme()));
+                        if (uri != null && originGuard.isTrustedTopLevel(uri.toString())) {
+                            return false;
+                        }
+                        if (uri != null && ("http".equalsIgnoreCase(uri.getScheme())
+                                || "https".equalsIgnoreCase(uri.getScheme()))) {
+                            openExternal(uri);
+                        }
+                        return true;
+                    }
+
+                    @Override
+                    public void onPageStarted(WebView view, String url,
+                                              android.graphics.Bitmap favicon) {
+                        super.onPageStarted(view, url, favicon);
+                        originGuard.updateTopLevel(url);
                     }
 
                     @Override
                     public void onPageFinished(WebView view, String url) {
                         super.onPageFinished(view, url);
-                        Log.d(TAG, "page finished " + url);
+                        originGuard.updateTopLevel(url);
+                        if (originGuard.isTrustedTopLevel(url)) {
+                            Log.d(TAG, "trusted local page finished");
+                        }
                     }
                 });
 
+        attachNativeMessageChannel();
         webView.loadUrl(assetServer.getBaseUrl() + "index.html");
     }
 
@@ -104,6 +143,10 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        detachNativeMessageChannel();
+        if (originGuard != null) {
+            originGuard.updateTopLevel(null);
+        }
         if (webView != null) {
             webView.destroy();
             webView = null;
@@ -115,10 +158,98 @@ public class MainActivity extends Activity {
         super.onDestroy();
     }
 
+    private void attachNativeMessageChannel() {
+        if (nativeMessageListenerAttached) {
+            return;
+        }
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+            throw new IllegalStateException("Secure native WebView messaging is unavailable");
+        }
+        pangleDramaBridge = new SkitPangleDramaBridge(this, webView, originGuard);
+        takuAdBridge = new SkitTakuAdBridge(this, webView, originGuard);
+        runtimeUpdateBridge = new SkitRuntimeUpdateBridge(this, webView, originGuard);
+        WebViewCompat.addWebMessageListener(
+                webView,
+                "SkitNativeBridge",
+                Collections.singleton(originGuard.trustedOriginRule()),
+                this::onNativeMessage);
+        nativeMessageListenerAttached = true;
+    }
+
+    private void onNativeMessage(WebView sourceWebView,
+                                 WebMessageCompat message,
+                                 Uri sourceOrigin,
+                                 boolean isMainFrame,
+                                 JavaScriptReplyProxy replyProxy) {
+        if (!isMainFrame || !originGuard.isTrustedMessageOrigin(sourceOrigin)) {
+            Log.w(TAG, "Rejected native message outside the trusted main frame");
+            return;
+        }
+        if (message.getType() != WebMessageCompat.TYPE_STRING || message.getData() == null) {
+            Log.w(TAG, "Rejected non-string native message");
+            return;
+        }
+        try {
+            originGuard.requireTrustedTopLevel();
+            String rawMessage = message.getData();
+            JSONObject envelope = new JSONObject(rawMessage);
+            switch (envelope.optString("bridge", "")) {
+                case "PANGLE":
+                    pangleDramaBridge.postMessage(rawMessage);
+                    break;
+                case "TAKU":
+                    takuAdBridge.postMessage(rawMessage);
+                    break;
+                case "RUNTIME_UPDATE":
+                    runtimeUpdateBridge.postMessage(rawMessage);
+                    break;
+                default:
+                    Log.w(TAG, "Rejected unknown native bridge route");
+                    break;
+            }
+        } catch (Throwable rejectedMessage) {
+            Log.w(TAG, "Rejected malformed native message");
+        }
+    }
+
+    private void detachNativeMessageChannel() {
+        if (webView == null || !nativeMessageListenerAttached) {
+            return;
+        }
+        WebViewCompat.removeWebMessageListener(webView, "SkitNativeBridge");
+        if (takuAdBridge != null) {
+            takuAdBridge.destroy();
+            takuAdBridge = null;
+        }
+        pangleDramaBridge = null;
+        runtimeUpdateBridge = null;
+        nativeMessageListenerAttached = false;
+    }
+
+    private void openExternal(Uri uri) {
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, uri));
+        } catch (ActivityNotFoundException noBrowser) {
+            Log.w(TAG, "No system browser available for external navigation");
+        }
+    }
+
     private static final class LocalAssetServer implements Closeable, Runnable {
+        private static final int SOCKET_READ_TIMEOUT_MILLIS = 1_000;
+        private static final int REQUEST_HEADER_DEADLINE_MILLIS = 2_000;
+        private static final int REQUEST_LIFECYCLE_DEADLINE_MILLIS = 3_000;
+        private static final int MAX_REQUEST_LINE_BYTES = 8 * 1024;
+        private static final int MAX_REQUEST_HEADER_BYTES = 16 * 1024;
+        private static final int REQUEST_WORKER_COUNT = 4;
+        private static final int REQUEST_QUEUE_CAPACITY = 8;
+
         private final AssetManager assets;
         private final String root;
         private final File updateRoot;
+        private final Set<Socket> activeConnections =
+                Collections.newSetFromMap(new ConcurrentHashMap<Socket, Boolean>());
+        private final ThreadPoolExecutor requestExecutor;
+        private final ScheduledThreadPoolExecutor connectionDeadlineExecutor;
         private ServerSocket serverSocket;
         private Thread thread;
 
@@ -126,6 +257,29 @@ public class MainActivity extends Activity {
             this.assets = assets;
             this.root = root;
             this.updateRoot = updateRoot;
+            AtomicInteger workerNumber = new AtomicInteger();
+            requestExecutor = new ThreadPoolExecutor(
+                    REQUEST_WORKER_COUNT,
+                    REQUEST_WORKER_COUNT,
+                    0L,
+                    TimeUnit.MILLISECONDS,
+                    new ArrayBlockingQueue<>(REQUEST_QUEUE_CAPACITY),
+                    runnable -> {
+                        Thread worker = new Thread(
+                                runnable,
+                                "skit-djx-request-" + workerNumber.incrementAndGet());
+                        worker.setDaemon(true);
+                        return worker;
+                    },
+                    new ThreadPoolExecutor.AbortPolicy());
+            connectionDeadlineExecutor = new ScheduledThreadPoolExecutor(
+                    1,
+                    runnable -> {
+                        Thread deadlineWorker = new Thread(runnable, "skit-djx-deadline");
+                        deadlineWorker.setDaemon(true);
+                        return deadlineWorker;
+                    });
+            connectionDeadlineExecutor.setRemoveOnCancelPolicy(true);
         }
 
         void start() {
@@ -163,21 +317,47 @@ public class MainActivity extends Activity {
             while (serverSocket != null && !serverSocket.isClosed()) {
                 try {
                     Socket socket = serverSocket.accept();
-                    Thread requestThread = new Thread(() -> handle(socket), "skit-djx-request");
-                    requestThread.setDaemon(true);
-                    requestThread.start();
+                    socket.setSoTimeout(SOCKET_READ_TIMEOUT_MILLIS);
+                    activeConnections.add(socket);
+                    ScheduledFuture<?> lifecycleDeadline;
+                    try {
+                        lifecycleDeadline = connectionDeadlineExecutor.schedule(
+                                () -> closeConnection(socket),
+                                REQUEST_LIFECYCLE_DEADLINE_MILLIS,
+                                TimeUnit.MILLISECONDS);
+                    } catch (RejectedExecutionException shuttingDown) {
+                        closeConnection(socket);
+                        continue;
+                    }
+                    try {
+                        requestExecutor.execute(() -> handle(socket, lifecycleDeadline));
+                    } catch (RejectedExecutionException atCapacity) {
+                        lifecycleDeadline.cancel(false);
+                        closeConnection(socket);
+                    }
                 } catch (IOException ignored) {
                     break;
                 }
             }
         }
 
-        private void handle(Socket socket) {
+        private void handle(Socket socket, ScheduledFuture<?> lifecycleDeadline) {
             try (Socket closeableSocket = socket;
                     InputStream input = closeableSocket.getInputStream();
                     BufferedOutputStream output =
                             new BufferedOutputStream(closeableSocket.getOutputStream())) {
-                String request = readRequest(input);
+                String request;
+                try {
+                    request = readRequest(input);
+                } catch (RequestLimitException oversizedRequest) {
+                    byte[] body = oversizedRequest.getStatus().getBytes(StandardCharsets.UTF_8);
+                    writeResponse(
+                            output,
+                            oversizedRequest.getStatus(),
+                            "text/plain; charset=utf-8",
+                            body);
+                    return;
+                }
                 String path = parsePath(request);
                 byte[] body;
                 String status = "200 OK";
@@ -191,6 +371,9 @@ public class MainActivity extends Activity {
                 }
                 writeResponse(output, status, type, body);
             } catch (IOException ignored) {
+            } finally {
+                lifecycleDeadline.cancel(false);
+                activeConnections.remove(socket);
             }
         }
 
@@ -205,12 +388,32 @@ public class MainActivity extends Activity {
         }
 
         private String readRequest(InputStream input) throws IOException {
-            ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+            ByteArrayOutputStream buffer = new ByteArrayOutputStream(MAX_REQUEST_HEADER_BYTES);
             int matched = 0;
+            int requestLineBytes = 0;
+            boolean requestLineComplete = false;
+            int previous = -1;
             int current;
             byte[] end = new byte[] {'\r', '\n', '\r', '\n'};
+            long headerDeadlineNanos = System.nanoTime()
+                    + TimeUnit.MILLISECONDS.toNanos(REQUEST_HEADER_DEADLINE_MILLIS);
             while ((current = input.read()) != -1) {
+                if (System.nanoTime() > headerDeadlineNanos) {
+                    throw new IOException("Request header deadline exceeded");
+                }
                 buffer.write(current);
+                if (buffer.size() > MAX_REQUEST_HEADER_BYTES) {
+                    throw new RequestLimitException("431 Request Header Fields Too Large");
+                }
+                if (!requestLineComplete) {
+                    requestLineBytes++;
+                    if (requestLineBytes > MAX_REQUEST_LINE_BYTES) {
+                        throw new RequestLimitException("414 URI Too Long");
+                    }
+                    if (previous == '\r' && current == '\n') {
+                        requestLineComplete = true;
+                    }
+                }
                 if (current == end[matched]) {
                     matched++;
                 } else {
@@ -219,8 +422,17 @@ public class MainActivity extends Activity {
                 if (matched == end.length) {
                     break;
                 }
+                previous = current;
             }
             return buffer.toString("UTF-8");
+        }
+
+        private void closeConnection(Socket socket) {
+            activeConnections.remove(socket);
+            try {
+                socket.close();
+            } catch (IOException ignored) {
+            }
         }
 
         private String parsePath(String request) {
@@ -296,6 +508,24 @@ public class MainActivity extends Activity {
                     serverSocket.close();
                 } catch (IOException ignored) {
                 }
+            }
+            for (Socket connection : activeConnections.toArray(new Socket[0])) {
+                closeConnection(connection);
+            }
+            requestExecutor.shutdownNow();
+            connectionDeadlineExecutor.shutdownNow();
+        }
+
+        private static final class RequestLimitException extends IOException {
+            private final String status;
+
+            RequestLimitException(String status) {
+                super(status);
+                this.status = status;
+            }
+
+            String getStatus() {
+                return status;
             }
         }
     }

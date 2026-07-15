@@ -2,167 +2,138 @@ package top.neoshen.xingheyingguan;
 
 import android.app.Activity;
 import android.util.Log;
-import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
-
-import com.anythink.core.api.ATAdInfo;
-import com.anythink.core.api.AdError;
 
 import org.json.JSONObject;
 
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
+
+import top.neoshen.xingheyingguan.ad.AdSessionProtocol;
+import top.neoshen.xingheyingguan.ad.TakuNativeState;
+import top.neoshen.xingheyingguan.ad.TakuTelemetry;
+
 public class SkitTakuAdBridge {
     private static final String TAG = "SkitTakuAd";
+    private static final Set<String> PROTOCOL_FIELDS = new HashSet<>(Arrays.asList(
+            "protocolVersion", "sessionId", "provider", "placementId",
+            "userId", "customData", "scene"));
 
     private final Activity activity;
     private final WebView webView;
+    private final BridgeOriginGuard originGuard;
     private final TakuRewardedAdController rewardedAdController;
     private String pendingCallbackId;
-    private String pendingPlacementId;
 
-    public SkitTakuAdBridge(Activity activity, WebView webView) {
+    public SkitTakuAdBridge(Activity activity, WebView webView, BridgeOriginGuard originGuard) {
         this.activity = activity;
         this.webView = webView;
+        this.originGuard = originGuard;
         this.rewardedAdController = new TakuRewardedAdController(activity);
     }
 
-    @JavascriptInterface
     public void postMessage(String rawMessage) {
-        activity.runOnUiThread(() -> handleMessage(rawMessage));
+        activity.runOnUiThread(() -> {
+            try {
+                originGuard.requireTrustedTopLevel();
+                handleMessage(rawMessage);
+            } catch (SecurityException rejectedOrigin) {
+                Log.w(TAG, "Rejected Taku bridge call from an untrusted top-level document");
+            }
+        });
+    }
+
+    void destroy() {
+        rewardedAdController.destroy();
+        pendingCallbackId = null;
     }
 
     private void handleMessage(String rawMessage) {
         try {
             JSONObject message = new JSONObject(rawMessage == null ? "{}" : rawMessage);
             String id = message.optString("id", "");
-            String method = message.optString("method", "");
+            if (!id.matches("[A-Za-z0-9._:-]{1,128}")) {
+                throw new IllegalArgumentException("Invalid native callback ID");
+            }
+            if (!"showRewardedVideo".equals(message.optString("method", ""))) {
+                throw new IllegalArgumentException("Unknown Taku native method");
+            }
             JSONObject payload = message.optJSONObject("payload");
-            if (payload == null) {
-                payload = new JSONObject();
-            }
-
-            if ("showRewardedVideo".equals(method)) {
-                showRewardedVideo(id, payload);
-                return;
-            }
-            resolve(id, fail(-404, "Unknown native method: " + method));
+            AdSessionProtocol protocol = parseProtocol(payload);
+            showRewardedVideo(id, protocol);
         } catch (Throwable error) {
-            Log.e(TAG, "postMessage failed", error);
+            Log.w(TAG, "Rejected invalid Taku bridge message", error);
         }
     }
 
-    private void showRewardedVideo(String id, JSONObject payload) {
+    private void showRewardedVideo(String id, AdSessionProtocol protocol) {
         if (pendingCallbackId != null) {
-            resolve(id, fail(-409, "Taku rewarded video is already loading or showing"));
-            return;
+            throw new IllegalStateException("A Taku session is already active");
         }
-
         pendingCallbackId = id;
-        pendingPlacementId = payload.optString("placementId", TakuRewardedAdController.DEFAULT_REWARD_PLACEMENT_ID);
-        rewardedAdController.show(pendingPlacementId, new TakuRewardedAdController.RewardListener() {
-            @Override
-            public void onAdStarted(ATAdInfo adInfo) {
-                Log.i(TAG, "rewarded video play start " + adInfoJson(adInfo));
-            }
-
-            @Override
-            public void onReward(ATAdInfo adInfo) {
-                // The result is deliberately resolved on close, after the reward state is final.
-            }
-
-            @Override
-            public void onAdClosed(ATAdInfo adInfo, boolean rewarded) {
-                JSONObject result = ok();
-                put(result, "completed", rewarded);
-                put(result, "rewarded", rewarded);
-                put(result, "closed", true);
-                put(result, "provider", "taku");
-                put(result, "placementId", pendingPlacementId);
-                put(result, "adInfo", adInfoJson(adInfo));
-                finish(result);
-            }
-
-            @Override
-            public void onAdFailed(AdError error) {
-                finish(fail(errorCode(error), errorMessage(error, "Taku rewarded video play failed")));
-            }
-        });
-    }
-
-    private void finish(JSONObject result) {
-        String id = pendingCallbackId;
-        pendingCallbackId = null;
-        pendingPlacementId = null;
-        resolve(id, result);
-    }
-
-    private JSONObject adInfoJson(ATAdInfo adInfo) {
-        JSONObject result = new JSONObject();
-        if (adInfo == null) {
-            return result;
-        }
-        put(result, "networkFirmId", adInfo.getNetworkFirmId());
-        put(result, "networkName", adInfo.getNetworkName());
-        put(result, "placementId", adInfo.getPlacementId());
-        put(result, "topOnPlacementId", adInfo.getTopOnPlacementId());
-        put(result, "adsourceId", adInfo.getAdsourceId());
-        put(result, "requestId", adInfo.getRequestId());
-        put(result, "ecpm", adInfo.getEcpm());
-        put(result, "currency", adInfo.getCurrency());
-        return result;
-    }
-
-    private int errorCode(AdError error) {
-        if (error == null) {
-            return -5;
-        }
         try {
-            return Integer.parseInt(error.getCode());
-        } catch (Throwable ignored) {
-            return -5;
+            rewardedAdController.start(protocol, telemetry -> {
+                boolean terminal = telemetry.getState() == TakuNativeState.CLOSED
+                        || telemetry.getState() == TakuNativeState.ERROR;
+                emit(id, telemetryJson(telemetry), terminal);
+                if (terminal && id.equals(pendingCallbackId)) {
+                    pendingCallbackId = null;
+                }
+            });
+        } catch (Throwable error) {
+            pendingCallbackId = null;
+            throw error;
         }
     }
 
-    private String errorMessage(AdError error, String fallback) {
-        if (error == null) {
-            return fallback;
+    private AdSessionProtocol parseProtocol(JSONObject payload) {
+        if (payload == null || payload.length() != PROTOCOL_FIELDS.size()) {
+            throw new IllegalArgumentException("Native ad protocol fields are invalid");
         }
-        String full = error.getFullErrorInfo();
-        if (full != null && full.length() > 0) {
-            return full;
+        for (String key : PROTOCOL_FIELDS) {
+            if (!payload.has(key)) {
+                throw new IllegalArgumentException("Native ad protocol is missing " + key);
+            }
         }
-        String desc = error.getDesc();
-        return desc == null || desc.length() == 0 ? fallback : desc;
+        return new AdSessionProtocol(
+                payload.optInt("protocolVersion", -1),
+                payload.optString("sessionId", ""),
+                payload.optString("provider", ""),
+                payload.optString("placementId", ""),
+                payload.optString("userId", ""),
+                payload.optString("customData", ""),
+                payload.optString("scene", ""));
     }
 
-    private JSONObject ok() {
+    private JSONObject telemetryJson(TakuTelemetry telemetry) {
         JSONObject result = new JSONObject();
-        put(result, "success", true);
+        put(result, "protocolVersion", telemetry.getProtocol().getProtocolVersion());
+        put(result, "sessionId", telemetry.getProtocol().getSessionId());
+        put(result, "provider", telemetry.getProtocol().getProvider());
+        put(result, "placementId", telemetry.getProtocol().getPlacementId());
+        put(result, "sdkRequestId", telemetry.getSdkRequestId());
+        put(result, "providerShowId", telemetry.getProviderShowId());
+        put(result, "networkFirmId", telemetry.getNetworkFirmId());
+        put(result, "adsourceId", telemetry.getAdsourceId());
+        put(result, "callbackSequence", telemetry.getCallbackSequence());
+        put(result, "nativeState", telemetry.getState().name());
+        put(result, "clientRewardObserved", telemetry.isClientRewardObserved());
+        put(result, "closed", telemetry.isClosed());
         return result;
     }
 
-    private JSONObject fail(int code, String message) {
-        JSONObject result = new JSONObject();
-        put(result, "success", false);
-        put(result, "completed", false);
-        put(result, "closed", false);
-        put(result, "provider", "taku");
-        put(result, "placementId", TakuRewardedAdController.DEFAULT_REWARD_PLACEMENT_ID);
-        put(result, "code", code);
-        put(result, "message", message == null ? "unknown error" : message);
-        return result;
-    }
-
-    private void resolve(String id, JSONObject result) {
-        if (id == null || id.length() == 0) {
-            return;
-        }
+    private void emit(String id, JSONObject result, boolean terminal) {
+        String script = "window.__SkitNativeBridgeEmit && window.__SkitNativeBridgeEmit("
+                + JSONObject.quote(id) + "," + JSONObject.quote(result.toString()) + ","
+                + terminal + ");";
         activity.runOnUiThread(() -> {
-            String script = "window.__SkitNativeBridgeResolve && window.__SkitNativeBridgeResolve("
-                    + JSONObject.quote(id)
-                    + ","
-                    + JSONObject.quote(result.toString())
-                    + ");";
-            webView.evaluateJavascript(script, null);
+            try {
+                originGuard.requireTrustedTopLevel();
+                webView.evaluateJavascript(script, null);
+            } catch (SecurityException rejectedOrigin) {
+                Log.w(TAG, "Dropped Taku callback after top-level origin changed");
+            }
         });
     }
 

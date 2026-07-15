@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 2,
+  "profileVersion": 3,
+  "profileCode": "AGENT_ALPHA",
+  "tenantId": "AGENT_ALPHA",
+  "profileId": "agent-alpha-production-v3",
+  "applicationId": "com.example.agentalpha",
+  "appName": "Alpha Drama",
+  "adProvider": "taku",
+  "pangle": {
+    "siteId": "100001",
+    "contentAppId": "200001",
+    "settingsAsset": "SDK_Setting.json",
+    "settingsSource": "secure/alpha/SDK_Setting.json",
+    "adSdkVersion": "7.1.0.5",
+    "contentSdkVersion": "2.9.0.9"
+  },
+  "taku": {
+    "appId": "alpha-taku-app",
+    "rewardPlacementId": "alpha-reward-placement",
+    "sdkVersion": "6.6.22"
+  },
+  "outputBaseName": "agent-alpha"
+}

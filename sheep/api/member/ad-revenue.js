@@ -1,11 +1,11 @@
 import request from '@/sheep/request';
 
 const AdRevenueApi = {
-  report: (data) =>
+  acknowledgeLegacyMigration: () =>
     request({
       url: '/skit/member/ad-revenue/report',
       method: 'POST',
-      data,
+      data: {},
       custom: {
         auth: true,
         showLoading: false,

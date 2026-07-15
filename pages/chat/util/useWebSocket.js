@@ -1,7 +1,8 @@
 import { onBeforeUnmount, reactive, ref } from 'vue';
 import { baseUrl, websocketPath } from '@/sheep/config';
 import { copyValueToTarget } from '@/sheep/helper/utils';
-import { getRefreshToken } from '@/sheep/request';
+import WebSocketTicketApi from '@/sheep/api/member/websocket-ticket';
+import { openWebSocketWithFreshTicket } from './websocket-ticket';
 
 /**
  * WebSocket 创建 hook
@@ -10,7 +11,6 @@ import { getRefreshToken } from '@/sheep/request';
  */
 export function useWebSocket(opt) {
   const options = reactive({
-    url: (baseUrl + websocketPath).replace('http', 'ws') + '?token=' + getRefreshToken(), // ws 地址
     isReconnecting: false, // 正在重新连接
     reconnectInterval: 3000, // 重连间隔，单位毫秒
     heartBeatInterval: 5000, // 心跳间隔，单位毫秒
@@ -24,18 +24,29 @@ export function useWebSocket(opt) {
     onMessage: (data) => {}, // 收到消息
   });
   const SocketTask = ref(null); // SocketTask 由 uni.connectSocket() 接口创建
+  let connectionGeneration = 0;
+  let isConnecting = false;
 
-  const initEventListeners = () => {
+  copyValueToTarget(options, opt);
+
+  const initEventListeners = (socketTask) => {
     // 监听 WebSocket 连接打开事件
-    SocketTask.value.onOpen(() => {
+    socketTask.onOpen(() => {
+      if (SocketTask.value !== socketTask || options.destroy) {
+        return;
+      }
       console.log('WebSocket 连接成功');
+      options.isReconnecting = false;
       // 连接成功时触发
       options.onConnected();
       // 开启心跳检查
       startHeartBeat();
     });
     // 监听 WebSocket 接受到服务器的消息事件
-    SocketTask.value.onMessage((res) => {
+    socketTask.onMessage((res) => {
+      if (SocketTask.value !== socketTask || options.destroy) {
+        return;
+      }
       try {
         if (res.data === 'pong') {
           // 收到心跳重置心跳超时检查
@@ -48,15 +59,17 @@ export function useWebSocket(opt) {
       }
     });
     // 监听 WebSocket 连接关闭事件
-    SocketTask.value.onClose((event) => {
+    socketTask.onClose(() => {
+      if (SocketTask.value !== socketTask) {
+        return;
+      }
+      SocketTask.value = null;
+      stopHeartBeat();
       // 情况一：实例销毁
       if (options.destroy) {
         options.onClosed();
       } else {
         // 情况二：连接失败重连
-        // 停止心跳检查
-        stopHeartBeat();
-        // 重连
         reconnect();
       }
     });
@@ -70,6 +83,7 @@ export function useWebSocket(opt) {
   };
   // 开始心跳检查
   const startHeartBeat = () => {
+    stopHeartBeat();
     options.heartBeatTimer = setInterval(() => {
       sendMessage('ping');
       options.pingTimeout = setTimeout(() => {
@@ -86,9 +100,17 @@ export function useWebSocket(opt) {
 
   // WebSocket 重连
   const reconnect = () => {
-    if (options.destroy || !SocketTask.value) {
-      // 如果WebSocket已被销毁或尚未完全关闭，不进行重连
+    if (options.destroy) {
       return;
+    }
+
+    stopHeartBeat();
+    connectionGeneration += 1;
+
+    const staleSocketTask = SocketTask.value;
+    SocketTask.value = null;
+    if (staleSocketTask) {
+      staleSocketTask.close();
     }
 
     // 重连中
@@ -101,12 +123,9 @@ export function useWebSocket(opt) {
 
     // 设置重连延迟
     options.reconnectTimeout = setTimeout(() => {
-      // 检查组件是否仍在运行和WebSocket是否关闭
       if (!options.destroy) {
-        // 重置重连标志
-        options.isReconnecting = false;
-        // 初始化新的WebSocket连接
-        initSocket();
+        options.reconnectTimeout = null;
+        void initSocket();
       }
     }, options.reconnectInterval);
   };
@@ -119,29 +138,61 @@ export function useWebSocket(opt) {
   };
 
   const close = () => {
+    if (options.destroy) {
+      return;
+    }
     options.destroy = true;
+    connectionGeneration += 1;
     stopHeartBeat();
     if (options.reconnectTimeout) {
       clearTimeout(options.reconnectTimeout);
+      options.reconnectTimeout = null;
     }
-    if (SocketTask.value) {
-      SocketTask.value.close();
-      SocketTask.value = null;
+    const socketTask = SocketTask.value;
+    SocketTask.value = null;
+    if (socketTask) {
+      socketTask.close();
+    }
+    options.onClosed();
+  };
+
+  const initSocket = async () => {
+    if (options.destroy || isConnecting) {
+      return;
+    }
+
+    isConnecting = true;
+    const generation = ++connectionGeneration;
+    try {
+      const socketTask = await openWebSocketWithFreshTicket({
+        baseUrl,
+        websocketPath,
+        issueTicket: WebSocketTicketApi.issueTicket,
+        connectSocket: ({ url }) =>
+          uni.connectSocket({
+            url,
+            complete: () => {},
+            success: () => {},
+          }),
+        isCancelled: () => options.destroy || generation !== connectionGeneration,
+      });
+      if (options.destroy || generation !== connectionGeneration) {
+        socketTask?.close?.();
+        return;
+      }
+      SocketTask.value = socketTask;
+      initEventListeners(socketTask);
+    } catch (_error) {
+      if (!options.destroy && generation === connectionGeneration) {
+        console.warn('WebSocket ticket 签发失败，未建立连接');
+        reconnect();
+      }
+    } finally {
+      isConnecting = false;
     }
   };
 
-  const initSocket = () => {
-    options.destroy = false;
-    copyValueToTarget(options, opt);
-    SocketTask.value = uni.connectSocket({
-      url: options.url,
-      complete: () => {},
-      success: () => {},
-    });
-    initEventListeners();
-  };
-
-  initSocket();
+  void initSocket();
 
   onBeforeUnmount(() => {
     close();

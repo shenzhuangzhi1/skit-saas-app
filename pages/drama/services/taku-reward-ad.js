@@ -1,89 +1,80 @@
-import { callNativeMethod, getNativePlugin } from './native-bridge';
+import {
+  createNativeTelemetryValidator,
+  getNativePlugin,
+  nativeTelemetryToClientEvent,
+  validateNativeServerProtocol,
+} from './native-bridge';
 
 const TAKU_PLUGIN_NAME = 'SkitTakuAd';
-const DEFAULT_REWARD_PLACEMENT_ID = import.meta.env?.VITE_TAKU_REWARD_PLACEMENT_ID || '';
-const MOCK_REWARD_AD =
-  import.meta.env?.VITE_DRAMA_MOCK_REWARD_AD === 'true' ||
-  (import.meta.env?.MODE !== 'production' &&
-    import.meta.env?.VITE_DRAMA_MOCK_REWARD_AD !== 'false');
-
-function normalizeRewardResult(result = {}) {
-  const type = String(result.type || result.event || result.status || '').toLowerCase();
-  const completed =
-    result.completed === true ||
-    result.rewarded === true ||
-    result.isReward === true ||
-    result.isRewarded === true ||
-    type === 'reward' ||
-    type === 'rewarded' ||
-    type === 'completed' ||
-    type === 'complete';
-
-  return {
-    completed,
-    closed: result.closed === true || type === 'close' || type === 'closed',
-    provider: 'taku',
-    placementId: result.placementId || '',
-    mock: result.mock === true,
-    raw: result,
-  };
-}
-
-function wait(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function showMockRewardedVideo(context) {
-  await wait(650);
-  console.warn('[drama] Taku native plugin missing, using development mock rewarded ad.', context);
-  return {
-    completed: true,
-    closed: true,
-    provider: 'taku',
-    placementId: context.placementId || DEFAULT_REWARD_PLACEMENT_ID,
-    mock: true,
-    raw: { mock: true },
-  };
-}
 
 export function isTakuRewardAdReady() {
   const plugin = getNativePlugin(TAKU_PLUGIN_NAME);
   return !!plugin && typeof plugin.showRewardedVideo === 'function';
 }
 
-export async function showRewardedVideoAd(context = {}) {
-  const placementId = context.placementId || DEFAULT_REWARD_PLACEMENT_ID;
+export function showRewardedVideoAd(serverProtocol, options = {}) {
+  const protocol = validateNativeServerProtocol(serverProtocol);
   const plugin = getNativePlugin(TAKU_PLUGIN_NAME);
-
   if (!plugin || typeof plugin.showRewardedVideo !== 'function') {
-    if (MOCK_REWARD_AD) {
-      return showMockRewardedVideo(context);
+    return Promise.reject(new Error('Taku 激励视频 SDK 未接入'));
+  }
+  const validator = createNativeTelemetryValidator(protocol);
+  const onClientEvent = options.onClientEvent || (() => undefined);
+  const timeoutMs = options.timeoutMs || 180000;
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let delivery = Promise.resolve();
+    const timer = setTimeout(() => finishWithError(new Error('Taku 激励视频回调超时')), timeoutMs);
+
+    function finishWithError(error) {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      reject(error instanceof Error ? error : new Error(String(error || 'Taku 原生调用失败')));
     }
-    throw new Error('Taku 激励视频 SDK 未接入');
-  }
 
-  const result = await callNativeMethod(
-    plugin,
-    'showRewardedVideo',
-    {
-      placementId,
-      scene: context.scene || 'drama_unlock',
-      extra: {
-        dramaId: context.dramaId,
-        episode: context.episode,
-        unlockRange: context.unlockRange,
-      },
-    },
-    { timeoutMs: 180000 },
-  );
+    function receive(rawValue) {
+      if (settled) {
+        return;
+      }
+      let telemetry;
+      try {
+        telemetry = validator.accept(rawValue);
+      } catch (error) {
+        finishWithError(error);
+        return;
+      }
+      const clientEvent = nativeTelemetryToClientEvent(telemetry);
+      if (clientEvent) {
+        delivery = delivery.then(() => onClientEvent(clientEvent, telemetry));
+        delivery.catch(finishWithError);
+      }
+      if (telemetry.nativeState === 'ERROR') {
+        delivery.then(() => finishWithError(new Error('Taku 激励视频播放失败')), finishWithError);
+      } else if (telemetry.nativeState === 'CLOSED') {
+        delivery.then(() => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          clearTimeout(timer);
+          resolve(Object.freeze({ terminalTelemetry: telemetry }));
+        }, finishWithError);
+      }
+    }
 
-  if (result && result.success === false) {
-    throw new Error(result.message || 'Taku 激励视频加载失败');
-  }
-
-  const reward = normalizeRewardResult(result);
-  if (!reward.completed) {
-    throw new Error('完整观看广告后才能解锁');
-  }
-  return reward;
+    try {
+      const result = plugin.showRewardedVideo(protocol, receive);
+      if (result && typeof result.then === 'function') {
+        result.then((value) => value !== undefined && receive(value)).catch(finishWithError);
+      } else if (result !== undefined) {
+        receive(result);
+      }
+    } catch (error) {
+      finishWithError(error);
+    }
+  });
 }

@@ -19,12 +19,24 @@ env:
 
 jobs:
   package-and-deploy:
+    if: github.ref == 'refs/heads/master'
     name: Package and deploy app source
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle 8.10.2
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.10.2'
 
       - name: Validate app metadata
         run: |
@@ -38,6 +50,14 @@ jobs:
 
       - name: Enforce Skit member identity boundary
         run: node scripts/check-member-identity-boundary.mjs
+
+      - name: Enforce server-verified ad session boundary
+        run: node --test tests/app/*.test.mjs
+
+      - name: Compile and test Android debug runtime
+        run: >-
+          gradle --no-daemon -p android-djx-runtime
+          :app:testDebugUnitTest :app:assembleDebug
 
       - name: Package source bundle
         run: |
@@ -130,7 +150,13 @@ jobs:
           fi
           EOF
           chmod +x .deploy/ssh .deploy/scp
-          ssh-keyscan -p "${SERVER_PORT}" "${SERVER_HOST}" >> ~/.ssh/known_hosts
+          if [ "${SERVER_PORT}" != "22" ]; then
+            echo "::error::The pinned production SSH host key currently authorizes port 22 only."
+            exit 1
+          fi
+          install -m 600 deploy/known_hosts ~/.ssh/known_hosts
+          ssh-keygen -F "${SERVER_HOST}" -f ~/.ssh/known_hosts >/dev/null \
+            || { echo "::error::SERVER_HOST is not present in deploy/known_hosts"; exit 1; }
 
       - name: Upload app source bundle
         if: steps.deploy_config.outputs.enabled == 'true'

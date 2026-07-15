@@ -3,7 +3,6 @@ package top.neoshen.xingheyingguan;
 import android.app.Activity;
 import android.content.Intent;
 import android.util.Log;
-import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
 
 import com.bytedance.sdk.djx.DJXSdk;
@@ -20,29 +19,42 @@ import org.json.JSONObject;
 import java.util.ArrayList;
 import java.util.List;
 
+import top.neoshen.xingheyingguan.ad.NativePlayerGrant;
+
 public class SkitPangleDramaBridge {
     private static final String TAG = "SkitPangleDrama";
     private static final String DEFAULT_SETTING_FILE = BuildConfig.PANGLE_SETTING_ASSET;
     private static boolean initialized = false;
-    private static String settingFile = DEFAULT_SETTING_FILE;
 
     private final Activity activity;
     private final WebView webView;
+    private final BridgeOriginGuard originGuard;
 
-    public SkitPangleDramaBridge(Activity activity, WebView webView) {
+    public SkitPangleDramaBridge(Activity activity, WebView webView,
+                                 BridgeOriginGuard originGuard) {
         this.activity = activity;
         this.webView = webView;
+        this.originGuard = originGuard;
     }
 
-    @JavascriptInterface
     public void postMessage(String rawMessage) {
-        activity.runOnUiThread(() -> handleMessage(rawMessage));
+        activity.runOnUiThread(() -> {
+            try {
+                originGuard.requireTrustedTopLevel();
+                handleMessage(rawMessage);
+            } catch (SecurityException rejectedOrigin) {
+                Log.w(TAG, "Rejected Pangle bridge call from an untrusted top-level document");
+            }
+        });
     }
 
     private void handleMessage(String rawMessage) {
         try {
             JSONObject message = new JSONObject(rawMessage == null ? "{}" : rawMessage);
             String id = message.optString("id", "");
+            if (!id.matches("[A-Za-z0-9._:-]{1,128}")) {
+                throw new IllegalArgumentException("Invalid native callback ID");
+            }
             String method = message.optString("method", "");
             JSONObject payload = message.optJSONObject("payload");
             if (payload == null) {
@@ -118,13 +130,16 @@ public class SkitPangleDramaBridge {
                             resolve(id, fail(-6, "Invalid Pangle dramaId"));
                             return;
                         }
+                        NativePlayerGrant playerGrant = parsePlayerGrant(
+                                args.optJSONObject("playerGrant"), dramaId);
                         Intent intent = new Intent(activity, DramaPlayerActivity.class);
                         intent.putExtra("dramaId", dramaId);
                         intent.putExtra("episode", args.optInt("episode", 1));
                         intent.putExtra("progress", args.optInt("progress", 0));
-                        intent.putExtra("freeSet", args.optInt("freeSet", 8));
-                        intent.putExtra("lockSet", args.optInt("lockSet", 5));
-                        intent.putExtra("unlockMode", args.optString("unlockMode", "specific"));
+                        intent.putExtra("playerGrantId", playerGrant.getGrantId());
+                        intent.putExtra("playerGrantDramaId", playerGrant.getDramaId());
+                        intent.putExtra("playerGrantToken", playerGrant.getGrantToken());
+                        intent.putExtra("playerGrantExpiresAt", playerGrant.getExpiresAtEpochMillis());
                         activity.startActivity(intent);
                         JSONObject result = ok();
                         put(result, "opened", true);
@@ -136,13 +151,12 @@ public class SkitPangleDramaBridge {
                     break;
             }
         } catch (Throwable error) {
-            Log.e(TAG, "postMessage failed", error);
+            Log.w(TAG, "Rejected invalid Pangle bridge message");
         }
     }
 
     private void ensureStarted(JSONObject payload, String id, Runnable action) {
-        settingFile = payload.optString("settingFile", DEFAULT_SETTING_FILE);
-        boolean debug = payload.optBoolean("debug", true);
+        boolean debug = BuildConfig.DEBUG && payload.optBoolean("debug", false);
         PangleAdSdkInitializer.ensureStarted(activity.getApplicationContext(), debug, new PangleAdSdkInitializer.Callback() {
             @Override
             public void onSuccess() {
@@ -162,23 +176,35 @@ public class SkitPangleDramaBridge {
                 DJXSdkConfig config = new DJXSdkConfig.Builder()
                         .debug(debug)
                         .build();
-                DJXSdk.init(activity.getApplicationContext(), settingFile, config);
+                DJXSdk.init(activity.getApplicationContext(), DEFAULT_SETTING_FILE, config);
                 initialized = true;
             }
             if (DJXSdk.isStartSuccess()) {
-                action.run();
+                runAction(id, action);
                 return;
             }
             DJXSdk.start((success, message, error) -> {
-                Log.i(TAG, "DJXSdk start result success=" + success + ", message=" + message + ", error=" + error);
+                Log.i(TAG, "DJXSdk start completed success=" + success);
                 if (success) {
-                    activity.runOnUiThread(action);
+                    activity.runOnUiThread(() -> runAction(id, action));
                 } else {
                     resolve(id, errorJson(error, -2, message));
                 }
             });
         } catch (Throwable error) {
             resolve(id, fail(-3, error.getMessage()));
+        }
+    }
+
+    private void runAction(String id, Runnable action) {
+        try {
+            originGuard.requireTrustedTopLevel();
+            action.run();
+        } catch (SecurityException rejectedOrigin) {
+            Log.w(TAG, "Dropped Pangle action after top-level origin changed");
+        } catch (Throwable failure) {
+            Log.w(TAG, "Pangle native action failed");
+            resolve(id, fail(-3, "Native content request failed"));
         }
     }
 
@@ -266,7 +292,7 @@ public class SkitPangleDramaBridge {
     private JSONObject startedJson() {
         JSONObject result = ok();
         put(result, "started", true);
-        put(result, "settingFile", settingFile);
+        put(result, "settingFile", DEFAULT_SETTING_FILE);
         put(result, "version", DJXSdk.getVersion());
         return result;
     }
@@ -297,12 +323,17 @@ public class SkitPangleDramaBridge {
             return;
         }
         activity.runOnUiThread(() -> {
-            String script = "window.__SkitNativeBridgeResolve && window.__SkitNativeBridgeResolve("
-                    + JSONObject.quote(id)
-                    + ","
-                    + JSONObject.quote(result.toString())
-                    + ");";
-            webView.evaluateJavascript(script, null);
+            try {
+                originGuard.requireTrustedTopLevel();
+                String script = "window.__SkitNativeBridgeResolve && window.__SkitNativeBridgeResolve("
+                        + JSONObject.quote(id)
+                        + ","
+                        + JSONObject.quote(result.toString())
+                        + ");";
+                webView.evaluateJavascript(script, null);
+            } catch (SecurityException rejectedOrigin) {
+                Log.w(TAG, "Dropped Pangle callback after top-level origin changed");
+            }
         });
     }
 
@@ -327,6 +358,22 @@ public class SkitPangleDramaBridge {
         } catch (Throwable ignored) {
             return fallback;
         }
+    }
+
+    private static NativePlayerGrant parsePlayerGrant(JSONObject value, long expectedDramaId) {
+        if (value == null || value.length() != 4 || !value.has("grantId")
+                || !value.has("dramaId") || !value.has("expiresAt")
+                || !value.has("grantToken")) {
+            throw new IllegalArgumentException("Server player grant is missing");
+        }
+        long grantId = optLong(value, "grantId", 0L);
+        long dramaId = optLong(value, "dramaId", 0L);
+        long expiresAt = optLong(value, "expiresAt", 0L);
+        NativePlayerGrant grant = new NativePlayerGrant(
+                grantId, dramaId, value.optString("grantToken", ""),
+                expiresAt, System.currentTimeMillis());
+        grant.requireDrama(expectedDramaId);
+        return grant;
     }
 
     private static void put(JSONObject object, String key, Object value) {
