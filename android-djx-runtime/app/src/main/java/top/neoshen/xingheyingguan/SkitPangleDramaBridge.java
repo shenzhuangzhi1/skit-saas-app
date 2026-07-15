@@ -136,9 +136,6 @@ public class SkitPangleDramaBridge {
                         intent.putExtra("dramaId", dramaId);
                         intent.putExtra("episode", args.optInt("episode", 1));
                         intent.putExtra("progress", args.optInt("progress", 0));
-                        intent.putExtra("freeSet", args.optInt("freeSet", 8));
-                        intent.putExtra("lockSet", args.optInt("lockSet", 5));
-                        intent.putExtra("unlockMode", args.optString("unlockMode", "specific"));
                         intent.putExtra("playerGrantId", playerGrant.getGrantId());
                         intent.putExtra("playerGrantDramaId", playerGrant.getDramaId());
                         intent.putExtra("playerGrantToken", playerGrant.getGrantToken());
