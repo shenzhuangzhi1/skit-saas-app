@@ -60,3 +60,22 @@ test('rejects wrong scope, rollback, unsigned, and disabled update manifests', (
     );
   }
 });
+
+test('hot-update bundles enforce the same real-content production gates as the base APK', () => {
+  const apkBuilder = readFileSync(resolve(root, 'android-djx-runtime/build-djx-apk.sh'), 'utf8');
+  const hotBuilder = readFileSync(resolve(root, 'android-djx-runtime/build-hot-bundle.sh'), 'utf8');
+  const productionEnv = readFileSync(
+    resolve(root, 'android-djx-runtime/production-h5-env.sh'),
+    'utf8',
+  );
+  for (const builder of [apkBuilder, hotBuilder]) {
+    assert.match(builder, /production-h5-env\.sh/);
+  }
+  assert.match(productionEnv, /export VITE_DRAMA_MOCK_REWARD_AD="false"/);
+  assert.match(productionEnv, /export VITE_DRAMA_REAL_CONTENT_REQUIRED="true"/);
+  assert.ok(
+    hotBuilder.indexOf('production-h5-env.sh')
+      < hotBuilder.indexOf('build-h5.sh'),
+    'hot bundle must set the real-content gate before compiling H5',
+  );
+});

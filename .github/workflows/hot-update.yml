@@ -25,6 +25,7 @@ permissions:
 
 jobs:
   bundle:
+    if: github.ref == 'refs/heads/master'
     name: Build verified WebView hot update bundle
     runs-on: [self-hosted, macOS, hbuilderx]
     environment: android-production-${{ inputs.profile_code }}
@@ -84,3 +85,7 @@ jobs:
             ${{ steps.bundle.outputs.manifest }}
           if-no-files-found: error
           retention-days: 30
+
+      - name: Erase protected manifest key
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/skit-hot-update"

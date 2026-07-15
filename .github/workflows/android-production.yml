@@ -29,6 +29,7 @@ concurrency:
 
 jobs:
   build:
+    if: github.ref == 'refs/heads/master'
     name: Build the unique signed production APK
     runs-on: [self-hosted, macOS, hbuilderx, android]
     environment: android-production-${{ inputs.profile_code }}
@@ -97,3 +98,7 @@ jobs:
           path: dist/${{ steps.profile.outputs.output_base_name }}-release.apk
           if-no-files-found: error
           retention-days: 30
+
+      - name: Erase protected build inputs
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/skit-production"

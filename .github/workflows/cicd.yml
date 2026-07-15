@@ -19,6 +19,7 @@ env:
 
 jobs:
   package-and-deploy:
+    if: github.ref == 'refs/heads/master'
     name: Package and deploy app source
     runs-on: ubuntu-latest
 
@@ -149,7 +150,13 @@ jobs:
           fi
           EOF
           chmod +x .deploy/ssh .deploy/scp
-          ssh-keyscan -p "${SERVER_PORT}" "${SERVER_HOST}" >> ~/.ssh/known_hosts
+          if [ "${SERVER_PORT}" != "22" ]; then
+            echo "::error::The pinned production SSH host key currently authorizes port 22 only."
+            exit 1
+          fi
+          install -m 600 deploy/known_hosts ~/.ssh/known_hosts
+          ssh-keygen -F "${SERVER_HOST}" -f ~/.ssh/known_hosts >/dev/null \
+            || { echo "::error::SERVER_HOST is not present in deploy/known_hosts"; exit 1; }
 
       - name: Upload app source bundle
         if: steps.deploy_config.outputs.enabled == 'true'

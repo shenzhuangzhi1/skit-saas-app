@@ -99,17 +99,23 @@ final class SkitNativeApiClient {
     SkitNativeApiClient(Activity activity, NativePlayerGrant playerGrant) {
         this.activity = activity;
         this.playerGrant = playerGrant;
-        this.httpClient = new OkHttpClient.Builder()
-                .connectTimeout(10, TimeUnit.SECONDS)
-                .readTimeout(15, TimeUnit.SECONDS)
-                .callTimeout(20, TimeUnit.SECONDS)
-                .build();
+        this.httpClient = newHttpClient();
         this.serialExecutor = Executors.newSingleThreadExecutor(runnable -> {
             Thread thread = new Thread(runnable, "skit-native-api");
             thread.setDaemon(true);
             return thread;
         });
         this.apiRoot = apiRoot(BuildConfig.API_BASE_URL, BuildConfig.API_PATH);
+    }
+
+    static OkHttpClient newHttpClient() {
+        return new OkHttpClient.Builder()
+                .followRedirects(false)
+                .followSslRedirects(false)
+                .connectTimeout(10, TimeUnit.SECONDS)
+                .readTimeout(15, TimeUnit.SECONDS)
+                .callTimeout(20, TimeUnit.SECONDS)
+                .build();
     }
 
     void getEntitlements(Callback<List<Integer>> callback) {
