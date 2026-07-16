@@ -6,7 +6,7 @@
 
 新增代理商 App：
 
-1. 复制 `XINGHEYINGGUAN.json` 为新的 `<PROFILE_CODE>.json`。
+1. 复制 `AG162.json` 为新的 `<PROFILE_CODE>.json`。
 2. 将 `profileVersion` 从 `1` 开始；以后任何原生身份或 SDK 配置变化都递增它。
 3. 修改包名、穿山甲 site/content App、Setting 来源、Taku App/广告位和产物名。解析器会拒绝
    不同档案复用租户、包名、穿山甲账号、Taku 账号或产物名。

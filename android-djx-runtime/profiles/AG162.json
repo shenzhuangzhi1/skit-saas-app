@@ -1,9 +1,9 @@
 {
   "schemaVersion": 2,
   "profileVersion": 1,
-  "profileCode": "XINGHEYINGGUAN",
-  "tenantId": "XINGHEYINGGUAN",
-  "profileId": "xingheyingguan-cn-production",
+  "profileCode": "AG162",
+  "tenantId": "AG162",
+  "profileId": "ag162-cn-production",
   "applicationId": "top.neoshen.xingheyingguan",
   "appName": "短剧 SaaS",
   "adProvider": "taku",
@@ -20,5 +20,5 @@
     "rewardPlacementId": "b6a50acf394505",
     "sdkVersion": "6.6.22"
   },
-  "outputBaseName": "xingheyingguan"
+  "outputBaseName": "ag162"
 }

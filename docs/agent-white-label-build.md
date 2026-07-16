@@ -20,7 +20,7 @@
 本地构建也必须显式选择档案，不再存在全局 `production-profile.json` 兜底：
 
 ```bash
-SKIT_PROFILE_CODE=XINGHEYINGGUAN \
+SKIT_PROFILE_CODE=AG162 \
 SKIT_API_BASE_URL=https://api.example.com \
 SKIT_PANGLE_SETTINGS_JSON=/secure/path/SDK_Setting.json \
 SKIT_TAKU_APP_KEY='***' \
@@ -33,7 +33,7 @@ bash android-djx-runtime/build-djx-apk.sh
 
 ## 新增或更新代理商
 
-新增时复制 `android-djx-runtime/profiles/XINGHEYINGGUAN.json`，按
+新增时复制 `android-djx-runtime/profiles/AG162.json`，按
 `android-djx-runtime/profiles/README.md` 改完所有原生身份，并新建对应 GitHub Environment。
 更新包名、广告 SDK 身份、穿山甲 license、Taku 主账号或热更新公钥时，递增
 `profileVersion` 后重新发 APK。普通 SaaS 后台、App 页面和业务逻辑更新不改 profile，使用

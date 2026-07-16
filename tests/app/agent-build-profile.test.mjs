@@ -88,11 +88,11 @@ test('production workflows select a versioned repository profile and a profile-s
 
   const productionProfilePath = resolve(
     root,
-    'android-djx-runtime/profiles/XINGHEYINGGUAN.json',
+    'android-djx-runtime/profiles/AG162.json',
   );
   const productionProfile = JSON.parse(readFileSync(productionProfilePath, 'utf8'));
   assert.equal(productionProfile.schemaVersion, 2);
   assert.ok(Number.isSafeInteger(productionProfile.profileVersion));
-  assert.equal(productionProfile.profileCode, 'XINGHEYINGGUAN');
+  assert.equal(productionProfile.profileCode, 'AG162');
   assert.equal(productionProfile.tenantId, productionProfile.profileCode);
 });
