@@ -27,4 +27,17 @@ WebView 热更新必须使用 APK 内置 RSA 公钥验证的七字段清单：`t
 - 日常 UI/业务更新：运行 `.github/workflows/hot-update.yml`，发布 zip 与签名 manifest。
 - SDK、包名、广告主账号、license、原生协议或密钥更新：运行 `.github/workflows/android-production.yml` 发布新 APK。
 - 本地回归：`npm run test:app`、`npm run check:identity`，再执行 Android `:app:testDebugUnitTest :app:assembleDebug`。
+
+## 本地 push 前验证
+
+在 macOS 上安装 Node.js、Java 17、Android SDK 和 Gradle 8.10.2 后，执行：
+
+```bash
+./scripts/install-local-hooks.sh
+./scripts/verify-local.sh
+```
+
+验证会检查 App 元数据、成员身份边界、广告会话测试，并构建仅供本地测试的
+Android debug APK；不会创建生产签名包，也不会上传任何构建产物。仓库没有
+package-lock.json 时会使用 npm install，不会伪造锁文件。
 - 正式 APK 必须通过 `android-djx-runtime/verify-production-apk.sh` 的包名、SDK、租户、公钥、反回滚、非 debuggable 和固定签名证书检查。
