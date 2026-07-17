@@ -13,10 +13,12 @@ command -v unzip >/dev/null 2>&1 || { echo "Install unzip before App verificatio
 [[ -d "${HOME}/Library/Android/sdk" ]] || { echo "Install the Android SDK at ~/Library/Android/sdk." >&2; exit 1; }
 
 node -e "for (const file of ['package.json', 'manifest.json', 'pages.json']) JSON.parse(require('fs').readFileSync(file, 'utf8'))"
-if [[ -f package-lock.json ]]; then
-  npm ci --ignore-scripts --no-audit --no-fund
-else
-  npm install --ignore-scripts --no-audit --no-fund
+if [[ ! -d node_modules ]]; then
+  if [[ -f package-lock.json ]]; then
+    npm ci --ignore-scripts --no-audit --no-fund
+  else
+    npm install --ignore-scripts --no-audit --no-fund
+  fi
 fi
 npm run check:identity
 npm run test:app
