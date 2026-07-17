@@ -38,6 +38,8 @@ fi
 
 java_home="$(/usr/libexec/java_home -v 17 2>/dev/null || true)"
 [[ -n "${java_home}" ]] || { echo "Install a Java 17 JDK for Android verification." >&2; exit 1; }
+ANDROID_HOME="${HOME}/Library/Android/sdk" \
+ANDROID_SDK_ROOT="${HOME}/Library/Android/sdk" \
 JAVA_HOME="${java_home}" "${gradle_bin}" --no-daemon -p "${runtime_dir}" \
   :app:testDebugUnitTest :app:assembleDebug
 
