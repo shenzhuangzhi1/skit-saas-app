@@ -110,11 +110,11 @@ DJXSdk.factory().createDramaDetail(...);
 这两件事是分开的：
 
 1. 穿山甲短剧内容 SDK：提供真实短剧列表、分类、历史和原生播放器。
-2. GroMore / Taku 广告 SDK：负责激励视频广告，完整观看后业务层解锁剧集。
+2. Taku SDK + Taku ADX：负责激励视频广告，完整观看并通过服务端验奖后业务层解锁剧集。
 
-当前短剧页面的解锁逻辑仍走 `pages/drama/services/reward-ad.js`。完整观看广告后，再允许进入锁定集并打开短剧播放器。
+当前短剧页面的解锁逻辑走 `pages/drama/services/taku-reward-ad.js`。完整观看广告后，再允许进入锁定集并打开短剧播放器。
 
-后续如果要严格做“非完全封装模式”的 SDK 内自定义解锁，需要在 `SkitPangleDramaActivity` 中实现 `IDJXDramaUnlockListener`，在 `showCustomAd` 或 `unlockFlowStart` 阶段调起 Taku/GroMore 激励广告，并在奖励有效后回传 DJX 解锁结果。
+后续如果要严格做“非完全封装模式”的 SDK 内自定义解锁，需要在 `SkitPangleDramaActivity` 中实现 `IDJXDramaUnlockListener`，在 `showCustomAd` 或 `unlockFlowStart` 阶段调起 Taku ADX 激励广告，并在服务端验奖有效后回传 DJX 解锁结果。
 
 ## HBuilderX 打包要求
 

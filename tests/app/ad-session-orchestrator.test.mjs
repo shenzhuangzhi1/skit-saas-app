@@ -89,7 +89,7 @@ function makeApi(overrides = {}) {
         grantId: 88,
         dramaId,
         expiresAt: '2026-07-15T08:05:00',
-        grantToken: 'grant_0123456789ABCDEFGH',
+        grantToken: 'abcdefghijklmnopqrstuvwxyzABCDEFGH123456789',
       }),
     getEntitlements: async (dramaId) => ok({ dramaId, grantedEpisodeNos: [3, 4] }),
     ...overrides,
@@ -289,7 +289,7 @@ test('issues a strict server player grant and rejects invalid identities', async
     grantId: 88,
     dramaId: 901,
     expiresAt: '2026-07-15T08:05:00',
-    grantToken: 'grant_0123456789ABCDEFGH',
+    grantToken: 'abcdefghijklmnopqrstuvwxyzABCDEFGH123456789',
   });
   await assert.rejects(
     () => orchestrator.issuePlayerGrant({ tenantId: 11 }, 901),

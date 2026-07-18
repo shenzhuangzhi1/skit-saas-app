@@ -1,6 +1,6 @@
 # Android 广告与短剧解锁架构
 
-一期只有一条生产广告路径：Taku 是激励视频主控，穿山甲等平台作为 Taku ADN；DJX 只提供短剧内容和播放器。页面、DJX 和本地 Taku 奖励回调都没有解锁权，唯一授权事实是后端已验签奖励产生的逐集权益。
+一期只有一条生产广告路径：Taku SDK 通过 Taku ADX 请求激励视频；穿山甲 DJX 只提供短剧内容和播放器，不参与广告填充或广告奖励。页面、DJX 和本地 Taku 奖励回调都没有解锁权，唯一授权事实是后端已验签奖励产生的逐集权益。
 
 ## 每租户广告身份
 
@@ -10,7 +10,7 @@
 
 1. App 使用会员登录态向后端创建广告会话；DJX 原生播放器只接收固定租户、会员和剧目的短时 `playerGrant`。
 2. 后端返回版本化协议：`sessionId/provider/placementId/userId/customData/scene`。
-3. 原生为该会话新建一个 `ATRewardVideoAd`，在 `load()` 前设置 `USER_ID` 与 `USER_CUSTOM_DATA`，展示时设置 `showCustomExt(sessionId)`。
+3. 原生为该会话新建一个 Taku ADX `ATRewardVideoAd`，在 `load()` 前设置 `USER_ID` 与 `USER_CUSTOM_DATA`，展示时设置 `showCustomExt(sessionId)`。
 4. 原生从 `ATAdInfo.getShowId()` 读取平台 `providerShowId`，按单调序号上报 LOADING/LOADED/SHOWING/ERROR/CLOSED；不预加载、不复用广告对象。
 5. 客户端奖励仅是遥测。关闭后 App 查询后端；只有同一 `sessionId/providerShowId` 达到 `SIGNED_VERIFIED + GRANTED` 才向 DJX 回传成功。
 

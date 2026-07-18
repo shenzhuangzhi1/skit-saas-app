@@ -161,7 +161,7 @@ export function cacheExternalDramas(list = []) {
     return getExternalDramas();
   }
 
-  const merged = [...validList, ...getExternalDramas()].reduce((map, item) => {
+  const merged = [...getExternalDramas(), ...validList].reduce((map, item) => {
     map.set(String(item.id), item);
     return map;
   }, new Map());

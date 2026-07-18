@@ -10,6 +10,10 @@ import $platform from '@/sheep/platform';
 import { showAuthModal } from '@/sheep/hooks/useModal';
 import AuthUtil from '@/sheep/api/member/auth';
 import { getTerminal } from '@/sheep/helper/const';
+import { buildClientRuntimeHeaders, getClientRuntimeInfo } from '@/sheep/services/client-runtime';
+
+const CLIENT_RUNTIME_PATH_PATTERN =
+  /\/skit\/member\/(?:player-grants|entitlements|ad-sessions(?:\/|$))/;
 
 const options = {
   // 显示操作成功消息 默认不显示
@@ -73,7 +77,7 @@ const http = new Request({
  * @description 请求拦截器
  */
 http.interceptors.request.use(
-  (config) => {
+  async (config) => {
     // 自定义处理【auth 授权】：必须登录的接口，则跳出 AuthModal 登录弹窗
     if (config.custom.auth && !$store('user').isLogin) {
       showAuthModal();
@@ -105,6 +109,11 @@ http.interceptors.request.use(
       config.header['tenant-id'] = getTenantId();
     } else {
       delete config.header['tenant-id'];
+    }
+
+    if (CLIENT_RUNTIME_PATH_PATTERN.test(String(config.url || ''))) {
+      const runtime = await getClientRuntimeInfo();
+      Object.assign(config.header, buildClientRuntimeHeaders(runtime));
     }
     return config;
   },

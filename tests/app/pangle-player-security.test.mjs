@@ -61,6 +61,7 @@ test('H5 cannot send malicious freeSet or lockSet policy to the native player', 
   assert.ok(openPayload, 'native openPlayer payload must be emitted');
   assert.equal(Object.hasOwn(openPayload, 'freeSet'), false);
   assert.equal(Object.hasOwn(openPayload, 'lockSet'), false);
+  assert.equal(openPayload.playerGrant.expiresAt, Date.parse('2099-01-01T00:00:00Z'));
 });
 
 test('native bridge and activity never read H5 or Intent unlock-range policy', () => {

@@ -28,7 +28,7 @@
         <view v-if="contentLoading" class="content-state">
           <uni-icons type="spinner-cycle" size="28" color="#ff5a1f" />
           <view class="state-title">正在加载真实剧单</view>
-          <view class="state-desc">内容由穿山甲短剧 SDK 提供</view>
+          <view class="state-desc">热门内容正在同步</view>
         </view>
 
         <view v-else-if="contentError" class="content-state">
@@ -76,7 +76,7 @@
             <view class="section-head">
               <view>
                 <view class="section-title">推荐短剧</view>
-                <view class="section-subtitle">穿山甲内容库实时返回</view>
+                <view class="section-subtitle">热门内容实时更新</view>
               </view>
             </view>
             <scroll-view scroll-x class="horizontal-scroll" :show-scrollbar="false">
@@ -192,7 +192,7 @@
       const result = await getPangleDramaList({ page: 1, pageSize: 72 });
       if (result.skipped || result.list.length === 0) {
         if (requireRealContent) {
-          throw new Error(result.skipped ? '短剧原生 SDK 未接入' : 'SDK 暂未返回可用剧目');
+          throw new Error(result.skipped ? '短剧内容服务暂不可用' : '暂未返回可用剧目');
         }
         return;
       }

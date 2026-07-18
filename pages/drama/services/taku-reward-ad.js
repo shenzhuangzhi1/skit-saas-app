@@ -16,7 +16,7 @@ export function showRewardedVideoAd(serverProtocol, options = {}) {
   const protocol = validateNativeServerProtocol(serverProtocol);
   const plugin = getNativePlugin(TAKU_PLUGIN_NAME);
   if (!plugin || typeof plugin.showRewardedVideo !== 'function') {
-    return Promise.reject(new Error('Taku 激励视频 SDK 未接入'));
+    return Promise.reject(new Error('激励视频暂不可用'));
   }
   const validator = createNativeTelemetryValidator(protocol);
   const onClientEvent = options.onClientEvent || (() => undefined);
@@ -25,7 +25,7 @@ export function showRewardedVideoAd(serverProtocol, options = {}) {
   return new Promise((resolve, reject) => {
     let settled = false;
     let delivery = Promise.resolve();
-    const timer = setTimeout(() => finishWithError(new Error('Taku 激励视频回调超时')), timeoutMs);
+    const timer = setTimeout(() => finishWithError(new Error('激励视频响应超时')), timeoutMs);
 
     function finishWithError(error) {
       if (settled) {
@@ -33,7 +33,7 @@ export function showRewardedVideoAd(serverProtocol, options = {}) {
       }
       settled = true;
       clearTimeout(timer);
-      reject(error instanceof Error ? error : new Error(String(error || 'Taku 原生调用失败')));
+      reject(error instanceof Error ? error : new Error(String(error || '激励视频加载失败')));
     }
 
     function receive(rawValue) {
@@ -53,7 +53,7 @@ export function showRewardedVideoAd(serverProtocol, options = {}) {
         delivery.catch(finishWithError);
       }
       if (telemetry.nativeState === 'ERROR') {
-        delivery.then(() => finishWithError(new Error('Taku 激励视频播放失败')), finishWithError);
+        delivery.then(() => finishWithError(new Error('激励视频播放失败')), finishWithError);
       } else if (telemetry.nativeState === 'CLOSED') {
         delivery.then(() => {
           if (settled) {

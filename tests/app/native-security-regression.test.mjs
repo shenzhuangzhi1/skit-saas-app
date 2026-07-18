@@ -34,6 +34,20 @@ test('Taku creates a fresh ad per session and binds local extra before load', ()
   assert.match(source, /session\.machine\.initializing\s*\(\s*\)/);
 });
 
+test('native package uses Taku ADX for ads and keeps Pangle dependencies content-only', () => {
+  const gradle = read('android-djx-runtime/app/build.gradle');
+  const architecture = read('docs/android-ad-mediation.md');
+  assert.match(gradle, /anythink_core_6\.6\.22\.aar/);
+  assert.match(gradle, /anythink_adx_sdk_kuying_6\.5\.75_necessary\.aar/);
+  assert.match(gradle, /pangrowth-djx-sdk-lite/);
+  assert.doesNotMatch(gradle, /anythink_network_csj/);
+  assert.doesNotMatch(gradle, /anythink_network_kuaishou/);
+  assert.doesNotMatch(gradle, /anythink_network_gdt/);
+  assert.doesNotMatch(gradle, /anythink_network_baidu/);
+  assert.match(architecture, /Taku SDK .*Taku ADX/);
+  assert.match(architecture, /穿山甲 DJX 只提供短剧内容和播放器/);
+});
+
 test('native sources contain no local reward success or sentinel fallback', () => {
   const roots = [
     'android-djx-runtime/app/src/main/java',
@@ -66,6 +80,7 @@ test('native player requires and server-validates the short-lived player grant',
   const client = read(nativeApiClientPath);
   assert.match(bridge, /playerGrant/);
   assert.match(bridge, /grantToken/);
+  assert.match(bridge, /resolve\(callbackId, fail\(-400, "Invalid native request"\)\)/);
   assert.match(bridge, /optLong\s*\(\s*value\s*,\s*"expiresAt"/);
   assert.match(client, /X-Skit-Player-Grant/);
   assert.match(client, /X-Skit-Native-Version/);

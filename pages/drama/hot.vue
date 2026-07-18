@@ -53,7 +53,7 @@
       const result = await getPangleDramaList({ page: 1, pageSize: 72 });
       if (result.skipped || result.list.length === 0) {
         if (requireRealContent) {
-          throw new Error(result.skipped ? '短剧原生 SDK 未接入' : 'SDK 暂未返回可用剧目');
+          throw new Error(result.skipped ? '短剧内容服务暂不可用' : '暂未返回可用剧目');
         }
         return;
       }

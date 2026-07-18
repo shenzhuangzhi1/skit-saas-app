@@ -5,6 +5,7 @@ const POLL_DELAYS_MS = Object.freeze([500, 1000, 2000, 3000, 3000]);
 const SESSION_PATTERN = /^[A-Za-z0-9_-]{22}$/;
 const SAFE_TEXT_PATTERN = /^[A-Za-z0-9._:/-]{1,128}$/;
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{22,256}$/;
+const PLAYER_GRANT_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const ENTITLEMENT_CACHE_PREFIX = 'skit_ad_entitlement_ui_v1';
 const PENDING_SESSION_PREFIX = 'skit_ad_pending_session_v1';
 
@@ -319,7 +320,7 @@ export function createAdSessionOrchestrator(options = {}) {
     if (Number(data.dramaId) !== dramaId) {
       throw new Error('播放器权限绑定了其他短剧');
     }
-    if (!TOKEN_PATTERN.test(String(data.grantToken || ''))) {
+    if (!PLAYER_GRANT_TOKEN_PATTERN.test(String(data.grantToken || ''))) {
       throw new Error('播放器权限令牌格式错误');
     }
     if (!data.expiresAt) {

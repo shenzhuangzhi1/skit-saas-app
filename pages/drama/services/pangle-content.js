@@ -3,8 +3,6 @@ import { cacheExternalDramas } from '@/pages/drama/data';
 
 const PANGLE_PLUGIN_NAME = 'SkitPangleDrama';
 const DEFAULT_SETTING_FILE = import.meta.env?.VITE_PANGLE_DRAMA_SETTING_FILE || 'SDK_Setting.json';
-const DEFAULT_FREE_SET = Number(import.meta.env?.VITE_PANGLE_DRAMA_FREE_SET || 8);
-const DEFAULT_LOCK_SET = Number(import.meta.env?.VITE_PANGLE_DRAMA_LOCK_SET || 5);
 const DEFAULT_PAGE_SIZE = Number(import.meta.env?.VITE_PANGLE_DRAMA_PAGE_SIZE || 24);
 let startPromise;
 
@@ -40,7 +38,7 @@ export async function startPangleContentSdk(options = {}) {
 
   const result = await startPromise;
   if (result?.success === false) {
-    throw new Error(result.message || '穿山甲短剧 SDK 启动失败');
+    throw new Error(result.message || '短剧内容服务启动失败');
   }
   return result;
 }
@@ -60,6 +58,31 @@ function getPositiveDramaId(drama = {}) {
   return Number.isFinite(numericId) && numericId > 0 ? numericId : null;
 }
 
+function getPositiveInteger(value) {
+  const numeric = Number(value);
+  return Number.isSafeInteger(numeric) && numeric > 0 ? numeric : null;
+}
+
+function getNonNegativeInteger(value) {
+  const numeric = Number(value);
+  return Number.isSafeInteger(numeric) && numeric >= 0 ? numeric : null;
+}
+
+function normalizeGrantExpiry(value) {
+  const numeric = Number(value);
+  if (Number.isSafeInteger(numeric) && numeric > 0) {
+    return numeric;
+  }
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error('服务端播放器权限缺少有效期');
+  }
+  const parsed = Date.parse(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error('服务端播放器权限有效期格式错误');
+  }
+  return parsed;
+}
+
 function normalizePlayerGrant(playerGrant, dramaId) {
   if (
     !playerGrant ||
@@ -67,7 +90,7 @@ function normalizePlayerGrant(playerGrant, dramaId) {
     Number(playerGrant.grantId) <= 0 ||
     Number(playerGrant.dramaId) !== dramaId ||
     typeof playerGrant.grantToken !== 'string' ||
-    !/^[A-Za-z0-9_-]{22,256}$/.test(playerGrant.grantToken) ||
+    !/^[A-Za-z0-9_-]{43}$/.test(playerGrant.grantToken) ||
     !playerGrant.expiresAt
   ) {
     throw new Error('服务端播放器权限无效');
@@ -75,7 +98,8 @@ function normalizePlayerGrant(playerGrant, dramaId) {
   return {
     grantId: Number(playerGrant.grantId),
     dramaId,
-    expiresAt: playerGrant.expiresAt,
+    // Native intent extras carry epoch milliseconds; the API returns an ISO timestamp.
+    expiresAt: normalizeGrantExpiry(playerGrant.expiresAt),
     grantToken: playerGrant.grantToken,
   };
 }
@@ -90,7 +114,12 @@ export function normalizePangleDrama(raw = {}) {
     return null;
   }
 
-  const total = Number(raw.total || raw.episodeCount || raw.count || 1) || 1;
+  const total = getPositiveInteger(raw.total ?? raw.episodeCount ?? raw.count);
+  const freeEpisodes = getNonNegativeInteger(raw.freeSet ?? raw.free_set ?? raw.freeEpisodes);
+  const unlockSize = getPositiveInteger(raw.lockSet ?? raw.lock_set ?? raw.unlockSize);
+  if (!total || freeEpisodes === null || freeEpisodes > total || !unlockSize) {
+    return null;
+  }
   const category = raw.type || raw.category || '热播';
   const coverImage = raw.coverImage || raw.cover_image || raw.cover || raw.poster || '';
 
@@ -99,14 +128,15 @@ export function normalizePangleDrama(raw = {}) {
     pangleDramaId: rawId,
     contentId: rawId,
     source: 'pangle-drama-sdk',
-    title: raw.title || raw.scriptName || '穿山甲短剧',
+    title: raw.title || raw.scriptName || '热门短剧',
     category,
     tags: [category].filter(Boolean),
     total,
-    freeEpisodes: Number(raw.freeSet || raw.free_set || DEFAULT_FREE_SET),
-    unlockSize: Number(raw.lockSet || raw.lock_set || DEFAULT_LOCK_SET),
+    freeEpisodes,
+    unlockSize,
+    contentStatus: raw.status ?? '',
     status: Number(raw.status) === 1 ? '连载中' : '已完结',
-    heat: raw.heat || raw.hot || '穿山甲内容',
+    heat: raw.heat || raw.hot || '内容更新中',
     follows: raw.follows || '',
     score: raw.score || '9.0',
     updateText: '',

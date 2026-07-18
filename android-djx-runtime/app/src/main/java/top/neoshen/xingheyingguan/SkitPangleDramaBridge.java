@@ -49,12 +49,14 @@ public class SkitPangleDramaBridge {
     }
 
     private void handleMessage(String rawMessage) {
+        String callbackId = "";
         try {
             JSONObject message = new JSONObject(rawMessage == null ? "{}" : rawMessage);
             String id = message.optString("id", "");
             if (!id.matches("[A-Za-z0-9._:-]{1,128}")) {
                 throw new IllegalArgumentException("Invalid native callback ID");
             }
+            callbackId = id;
             String method = message.optString("method", "");
             JSONObject payload = message.optJSONObject("payload");
             if (payload == null) {
@@ -152,6 +154,9 @@ public class SkitPangleDramaBridge {
             }
         } catch (Throwable error) {
             Log.w(TAG, "Rejected invalid Pangle bridge message");
+            if (!callbackId.isEmpty()) {
+                resolve(callbackId, fail(-400, "Invalid native request"));
+            }
         }
     }
 

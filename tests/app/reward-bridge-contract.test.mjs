@@ -340,7 +340,7 @@ test('Taku bridge has no success path when the native plugin is absent', async (
   globalThis.uni = { requireNativePlugin: () => null };
   try {
     const taku = await importTakuSource();
-    await assert.rejects(() => taku.showRewardedVideoAd(serverProtocol), /SDK 未接入/);
+    await assert.rejects(() => taku.showRewardedVideoAd(serverProtocol), /激励视频暂不可用/);
   } finally {
     globalThis.uni = originalUni;
   }

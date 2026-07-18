@@ -31,13 +31,11 @@
         <view v-if="!currentVideoUrl" class="content-placeholder">
           <uni-icons type="videocam" size="44" color="#fff" />
           <view class="placeholder-title">
-            {{ pangleReady ? '穿山甲短剧播放器已就绪' : '真实短剧资源未接入' }}
+            {{ pangleReady ? '播放器已就绪' : '当前剧集暂不可播放' }}
           </view>
           <view class="placeholder-desc">
             {{
-              pangleReady
-                ? '将通过穿山甲短剧 SDK 打开真实剧集'
-                : '需要接入穿山甲短剧 SDK 或配置 episode.videoUrl'
+              pangleReady ? '正在打开剧集' : '请稍后再试'
             }}
           </view>
         </view>
@@ -91,7 +89,7 @@
           class="ghost-btn"
           @tap="playCurrentEpisode('manual_open')"
         >
-          打开真实播放器
+          开始播放
         </button>
         <button class="primary-btn" @tap="nextEpisode">下一集</button>
         <button class="ghost-btn" @tap="showEpisodePanel = true">选集</button>
@@ -309,43 +307,78 @@
     console.warn('[drama] video playback failed');
   }
 
-  async function playCurrentEpisode(source) {
-    if (!userStore.isLogin) {
-      return;
+  function playerErrorTitle(error) {
+    const message = String(error?.message || '').trim();
+    if (message.includes('CLIENT_RUNTIME_HEADERS_INVALID')) {
+      return '请更新到最新版本后重试';
     }
-    const identity = currentIdentity();
-    const dramaId = resolveServerDramaId();
-    if (currentEpisode.value > drama.value.freeEpisodes) {
-      const snapshot = await refreshAuthoritativeEntitlements(identity);
-      if (!snapshot.grantedEpisodeNos.includes(currentEpisode.value)) {
-        activePlaybackEpisode.value = null;
+    if (message.includes('ROLLOUT_OFF')) {
+      return '当前剧集暂不可播放';
+    }
+    if (message.includes('MEMBER_NOT_IN_SHADOW')) {
+      return '当前账号暂未开放体验';
+    }
+    if (message.includes('CLIENT_VERSION_REVOKED')) {
+      return '请更新到最新版本后重试';
+    }
+    if (message.includes('AD_PLAYER_GRANT_INVALID')) {
+      return '当前剧目尚未配置真实播放器';
+    }
+    return '暂时无法播放，请稍后重试';
+  }
+
+  function rewardErrorTitle(error) {
+    const message = String(error?.message || '').trim();
+    if (message.includes('CLIENT_RUNTIME_HEADERS_INVALID') || message.includes('CLIENT_VERSION_REVOKED')) {
+      return '请更新到最新版本后重试';
+    }
+    return '广告奖励暂不可用，请稍后重试';
+  }
+
+  async function playCurrentEpisode(source) {
+    try {
+      if (!userStore.isLogin) {
+        if (source !== 'page_load') {
+          uni.navigateTo({
+            url: '/pages/auth/index?mode=login',
+          });
+        }
         return;
       }
-    }
-    const playerGrant = await adSessionOrchestrator.issuePlayerGrant(identity, dramaId);
-    if (rawCurrentVideoUrl.value) {
-      activePlaybackEpisode.value = currentEpisode.value;
-      return;
-    }
-    if (!hasPangleDramaId(drama.value)) {
-      return;
-    }
+      const identity = currentIdentity();
+      const dramaId = resolveServerDramaId();
+      if (currentEpisode.value > drama.value.freeEpisodes) {
+        const snapshot = await refreshAuthoritativeEntitlements(identity);
+        if (!snapshot.grantedEpisodeNos.includes(currentEpisode.value)) {
+          activePlaybackEpisode.value = null;
+          return;
+        }
+      }
+      const playerGrant = await adSessionOrchestrator.issuePlayerGrant(identity, dramaId);
+      if (rawCurrentVideoUrl.value) {
+        activePlaybackEpisode.value = currentEpisode.value;
+        return;
+      }
+      if (!hasPangleDramaId(drama.value)) {
+        return;
+      }
 
-    const result = await openPangleDramaPlayer({
-      drama: drama.value,
-      episode: currentEpisode.value,
-      source,
-      playerGrant,
-    }).catch((error) => {
-      console.warn('[drama] protected player open failed:', error?.message || error);
-      return { skipped: true, reason: error?.message || 'protected-player-open-failed' };
-    });
-
-    if (result?.skipped && source === 'manual_open') {
-      uni.showToast({
-        title: '当前剧目没有真实 SDK ID',
-        icon: 'none',
+      return await openPangleDramaPlayer({
+        drama: drama.value,
+        episode: currentEpisode.value,
+        source,
+        playerGrant,
       });
+    } catch (error) {
+      console.warn('[drama] protected player open failed:', error?.message || error);
+      if (source === 'manual_open' || source === 'episode_select') {
+        uni.showToast({
+          title: playerErrorTitle(error),
+          icon: 'none',
+        });
+        return { skipped: true, reason: error?.message || 'protected-player-open-failed' };
+      }
+      throw error;
     }
   }
 
@@ -360,7 +393,7 @@
       });
       return;
     }
-    playCurrentEpisode('episode_select');
+    playCurrentEpisode('episode_select').catch(() => {});
   }
 
   async function unlockCurrent() {
@@ -419,16 +452,16 @@
 
       if (result.resolution === 'GRANTED') {
         grantedEpisodeNos.value = result.entitlements.grantedEpisodeNos;
-        uni.showToast({ title: `已通过服务端验奖解锁第${currentEpisode.value}集`, icon: 'none' });
+        uni.showToast({ title: `已解锁第${currentEpisode.value}集`, icon: 'none' });
         await playCurrentEpisode('server_verified_reward');
       } else if (result.resolution === 'VERIFYING') {
-        uni.showToast({ title: '奖励验证中，可稍后返回查看', icon: 'none' });
+        uni.showToast({ title: '奖励确认中，可稍后返回查看', icon: 'none' });
       } else {
-        throw new Error('本次广告未通过服务端奖励验证');
+        throw new Error('广告奖励未确认');
       }
     } catch (error) {
       uni.showToast({
-        title: error?.message || '广告暂不可用',
+        title: rewardErrorTitle(error),
         icon: 'none',
       });
     } finally {
@@ -451,7 +484,7 @@
 
   function shareDrama() {
     uni.showToast({
-      title: '分享能力待接入平台 SDK',
+      title: '分享暂不可用',
       icon: 'none',
     });
   }
