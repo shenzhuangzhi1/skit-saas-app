@@ -34,6 +34,7 @@ import top.neoshen.xingheyingguan.ad.NativeEpisodeUnlockPolicy;
 import top.neoshen.xingheyingguan.ad.NativePlayerGrant;
 import top.neoshen.xingheyingguan.ad.NativeRewardGate;
 import top.neoshen.xingheyingguan.ad.TakuNativeState;
+import top.neoshen.xingheyingguan.ad.TakuSessionStateMachine;
 import top.neoshen.xingheyingguan.ad.TakuTelemetry;
 
 /** DJX content player whose unlock authority is the server entitlement endpoint. */
@@ -239,11 +240,22 @@ public class DramaPlayerActivity extends Activity {
                         activeProtocol = result.getProtocol();
                         activeProviderShowId = null;
                         pollAttempt = 0;
+                        if ("REUSED".equals(result.getOutcome())) {
+                            scheduleNextPoll(
+                                    generation, targetEpisode,
+                                    activeProtocol.getSessionId(), null);
+                            return;
+                        }
+                        if (!"CREATED".equals(result.getOutcome())) {
+                            failActiveUnlock(
+                                    generation, targetEpisode, "广告会话状态无效");
+                            return;
+                        }
                         try {
                             takuRewardedAdController.start(activeProtocol,
                                     DramaPlayerActivity.this::onTakuTelemetry);
                         } catch (Throwable startFailure) {
-                            failActiveUnlock(generation, targetEpisode, "广告暂不可用");
+                            recordSynchronousTakuStartFailure(startFailure);
                         }
                     }
 
@@ -252,6 +264,20 @@ public class DramaPlayerActivity extends Activity {
                         failActiveUnlock(generation, targetEpisode, "广告会话创建失败");
                     }
                 });
+    }
+
+    private void recordSynchronousTakuStartFailure(Throwable startFailure) {
+        Log.w(TAG, "Taku synchronous startup failed: "
+                + startFailure.getClass().getSimpleName());
+        takuRewardedAdController.cancelActiveSession();
+        try {
+            TakuSessionStateMachine machine = new TakuSessionStateMachine(
+                    activeProtocol, "native-" + activeProtocol.getSessionId());
+            machine.initializing();
+            onTakuTelemetry(machine.failed(null, null, null));
+        } catch (Throwable telemetryFailure) {
+            failActiveUnlock(unlockGeneration, activeUnlockEpisode, "广告暂不可用");
+        }
     }
 
     private void onTakuTelemetry(TakuTelemetry telemetry) {
@@ -330,9 +356,41 @@ public class DramaPlayerActivity extends Activity {
                                 generation, targetEpisode, expectedSessionId, expectedShowId)) {
                             return;
                         }
+                        Log.i(TAG, "TAKU_SERVER_STATUS rewardVerification="
+                                + status.getRewardVerificationStatus()
+                                + " entitlement=" + status.getEntitlementStatus()
+                                + " hasShowId=" + (status.getProviderShowId() != null));
+                        String serverShowId = expectedShowId;
+                        if (serverShowId == null) {
+                            serverShowId = status.getProviderShowId();
+                            if (serverShowId == null) {
+                                if ("SIGNED_VERIFIED".equals(
+                                        status.getRewardVerificationStatus())
+                                        || "GRANTED".equals(status.getEntitlementStatus())) {
+                                    failActiveUnlock(
+                                            generation, targetEpisode,
+                                            "服务端奖励证明缺少展示编号");
+                                } else if ("REJECTED".equals(
+                                        status.getRewardVerificationStatus())
+                                        || "VERIFY_TIMEOUT".equals(
+                                        status.getRewardVerificationStatus())
+                                        || "SECURITY_REVOKED".equals(
+                                        status.getEntitlementStatus())) {
+                                    failActiveUnlock(
+                                            generation, targetEpisode,
+                                            "本次广告未通过服务端验奖");
+                                } else {
+                                    scheduleNextPoll(
+                                            generation, targetEpisode,
+                                            expectedSessionId, null);
+                                }
+                                return;
+                            }
+                            activeProviderShowId = serverShowId;
+                        }
                         try {
                             NativeRewardGate gate = new NativeRewardGate(
-                                    expectedSessionId, expectedShowId);
+                                    expectedSessionId, serverShowId);
                             NativeRewardGate.Decision decision = gate.evaluate(
                                     new NativeRewardGate.Evidence(
                                             status.getSessionId(),
@@ -342,14 +400,14 @@ public class DramaPlayerActivity extends Activity {
                             if (decision == NativeRewardGate.Decision.GRANT) {
                                 verifyAuthoritativeEpisodeEntitlement(
                                         targetEpisode, generation,
-                                        expectedSessionId, expectedShowId);
+                                        expectedSessionId, serverShowId);
                             } else if (decision == NativeRewardGate.Decision.REJECT) {
                                 failActiveUnlock(
                                         generation, targetEpisode, "本次广告未通过服务端验奖");
                             } else {
                                 scheduleNextPoll(
                                         generation, targetEpisode,
-                                        expectedSessionId, expectedShowId);
+                                        expectedSessionId, serverShowId);
                             }
                         } catch (SecurityException mismatchedEvidence) {
                             failActiveUnlock(
@@ -453,8 +511,9 @@ public class DramaPlayerActivity extends Activity {
         return isActiveUnlock(generation, targetEpisode) && activeProtocol != null
                 && expectedSessionId != null
                 && expectedSessionId.equals(activeProtocol.getSessionId())
-                && expectedShowId != null
-                && expectedShowId.equals(activeProviderShowId);
+                && (expectedShowId == null
+                ? activeProviderShowId == null
+                : expectedShowId.equals(activeProviderShowId));
     }
 
     private IDJXAdListener createAdListener() {

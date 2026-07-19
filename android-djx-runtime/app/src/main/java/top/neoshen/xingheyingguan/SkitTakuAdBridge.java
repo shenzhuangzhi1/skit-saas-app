@@ -12,6 +12,7 @@ import java.util.Set;
 
 import top.neoshen.xingheyingguan.ad.AdSessionProtocol;
 import top.neoshen.xingheyingguan.ad.TakuNativeState;
+import top.neoshen.xingheyingguan.ad.TakuSessionStateMachine;
 import top.neoshen.xingheyingguan.ad.TakuTelemetry;
 
 public class SkitTakuAdBridge {
@@ -50,20 +51,26 @@ public class SkitTakuAdBridge {
     }
 
     private void handleMessage(String rawMessage) {
+        String callbackId = null;
+        AdSessionProtocol protocol = null;
         try {
             JSONObject message = new JSONObject(rawMessage == null ? "{}" : rawMessage);
             String id = message.optString("id", "");
             if (!id.matches("[A-Za-z0-9._:-]{1,128}")) {
                 throw new IllegalArgumentException("Invalid native callback ID");
             }
+            callbackId = id;
             if (!"showRewardedVideo".equals(message.optString("method", ""))) {
                 throw new IllegalArgumentException("Unknown Taku native method");
             }
             JSONObject payload = message.optJSONObject("payload");
-            AdSessionProtocol protocol = parseProtocol(payload);
+            protocol = parseProtocol(payload);
             showRewardedVideo(id, protocol);
         } catch (Throwable error) {
             Log.w(TAG, "Rejected invalid Taku bridge message", error);
+            if (callbackId != null) {
+                emitTerminalError(callbackId, protocol);
+            }
         }
     }
 
@@ -82,9 +89,31 @@ public class SkitTakuAdBridge {
                 }
             });
         } catch (Throwable error) {
-            pendingCallbackId = null;
-            throw error;
+            rewardedAdController.cancelActiveSession();
+            if (id.equals(pendingCallbackId)) {
+                pendingCallbackId = null;
+            }
+            Log.w(TAG, "Taku startup failed", error);
+            emitTerminalError(id, protocol);
         }
+    }
+
+    private void emitTerminalError(String id, AdSessionProtocol protocol) {
+        JSONObject result = new JSONObject();
+        if (protocol != null) {
+            try {
+                TakuSessionStateMachine machine = new TakuSessionStateMachine(
+                        protocol, "native-" + protocol.getSessionId());
+                result = telemetryJson(machine.failed(null, null, null));
+            } catch (Throwable invalidFailure) {
+                Log.w(TAG, "Unable to create strict Taku terminal telemetry", invalidFailure);
+            }
+        }
+        if (result.length() == 0) {
+            put(result, "nativeState", TakuNativeState.ERROR.name());
+            put(result, "success", false);
+        }
+        emit(id, result, true);
     }
 
     private AdSessionProtocol parseProtocol(JSONObject payload) {

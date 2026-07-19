@@ -6,12 +6,16 @@ import android.util.Log;
 
 import com.anythink.core.api.ATAdConst;
 import com.anythink.core.api.ATAdInfo;
+import com.anythink.core.api.ATDebuggerConfig;
 import com.anythink.core.api.ATSDK;
 import com.anythink.core.api.ATShowConfig;
 import com.anythink.core.api.AdError;
 import com.anythink.rewardvideo.api.ATRewardVideoAd;
 import com.anythink.rewardvideo.api.ATRewardVideoListener;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -25,6 +29,7 @@ final class TakuRewardedAdController {
     static final String APP_KEY = BuildConfig.TAKU_APP_KEY;
 
     private static final String TAG = "SkitTakuAd";
+    private static final char[] HEX = "0123456789abcdef".toCharArray();
     private static boolean initialized;
 
     interface EventListener {
@@ -43,6 +48,15 @@ final class TakuRewardedAdController {
     static synchronized void initialize(Context context) {
         if (initialized) {
             return;
+        }
+        boolean debuggerEnabled = BuildConfig.DEBUG
+                && BuildConfig.TAKU_DEBUG_NETWORK_FIRM_ID > 0
+                && !BuildConfig.TAKU_DEBUG_DEVICE_ID.isEmpty();
+        if (debuggerEnabled) {
+            ATSDK.setDebuggerConfig(
+                    context.getApplicationContext(),
+                    BuildConfig.TAKU_DEBUG_DEVICE_ID,
+                    new ATDebuggerConfig.Builder(BuildConfig.TAKU_DEBUG_NETWORK_FIRM_ID).build());
         }
         ATSDK.setNetworkLogDebug(BuildConfig.DEBUG);
         ATSDK.init(context.getApplicationContext(), APP_ID, APP_KEY);
@@ -120,6 +134,7 @@ final class TakuRewardedAdController {
 
             @Override
             public void onRewardedVideoAdFailed(AdError error) {
+                logAdError("load", error);
                 fail(session, ad, null);
             }
 
@@ -144,6 +159,7 @@ final class TakuRewardedAdController {
 
             @Override
             public void onRewardedVideoAdPlayFailed(AdError error, ATAdInfo adInfo) {
+                logAdError("play", error);
                 fail(session, ad, adInfo);
             }
 
@@ -209,6 +225,11 @@ final class TakuRewardedAdController {
                 throw new IllegalStateException("Provider show ID changed");
             }
         }
+        Log.i(TAG, "TAKU_TELEMETRY state=" + telemetry.getState().name()
+                + " callbackSequence=" + telemetry.getCallbackSequence()
+                + " rewardObserved=" + telemetry.isClientRewardObserved()
+                + " closed=" + telemetry.isClosed()
+                + " showRef=" + showReference(telemetry.getProviderShowId()));
         session.listener.onTelemetry(telemetry);
     }
 
@@ -277,6 +298,42 @@ final class TakuRewardedAdController {
             throw new IllegalStateException("Taku adsource ID is missing");
         }
         return value;
+    }
+
+    private static void logAdError(String stage, AdError error) {
+        if (error == null) {
+            Log.w(TAG, "Taku " + stage + " failed without an SDK error");
+            return;
+        }
+        Log.w(TAG, "Taku " + stage + " failed: code=" + safeLogCode(error.getCode())
+                + " platformCode=" + safeLogCode(error.getPlatformCode()));
+    }
+
+    private static String safeLogCode(String value) {
+        if (value == null || value.length() == 0) {
+            return "<none>";
+        }
+        return value.matches("[A-Za-z0-9._-]{1,64}") ? value : "<invalid>";
+    }
+
+    private static String showReference(String providerShowId) {
+        if (providerShowId == null) {
+            return "<none>";
+        }
+        final byte[] digest;
+        try {
+            digest = MessageDigest.getInstance("SHA-256")
+                    .digest(providerShowId.getBytes(StandardCharsets.UTF_8));
+        } catch (NoSuchAlgorithmException unavailable) {
+            throw new IllegalStateException("SHA-256 is unavailable", unavailable);
+        }
+        char[] reference = new char[12];
+        for (int index = 0; index < 6; index += 1) {
+            int value = digest[index] & 0xff;
+            reference[index * 2] = HEX[value >>> 4];
+            reference[index * 2 + 1] = HEX[value & 0x0f];
+        }
+        return new String(reference);
     }
 
     private static final class ActiveSession {

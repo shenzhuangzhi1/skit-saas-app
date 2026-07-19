@@ -2,12 +2,42 @@ import { execFile } from 'node:child_process';
 import { writeFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
 
+import {
+  assertFreshRewardChainEvidence,
+  summarizeMemberRequest,
+  summarizeMemberResponse,
+  toSafeEvidenceLog,
+} from './lib/reward-chain-evidence.mjs';
+
 const execFileAsync = promisify(execFile);
 const packageName = process.env.SKIT_ANDROID_PACKAGE || 'top.neoshen.xingheyingguan';
 const adb =
   process.env.ADB || `${process.env.HOME}/Library/Android/sdk/platform-tools/adb`;
 const forwardPort = Number(process.env.SKIT_CDP_PORT || 9223);
 const playerActivity = `${packageName}/.DramaPlayerActivity`;
+const verifyRewardChain = process.argv.includes('--verify-reward-chain');
+const dramaIndex = process.argv.indexOf('--drama');
+const requestedDrama = dramaIndex >= 0 ? Number(process.argv[dramaIndex + 1]) : null;
+const episodeIndex = process.argv.indexOf('--episode');
+const requestedEpisode = episodeIndex >= 0 ? Number(process.argv[episodeIndex + 1]) : null;
+
+if (
+  dramaIndex >= 0 &&
+  (!Number.isSafeInteger(requestedDrama) || requestedDrama <= 0)
+) {
+  throw new Error('--drama requires a positive integer');
+}
+
+if (
+  episodeIndex >= 0 &&
+  (!Number.isSafeInteger(requestedEpisode) || requestedEpisode <= 0)
+) {
+  throw new Error('--episode requires a positive integer');
+}
+
+if (verifyRewardChain && (requestedDrama === null || requestedEpisode === null)) {
+  throw new Error('--verify-reward-chain requires explicit --drama and --episode values');
+}
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -80,45 +110,6 @@ function redact(value) {
     .replace(/(app[_ -]?key\s*[=:]\s*)\S+/gi, '$1<redacted>');
 }
 
-function summarizePlayerGrant(body, status) {
-  try {
-    const envelope = JSON.parse(body);
-    const grant = envelope?.data || envelope;
-    return {
-      httpStatus: status,
-      code: envelope?.code ?? null,
-      message: envelope?.msg || envelope?.message || '',
-      grantId: Number(grant?.grantId) || null,
-      dramaId: Number(grant?.dramaId) || null,
-      expiresAt: grant?.expiresAt || null,
-      grantTokenLength:
-        typeof grant?.grantToken === 'string' ? grant.grantToken.length : null,
-    };
-  } catch {
-    return { httpStatus: status, parseError: true };
-  }
-}
-
-function summarizeMemberResponse(url, body, status) {
-  let endpoint = url;
-  try {
-    endpoint = new URL(url).pathname;
-  } catch {
-    // Keep the original value when URL parsing is unavailable.
-  }
-  try {
-    const envelope = JSON.parse(body);
-    return {
-      endpoint,
-      httpStatus: status,
-      code: envelope?.code ?? null,
-      message: envelope?.msg || envelope?.message || '',
-    };
-  } catch {
-    return { endpoint, httpStatus: status, parseError: true };
-  }
-}
-
 async function getTopActivity() {
   const activities = await runAdb(['shell', 'dumpsys', 'activity', 'activities']);
   const match = activities.match(/topResumedActivity=ActivityRecord\{[^\n]*\s([^\s}]+)\s+t\d+\}/);
@@ -141,9 +132,84 @@ async function getTarget(port) {
   );
 }
 
+async function findVisibleButton(client, label) {
+  return client.send('Runtime.evaluate', {
+    expression: `(() => {
+      const visible = (element) => {
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+      };
+      const candidates = [...document.querySelectorAll('button, uni-button, [role="button"]')];
+      const button = candidates.find((element) => element.textContent.trim() === ${JSON.stringify(
+        label,
+      )} && visible(element));
+      if (!button) {
+        return {
+          clicked: false,
+          visibleLabels: candidates
+            .filter(visible)
+            .map((element) => element.textContent.trim())
+            .filter(Boolean)
+            .slice(0, 20),
+        };
+      }
+      const rect = button.getBoundingClientRect();
+      return {
+        found: true,
+        label: button.textContent.trim(),
+        screenX: Math.round((rect.left + rect.width / 2) * window.devicePixelRatio),
+        screenY: Math.round((rect.top + rect.height / 2) * window.devicePixelRatio),
+      };
+    })()`,
+    returnByValue: true,
+  });
+}
+
+async function clickVisibleButton(client, label, useNativeTap, onBeforeClick) {
+  const located = await waitFor(
+    () => findVisibleButton(client, label),
+    (value) => value?.result?.value?.found === true,
+    12000,
+    500,
+  );
+  const target = located?.result?.value;
+  if (!target?.found) {
+    return { clicked: false, visibleLabels: target?.visibleLabels || [] };
+  }
+  await onBeforeClick?.();
+  if (useNativeTap) {
+    await runAdb(['shell', 'input', 'tap', String(target.screenX), String(target.screenY)]);
+  } else {
+    await client.send('Runtime.evaluate', {
+      expression: `(() => {
+        const visible = (element) => {
+          const style = getComputedStyle(element);
+          const rect = element.getBoundingClientRect();
+          return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+        };
+        const candidates = [...document.querySelectorAll('button, uni-button, [role="button"]')];
+        const button = candidates.find((element) => element.textContent.trim() === ${JSON.stringify(
+          label,
+        )} && visible(element));
+        if (!button) return false;
+        button.click();
+        return true;
+      })()`,
+      returnByValue: true,
+    });
+  }
+  return { clicked: true, label: target.label, input: useNativeTap ? 'adb-tap' : 'dom-click' };
+}
+
 async function main() {
   if (typeof WebSocket !== 'function') {
     throw new Error('Node.js 22 or newer is required for the built-in WebSocket client');
+  }
+
+  const initialTopActivity = await getTopActivity();
+  if (verifyRewardChain && initialTopActivity === playerActivity) {
+    throw new Error('Close the existing DramaPlayerActivity before reward verification');
   }
 
   const pid = await waitFor(
@@ -162,9 +228,12 @@ async function main() {
   let client;
   const consoleMessages = [];
   const responseReads = [];
-  const memberRequests = [];
-  const memberResponses = [];
-  let playerGrantSummary = null;
+  const memberRequestById = new Map();
+  const memberExchanges = [];
+  let responseReadFailures = 0;
+  let evidenceRunId = 0;
+  let entitlementsReady = false;
+  let rewardClickPerformed = false;
   const exportCatalogIndex = process.argv.indexOf('--export-catalog');
   const exportCatalogPath =
     exportCatalogIndex >= 0 ? process.argv[exportCatalogIndex + 1] : null;
@@ -175,7 +244,7 @@ async function main() {
   try {
     const target = await getTarget(forwardPort);
     if (!target) throw new Error('No debuggable Android WebView target was found');
-    if (!target.url.includes('/pages/drama/play')) {
+    if (!target.url.includes('/pages/drama/play') && requestedDrama === null) {
       throw new Error(`Open a real drama page before verification; current URL is ${target.url}`);
     }
 
@@ -195,19 +264,12 @@ async function main() {
           event.params.request.url,
         )
       ) {
-        const headers = Object.fromEntries(
-          Object.entries(event.params.request.headers || {}).map(([key, value]) => [
-            key.toLowerCase(),
-            value,
-          ]),
-        );
-        memberRequests.push({
-          endpoint: new URL(event.params.request.url).pathname,
-          method: event.params.request.method,
-          hasAuthorization: Boolean(headers.authorization),
-          hasTenantId: Boolean(headers['tenant-id']),
-          hasNativeVersion: Boolean(headers['x-skit-native-version']),
-          hasProtocolVersion: Boolean(headers['x-skit-ad-protocol-version']),
+        memberRequestById.set(event.params.requestId, {
+          runId: evidenceRunId,
+          request: summarizeMemberRequest(
+            event.params.request.url,
+            event.params.request,
+          ),
         });
       }
       if (
@@ -216,24 +278,39 @@ async function main() {
           event.params.response.url,
         )
       ) {
+        const requestRecord = memberRequestById.get(event.params.requestId);
         const read = client
           .send('Network.getResponseBody', { requestId: event.params.requestId })
           .then(({ body, base64Encoded }) => {
             const decoded = base64Encoded
               ? Buffer.from(body, 'base64').toString('utf8')
               : body;
-            memberResponses.push(
-              summarizeMemberResponse(
-                event.params.response.url,
-                decoded,
-                event.params.response.status,
-              ),
+            const responseSummary = summarizeMemberResponse(
+              event.params.response.url,
+              decoded,
+              event.params.response.status,
             );
-            if (/\/player-grants(?:\?|$)/.test(event.params.response.url)) {
-              playerGrantSummary = summarizePlayerGrant(decoded, event.params.response.status);
+            if (
+              requestRecord?.request.endpoint.endsWith('/entitlements') &&
+              requestRecord.request.dramaId === requestedDrama &&
+              responseSummary.endpoint.endsWith('/entitlements') &&
+              responseSummary.httpStatus === 200 &&
+              responseSummary.code === 0 &&
+              responseSummary.dramaId === requestedDrama
+            ) {
+              entitlementsReady = true;
+            }
+            if (requestRecord?.runId > 0) {
+              memberExchanges.push({
+                runId: requestRecord.runId,
+                request: requestRecord.request,
+                response: responseSummary,
+              });
             }
           })
-          .catch((error) => consoleMessages.push(`grant response unavailable: ${error.message}`));
+          .catch(() => {
+            responseReadFailures += 1;
+          });
         responseReads.push(read);
       }
     });
@@ -243,6 +320,27 @@ async function main() {
       client.send('Runtime.enable'),
       client.send('Network.enable'),
     ]);
+
+    if (requestedDrama !== null || requestedEpisode !== null) {
+      const currentUrl = new URL(target.url);
+      if (!currentUrl.hash.includes('/pages/drama/play')) {
+        currentUrl.hash = '#/pages/drama/play';
+      }
+      if (requestedDrama !== null) {
+        currentUrl.hash = currentUrl.hash.match(/([?&])id=\d+/)
+          ? currentUrl.hash.replace(/([?&])id=\d+/, `$1id=${requestedDrama}`)
+          : `${currentUrl.hash}${currentUrl.hash.includes('?') ? '&' : '?'}id=${requestedDrama}`;
+      }
+      if (requestedEpisode !== null) {
+        currentUrl.hash = currentUrl.hash.match(/([?&])episode=\d+/)
+          ? currentUrl.hash.replace(/([?&])episode=\d+/, `$1episode=${requestedEpisode}`)
+          : `${currentUrl.hash}${currentUrl.hash.includes('?') ? '&' : '?'}episode=${requestedEpisode}`;
+      }
+      await client.send('Runtime.evaluate', {
+        expression: `location.hash = ${JSON.stringify(currentUrl.hash)}`,
+      });
+      await sleep(500);
+    }
 
     if (exportCatalogPath) {
       const exported = await client.send('Runtime.evaluate', {
@@ -290,25 +388,62 @@ async function main() {
     await runAdb(['logcat', '-c']);
     await client.send('Page.reload', { ignoreCache: true });
 
-    let topActivity = await waitFor(getTopActivity, (value) => value === playerActivity, 7000);
+    let topActivity = await waitFor(
+      getTopActivity,
+      (value) => value === playerActivity,
+      verifyRewardChain ? 1500 : 7000,
+    );
     if (topActivity !== playerActivity) {
-      const clickResult = await client.send('Runtime.evaluate', {
-        expression: `(() => {
-          const visible = (element) => {
-            const style = getComputedStyle(element);
-            const rect = element.getBoundingClientRect();
-            return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
-          };
-          const candidates = [...document.querySelectorAll('button, uni-button, [role="button"]')];
-          const button = candidates.find((element) => element.textContent.trim() === '开始播放' && visible(element));
-          if (!button) return { clicked: false, visibleText: document.body.innerText.slice(0, 800) };
-          button.click();
-          return { clicked: true, label: button.textContent.trim() };
-        })()`,
-        returnByValue: true,
-      });
-      console.log(`manualClick=${JSON.stringify(clickResult.result.value)}`);
-      topActivity = await waitFor(getTopActivity, (value) => value === playerActivity, 12000);
+      const expectedLabel = verifyRewardChain ? '看广告解锁' : '开始播放';
+      if (verifyRewardChain) {
+        const ready = await waitFor(
+          async () => entitlementsReady,
+          Boolean,
+          12000,
+          250,
+        );
+        if (!ready) {
+          throw new Error('Server entitlements were not ready before the reward test');
+        }
+      }
+      const clickResult = await clickVisibleButton(
+        client,
+        expectedLabel,
+        verifyRewardChain,
+        verifyRewardChain
+          ? () => {
+              evidenceRunId += 1;
+              memberExchanges.length = 0;
+            }
+          : undefined,
+      );
+      console.log(
+        `manualClick=${JSON.stringify({
+          clicked: clickResult.clicked,
+          input: clickResult.input || null,
+        })}`,
+      );
+      if (!clickResult.clicked) {
+        throw new Error(`Visible button was not found: ${expectedLabel}`);
+      }
+      if (verifyRewardChain) {
+        rewardClickPerformed = true;
+      }
+
+      let previousActivity = '';
+      topActivity = await waitFor(
+        async () => {
+          const activity = await getTopActivity();
+          if (activity && activity !== previousActivity) {
+            previousActivity = activity;
+            console.log(`activity=${activity}`);
+          }
+          return activity;
+        },
+        (value) => value === playerActivity,
+        verifyRewardChain ? 240000 : 12000,
+        verifyRewardChain ? 1000 : 250,
+      );
     }
 
     await Promise.allSettled(responseReads);
@@ -323,19 +458,42 @@ async function main() {
       '*:S',
     ]);
 
-    console.log(`playerGrant=${JSON.stringify(playerGrantSummary)}`);
-    console.log(`memberRequests=${JSON.stringify(memberRequests)}`);
-    console.log(`memberResponses=${JSON.stringify(memberResponses)}`);
+    console.log(
+      `memberEvidence=${JSON.stringify(
+        toSafeEvidenceLog(
+          memberExchanges.filter((exchange) => exchange.runId === evidenceRunId),
+        ),
+      )}`,
+    );
     console.log(`topActivity=${topActivity || '<unknown>'}`);
-    if (consoleMessages.length) {
-      console.log(`webConsole=${JSON.stringify(consoleMessages.slice(-12))}`);
-    }
+    console.log(`webConsoleCount=${consoleMessages.length}`);
+    console.log(`responseReadFailures=${responseReadFailures}`);
     if (nativeLogs) console.log(`nativeLogs=\n${redact(nativeLogs)}`);
 
     if (topActivity !== playerActivity) {
       throw new Error('DramaPlayerActivity did not start');
     }
-    console.log('PASS: real drama page opened DramaPlayerActivity');
+    if (verifyRewardChain) {
+      const correlation = assertFreshRewardChainEvidence({
+        runId: evidenceRunId,
+        rewardClickPerformed,
+        requestedDrama,
+        requestedEpisode,
+        nativeLogs,
+        exchanges: memberExchanges,
+      });
+      console.log(
+        `rewardEvidence=${JSON.stringify({
+          session: 'session#1',
+          providerShowRef: correlation.providerShowRef,
+        })}`,
+      );
+    }
+    console.log(
+      verifyRewardChain
+        ? 'PASS: Taku reward verification opened the real DramaPlayerActivity'
+        : 'PASS: real drama page opened DramaPlayerActivity',
+    );
   } finally {
     client?.close();
     await runAdb(['forward', '--remove', `tcp:${forwardPort}`]).catch(() => {});

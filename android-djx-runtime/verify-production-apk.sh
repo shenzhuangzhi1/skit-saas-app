@@ -121,6 +121,12 @@ if [[ -z "$APKSIGNER" ]]; then
 fi
 [[ -x "$APKSIGNER" ]] || fail "apksigner not found under $ANDROID_HOME/build-tools"
 
+APKANALYZER="${APKANALYZER:-}"
+if [[ -z "$APKANALYZER" ]]; then
+  APKANALYZER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name apkanalyzer 2>/dev/null | sort -V | tail -1)"
+fi
+[[ -x "$APKANALYZER" ]] || fail "apkanalyzer not found under $ANDROID_HOME/cmdline-tools"
+
 ACTUAL_PACKAGE="$($AAPT dump badging "$APK_FILE" | sed -n "s/^package: name='\([^']*\)'.*/\1/p" | head -1)"
 [[ "$ACTUAL_PACKAGE" == "$EXPECTED_PACKAGE" ]] || \
   fail "package is $ACTUAL_PACKAGE, expected $EXPECTED_PACKAGE"
@@ -132,9 +138,46 @@ ACTUAL_VERSION_NAME="$($AAPT dump badging "$APK_FILE" | sed -n "s/^package: .*ve
   fail "versionName is $ACTUAL_VERSION_NAME, expected $EXPECTED_VERSION_NAME"
 
 if [[ "$ALLOW_DEBUG_RUNTIME_DEFAULTS" != "1" ]]; then
-  if "$AAPT" dump xmltree "$APK_FILE" AndroidManifest.xml | grep -q 'android:debuggable.*0xffffffff'; then
+  MANIFEST_TREE="$($AAPT dump xmltree "$APK_FILE" AndroidManifest.xml)"
+  if printf '%s\n' "$MANIFEST_TREE" | grep -q 'android:debuggable.*0xffffffff'; then
     fail "production APK is debuggable"
   fi
+  printf '%s\n' "$MANIFEST_TREE" | grep -q 'android:usesCleartextTraffic.*0x0' || \
+    fail "production APK must deny cleartext traffic by default"
+  printf '%s\n' "$MANIFEST_TREE" | grep -q 'android:networkSecurityConfig' || \
+    fail "production APK is missing the loopback network security config"
+
+  NETWORK_SECURITY_FILE="$($APKANALYZER resources value \
+    --config default \
+    --type xml \
+    --name network_security_config \
+    "$APK_FILE" 2>/dev/null || true)"
+  [[ "$NETWORK_SECURITY_FILE" =~ ^res/.+\.xml$ ]] || \
+    fail "production APK network security resource is unreadable"
+  NETWORK_SECURITY_XML="$($APKANALYZER resources xml \
+    --file "$NETWORK_SECURITY_FILE" \
+    "$APK_FILE" 2>/dev/null || true)"
+  printf '%s' "$NETWORK_SECURITY_XML" | python3 -c '
+import sys
+import xml.etree.ElementTree as ET
+
+root = ET.fromstring(sys.stdin.read())
+bases = list(root.iter("base-config"))
+domain_configs = list(root.iter("domain-config"))
+domains = list(root.iter("domain"))
+valid = (
+    root.tag == "network-security-config"
+    and len(bases) == 1
+    and bases[0].get("cleartextTrafficPermitted") == "false"
+    and len(domain_configs) == 1
+    and domain_configs[0].get("cleartextTrafficPermitted") == "true"
+    and len(domains) == 1
+    and domains[0].get("includeSubdomains") == "false"
+    and (domains[0].text or "").strip() == "127.0.0.1"
+)
+raise SystemExit(0 if valid else 1)
+' || fail "network security config must deny cleartext except exact loopback"
+
   SIGNATURE_INFO=""
   if ! SIGNATURE_INFO="$($APKSIGNER verify --print-certs "$APK_FILE" 2>/dev/null)"; then
     fail "APK signature verification failed"

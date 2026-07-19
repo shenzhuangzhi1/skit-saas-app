@@ -650,6 +650,7 @@
   .locked-layer {
     position: absolute;
     inset: 0;
+    z-index: 2;
     display: flex;
     align-items: center;
     justify-content: center;

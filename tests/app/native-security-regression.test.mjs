@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -32,6 +32,45 @@ test('Taku creates a fresh ad per session and binds local extra before load', ()
   assert.match(source, /showCustomExt\s*\(\s*protocol\.getSessionId\(\)\s*\)/);
   assert.match(source, /getShowId\s*\(\s*\)/);
   assert.match(source, /session\.machine\.initializing\s*\(\s*\)/);
+});
+
+test('Taku ADX debugger mode is debug-only and cannot enter a release build', () => {
+  const source = read(controllerPath);
+  const gradle = read('android-djx-runtime/app/build.gradle');
+  assert.match(gradle, /SKIT_TAKU_DEBUG_DEVICE_ID/);
+  assert.match(gradle, /SKIT_TAKU_DEBUG_NETWORK_FIRM_ID/);
+  assert.doesNotMatch(gradle, /SKIT_ALLOW_TAKU_DEBUG_BUILD/);
+  assert.match(gradle, /Release builds cannot include Taku debugger configuration/);
+  assert.match(source, /BuildConfig\.TAKU_DEBUG_DEVICE_ID/);
+  assert.match(source, /BuildConfig\.TAKU_DEBUG_NETWORK_FIRM_ID/);
+  assert.match(source, /boolean debuggerEnabled = BuildConfig\.DEBUG\s*&&/);
+  const debuggerConfig = source.indexOf('ATSDK.setDebuggerConfig');
+  const sdkInit = source.indexOf('ATSDK.init');
+  assert.ok(
+    debuggerConfig >= 0 && sdkInit > debuggerConfig,
+    'Taku debugger config must be applied before SDK initialization',
+  );
+  assert.match(source, /ATSDK\.setNetworkLogDebug\(BuildConfig\.DEBUG\)/);
+});
+
+test('Taku SDK failures expose codes but never provider descriptions in production logs', () => {
+  const source = read(controllerPath);
+  assert.match(source, /error\.getCode\(\)/);
+  assert.match(source, /error\.getPlatformCode\(\)/);
+  assert.doesNotMatch(source, /error\.getDesc\(\)/);
+  assert.doesNotMatch(source, /error\.getPlatformMSG\(\)/);
+});
+
+test('network security keeps production HTTPS-only while debug permits local API hosts', () => {
+  const productionPath = 'android-djx-runtime/app/src/main/res/xml/network_security_config.xml';
+  const debugPath = 'android-djx-runtime/app/src/debug/res/xml/network_security_config.xml';
+  assert.ok(existsSync(resolve(root, productionPath)), 'production network policy is required');
+  assert.ok(existsSync(resolve(root, debugPath)), 'debug network policy override is required');
+  const production = read(productionPath);
+  const debug = read(debugPath);
+  assert.match(production, /base-config cleartextTrafficPermitted="false"/);
+  assert.match(production, />127\.0\.0\.1<\/domain>/);
+  assert.match(debug, /base-config cleartextTrafficPermitted="true"/);
 });
 
 test('native package uses Taku ADX for ads and keeps Pangle dependencies content-only', () => {
