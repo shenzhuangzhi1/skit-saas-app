@@ -182,7 +182,6 @@ export function assertFreshRewardChainEvidence({
     `TAKU_TELEMETRY state=SHOWING callbackSequence=2 rewardObserved=false closed=false sessionRef=${sessionRef} showRef=${providerShowRef}`,
     `TAKU_TELEMETRY state=SHOWING callbackSequence=3 rewardObserved=true closed=false sessionRef=${sessionRef} showRef=${providerShowRef}`,
     `TAKU_TELEMETRY state=CLOSED callbackSequence=4 rewardObserved=true closed=true sessionRef=${sessionRef} showRef=${providerShowRef}`,
-    `PLAYER_STARTED dramaId=${requestedDrama} episode=${requestedEpisode} sessionRef=${sessionRef} showRef=${providerShowRef}`,
   ];
   let cursor = 0;
   for (const evidence of requiredNativeEvidence) {
@@ -191,6 +190,17 @@ export function assertFreshRewardChainEvidence({
       throw new Error(`Fresh native provider show evidence is missing: ${evidence}`);
     }
     cursor = index + evidence.length;
+  }
+
+  const playerEvidence = `PLAYER_PLAYING dramaId=${requestedDrama} episode=${requestedEpisode} sessionRef=${sessionRef} showRef=${providerShowRef}`;
+  const playerIndex = nativeLogs.indexOf(playerEvidence, cursor);
+  const requestFailureEvidence = `PLAYER_REQUEST_FAILED dramaId=${requestedDrama} episode=${requestedEpisode} sessionRef=${sessionRef} showRef=${providerShowRef}`;
+  const requestFailureIndex = nativeLogs.indexOf(requestFailureEvidence, cursor);
+  if (requestFailureIndex >= 0 && (playerIndex < 0 || requestFailureIndex < playerIndex)) {
+    throw new Error('Target player request failed before real video playback');
+  }
+  if (playerIndex < 0) {
+    throw new Error(`Fresh native player evidence is missing: ${playerEvidence}`);
   }
 
   const entitlement = current.find(

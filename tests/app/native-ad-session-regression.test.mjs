@@ -98,6 +98,9 @@ test('reward-chain verifier delegates to structured evidence correlation', () =>
   const player = read(
     'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/DramaPlayerActivity.java',
   );
+  const playbackEvidence = read(
+    'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/ad/PlaybackEvidenceScope.java',
+  );
   const contentBridge = read('pages/drama/services/pangle-content.js');
   const page = read('pages/drama/play.vue');
 
@@ -107,7 +110,11 @@ test('reward-chain verifier delegates to structured evidence correlation', () =>
     /verifyRewardChain && initialTopActivity === playerActivity[\s\S]*?throw new Error/,
   );
   assert.match(verifier, /let rewardClickPerformed = false/);
+  assert.match(verifier, /let rewardEvidenceDeadline = 0/);
   assert.match(verifier, /rewardClickPerformed = true/);
+  assert.match(verifier, /rewardEvidenceDeadline = Date\.now\(\) \+ 240000/);
+  assert.match(verifier, /await waitFor\([\s\S]*?assertFreshRewardChainEvidence\([\s\S]*?rewardEvidenceDeadline - Date\.now\(\)/);
+  assert.match(verifier, /Target player request failed[\s\S]*?'FAILED'/);
   assert.match(verifier, /assertFreshRewardChainEvidence\(/);
   assert.match(verifier, /evidenceRunId/);
   assert.match(verifier, /memberExchanges/);
@@ -116,12 +123,25 @@ test('reward-chain verifier delegates to structured evidence correlation', () =>
   assert.match(controller, /SafeEvidenceReference\.of\(telemetry\.getProtocol\(\)\.getSessionId\(\)\)/);
   assert.match(controller, /showRef=/);
   assert.match(controller, /SafeEvidenceReference\.of\(telemetry\.getProviderShowId\(\)\)/);
-  assert.match(player, /PLAYER_STARTED dramaId=/);
+  assert.match(player, /onDJXVideoPlay\(Map<String, Object> extra\)/);
+  assert.match(player, /matchesTargetVideo\(extra\)/);
+  assert.match(player, /playbackEvidenceScope\.playingEvidence\(\)/);
+  assert.match(player, /playbackEvidenceScope\.requestFailureEvidence\(code\)/);
+  assert.match(
+    player,
+    /onDJXRequestFail[\s\S]*?if \(!targetPlaybackLogged[\s\S]*?matchesTargetVideo\(extra\)\)/,
+  );
+  assert.match(playbackEvidence, /PLAYER_PLAYING dramaId=/);
+  assert.match(playbackEvidence, /PLAYER_REQUEST_FAILED dramaId=/);
   assert.match(player, /launchSessionRef/);
   assert.match(player, /launchShowRef/);
   assert.match(contentBridge, /rewardEvidence/);
+  assert.match(page, /const unlockEpisode = currentEpisode\.value/);
+  assert.match(page, /episodeNo:\s*unlockEpisode/);
+  assert.match(page, /grantedEpisodeNos\.includes\(unlockEpisode\)/);
+  assert.match(page, /currentEpisode\.value !== unlockEpisode/);
   assert.match(
     page,
-    /server_verified_reward[\s\S]*?sessionId:\s*result\.status\.sessionId[\s\S]*?providerShowId:\s*result\.status\.providerShowId/,
+    /server_verified_reward[\s\S]*?episodeNo:\s*unlockEpisode[\s\S]*?sessionId:\s*result\.status\.sessionId[\s\S]*?providerShowId:\s*result\.status\.providerShowId[\s\S]*?unlockEpisode/,
   );
 });

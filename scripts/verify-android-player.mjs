@@ -46,6 +46,19 @@ async function runAdb(args) {
   return stdout.trim();
 }
 
+async function readNativeLogs() {
+  return runAdb([
+    'logcat',
+    '-d',
+    '-v',
+    'brief',
+    'SkitPangleDrama:V',
+    'SkitDramaPlayer:V',
+    'SkitTakuAd:V',
+    '*:S',
+  ]);
+}
+
 async function waitFor(getValue, predicate, timeoutMs, intervalMs = 250) {
   const deadline = Date.now() + timeoutMs;
   let lastValue;
@@ -234,6 +247,7 @@ async function main() {
   let evidenceRunId = 0;
   let entitlementsReady = false;
   let rewardClickPerformed = false;
+  let rewardEvidenceDeadline = 0;
   const exportCatalogIndex = process.argv.indexOf('--export-catalog');
   const exportCatalogPath =
     exportCatalogIndex >= 0 ? process.argv[exportCatalogIndex + 1] : null;
@@ -410,11 +424,12 @@ async function main() {
         client,
         expectedLabel,
         verifyRewardChain,
-        verifyRewardChain
-          ? () => {
-              evidenceRunId += 1;
-              memberExchanges.length = 0;
-            }
+            verifyRewardChain
+              ? () => {
+                  evidenceRunId += 1;
+                  memberExchanges.length = 0;
+                  rewardEvidenceDeadline = Date.now() + 240000;
+                }
           : undefined,
       );
       console.log(
@@ -439,24 +454,52 @@ async function main() {
             console.log(`activity=${activity}`);
           }
           return activity;
-        },
-        (value) => value === playerActivity,
-        verifyRewardChain ? 240000 : 12000,
-        verifyRewardChain ? 1000 : 250,
-      );
-    }
+            },
+            (value) => value === playerActivity,
+            verifyRewardChain
+              ? Math.max(1, rewardEvidenceDeadline - Date.now())
+              : 12000,
+            verifyRewardChain ? 1000 : 250,
+          );
+        }
 
-    await Promise.allSettled(responseReads);
-    const nativeLogs = await runAdb([
-      'logcat',
-      '-d',
-      '-v',
-      'brief',
-      'SkitPangleDrama:V',
-      'SkitDramaPlayer:V',
-      'SkitTakuAd:V',
-      '*:S',
-    ]);
+    let nativeLogs = '';
+    let rewardEvidenceResult = null;
+    if (verifyRewardChain && topActivity === playerActivity) {
+      rewardEvidenceResult = await waitFor(
+        async () => {
+          await Promise.allSettled([...responseReads]);
+          const logs = await readNativeLogs();
+          try {
+            const correlation = assertFreshRewardChainEvidence({
+              runId: evidenceRunId,
+              rewardClickPerformed,
+              requestedDrama,
+              requestedEpisode,
+              nativeLogs: logs,
+              exchanges: memberExchanges,
+            });
+            return { state: 'PASSED', nativeLogs: logs, correlation };
+          } catch (error) {
+            const failed = String(error?.message || '').includes(
+              'Target player request failed',
+            );
+            return {
+              state: failed ? 'FAILED' : 'PENDING',
+              nativeLogs: logs,
+              error,
+            };
+          }
+        },
+        (value) => value?.state === 'PASSED' || value?.state === 'FAILED',
+        Math.max(1, rewardEvidenceDeadline - Date.now()),
+        1000,
+      );
+      nativeLogs = rewardEvidenceResult?.nativeLogs || (await readNativeLogs());
+    } else {
+      await Promise.allSettled([...responseReads]);
+      nativeLogs = await readNativeLogs();
+    }
 
     console.log(
       `memberEvidence=${JSON.stringify(
@@ -474,14 +517,16 @@ async function main() {
       throw new Error('DramaPlayerActivity did not start');
     }
     if (verifyRewardChain) {
-      const correlation = assertFreshRewardChainEvidence({
-        runId: evidenceRunId,
-        rewardClickPerformed,
-        requestedDrama,
-        requestedEpisode,
-        nativeLogs,
-        exchanges: memberExchanges,
-      });
+      if (rewardEvidenceResult?.state === 'FAILED') {
+        throw rewardEvidenceResult.error;
+      }
+      if (rewardEvidenceResult?.state !== 'PASSED') {
+        const lastFailure = redact(
+          rewardEvidenceResult?.error?.message || 'no correlated playback evidence',
+        );
+        throw new Error(`Timed out waiting for real DJX video playback: ${lastFailure}`);
+      }
+      const correlation = rewardEvidenceResult.correlation;
       console.log(
         `rewardEvidence=${JSON.stringify({
           session: 'session#1',
@@ -491,7 +536,7 @@ async function main() {
     }
     console.log(
       verifyRewardChain
-        ? 'PASS: Taku reward verification opened the real DramaPlayerActivity'
+        ? 'PASS: Taku reward verification reached real DJX video playback'
         : 'PASS: real drama page opened DramaPlayerActivity',
     );
   } finally {

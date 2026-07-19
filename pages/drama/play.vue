@@ -335,8 +335,15 @@
     return '广告奖励暂不可用，请稍后重试';
   }
 
-  async function playCurrentEpisode(source, rewardEvidence = null) {
+  async function playCurrentEpisode(
+    source,
+    rewardEvidence = null,
+    targetEpisode = currentEpisode.value,
+  ) {
     try {
+      if (!Number.isSafeInteger(targetEpisode) || targetEpisode <= 0) {
+        throw new Error('目标剧集无效');
+      }
       if (!userStore.isLogin) {
         if (source !== 'page_load') {
           uni.navigateTo({
@@ -347,16 +354,19 @@
       }
       const identity = currentIdentity();
       const dramaId = resolveServerDramaId();
-      if (currentEpisode.value > drama.value.freeEpisodes) {
+      if (targetEpisode > drama.value.freeEpisodes) {
         const snapshot = await refreshAuthoritativeEntitlements(identity);
-        if (!snapshot.grantedEpisodeNos.includes(currentEpisode.value)) {
+        if (!snapshot.grantedEpisodeNos.includes(targetEpisode)) {
           activePlaybackEpisode.value = null;
           return;
         }
       }
       const playerGrant = await adSessionOrchestrator.issuePlayerGrant(identity, dramaId);
+      if (currentEpisode.value !== targetEpisode) {
+        return { skipped: true, reason: 'episode-changed' };
+      }
       if (rawCurrentVideoUrl.value) {
-        activePlaybackEpisode.value = currentEpisode.value;
+        activePlaybackEpisode.value = targetEpisode;
         return;
       }
       if (!hasPangleDramaId(drama.value)) {
@@ -365,7 +375,7 @@
 
       return await openPangleDramaPlayer({
         drama: drama.value,
-        episode: currentEpisode.value,
+        episode: targetEpisode,
         source,
         playerGrant,
         rewardEvidence,
@@ -411,27 +421,31 @@
       return;
     }
 
+    const unlockEpisode = currentEpisode.value;
     unlocking.value = true;
     try {
       const identity = currentIdentity();
       const dramaId = resolveServerDramaId();
       const existing = adSessionOrchestrator
         .getPendingSessions(identity)
-        .find((item) => item.dramaId === dramaId && item.episodeNo === currentEpisode.value);
+        .find((item) => item.dramaId === dramaId && item.episodeNo === unlockEpisode);
       let result;
       if (existing) {
         result = await adSessionOrchestrator.pollSession(identity, existing.sessionId);
       } else {
         const created = await adSessionOrchestrator.createSession(identity, {
           dramaId,
-          episodeNo: currentEpisode.value,
+          episodeNo: unlockEpisode,
         });
         if (created.outcome === 'ALREADY_ENTITLED') {
           const snapshot = await refreshAuthoritativeEntitlements(identity);
-          if (!snapshot.grantedEpisodeNos.includes(currentEpisode.value)) {
+          if (!snapshot.grantedEpisodeNos.includes(unlockEpisode)) {
             throw new Error('服务端权益尚未同步，请稍后重试');
           }
-          await playCurrentEpisode('server_entitled');
+          if (currentEpisode.value !== unlockEpisode) {
+            return;
+          }
+          await playCurrentEpisode('server_entitled', null, unlockEpisode);
           return;
         }
         if (!created.requiresVerificationPoll) {
@@ -452,14 +466,20 @@
       }
 
       if (result.resolution === 'GRANTED') {
+        if (!result.entitlements.grantedEpisodeNos.includes(unlockEpisode)) {
+          throw new Error('目标剧集尚未获得服务端权益');
+        }
         grantedEpisodeNos.value = result.entitlements.grantedEpisodeNos;
-        uni.showToast({ title: `已解锁第${currentEpisode.value}集`, icon: 'none' });
+        uni.showToast({ title: `已解锁第${unlockEpisode}集`, icon: 'none' });
+        if (currentEpisode.value !== unlockEpisode) {
+          return;
+        }
         await playCurrentEpisode('server_verified_reward', {
           dramaId,
-          episodeNo: currentEpisode.value,
+          episodeNo: unlockEpisode,
           sessionId: result.status.sessionId,
           providerShowId: result.status.providerShowId,
-        });
+        }, unlockEpisode);
       } else if (result.resolution === 'VERIFYING') {
         uni.showToast({ title: '奖励确认中，可稍后返回查看', icon: 'none' });
       } else {

@@ -33,6 +33,7 @@ import top.neoshen.xingheyingguan.ad.AdSessionProtocol;
 import top.neoshen.xingheyingguan.ad.NativeEpisodeUnlockPolicy;
 import top.neoshen.xingheyingguan.ad.NativePlayerGrant;
 import top.neoshen.xingheyingguan.ad.NativeRewardGate;
+import top.neoshen.xingheyingguan.ad.PlaybackEvidenceScope;
 import top.neoshen.xingheyingguan.ad.TakuNativeState;
 import top.neoshen.xingheyingguan.ad.TakuSessionStateMachine;
 import top.neoshen.xingheyingguan.ad.TakuTelemetry;
@@ -52,6 +53,8 @@ public class DramaPlayerActivity extends Activity {
     private int initialEpisode;
     private String launchSessionRef;
     private String launchShowRef;
+    private PlaybackEvidenceScope playbackEvidenceScope;
+    private boolean targetPlaybackLogged;
     private boolean destroyed;
     private final NativeEpisodeUnlockPolicy unlockPolicy = new NativeEpisodeUnlockPolicy();
     private IDJXDramaUnlockListener.CustomAdCallback activeUnlockCallback;
@@ -87,6 +90,8 @@ public class DramaPlayerActivity extends Activity {
             if ("<none>".equals(launchSessionRef) != "<none>".equals(launchShowRef)) {
                 throw new IllegalArgumentException("Incomplete launch evidence reference");
             }
+            playbackEvidenceScope = new PlaybackEvidenceScope(
+                    dramaId, initialEpisode, launchSessionRef, launchShowRef);
             playerGrant = readPlayerGrant();
             playerGrant.requireDrama(dramaId);
             nativeApiClient = new SkitNativeApiClient(this, playerGrant);
@@ -137,9 +142,21 @@ public class DramaPlayerActivity extends Activity {
                     }
 
                     @Override
+                    public void onDJXVideoPlay(Map<String, Object> extra) {
+                        if (!targetPlaybackLogged
+                                && playbackEvidenceScope.matchesTargetVideo(extra)) {
+                            targetPlaybackLogged = true;
+                            Log.i(TAG, playbackEvidenceScope.playingEvidence());
+                        }
+                    }
+
+                    @Override
                     public void onDJXRequestFail(int code, String message,
                                                  Map<String, Object> extra) {
-                        Log.w(TAG, "DJX request failed code=" + code);
+                        if (!targetPlaybackLogged
+                                && playbackEvidenceScope.matchesTargetVideo(extra)) {
+                            Log.w(TAG, playbackEvidenceScope.requestFailureEvidence(code));
+                        }
                     }
                 });
 
@@ -152,10 +169,6 @@ public class DramaPlayerActivity extends Activity {
                 .replace(root.getId(), fragment, String.valueOf(root.getId()))
                 .commit();
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        Log.i(TAG, "PLAYER_STARTED dramaId=" + dramaId
-                + " episode=" + initialEpisode
-                + " sessionRef=" + launchSessionRef
-                + " showRef=" + launchShowRef);
     }
 
     private String readEvidenceReference(String key) {

@@ -40,7 +40,7 @@ function validEvidence() {
       `TAKU_TELEMETRY state=SHOWING callbackSequence=2 rewardObserved=false closed=false sessionRef=${sessionRef} showRef=${providerShowRef}`,
       `TAKU_TELEMETRY state=SHOWING callbackSequence=3 rewardObserved=true closed=false sessionRef=${sessionRef} showRef=${providerShowRef}`,
       `TAKU_TELEMETRY state=CLOSED callbackSequence=4 rewardObserved=true closed=true sessionRef=${sessionRef} showRef=${providerShowRef}`,
-      `PLAYER_STARTED dramaId=3474 episode=1 sessionRef=${sessionRef} showRef=${providerShowRef}`,
+      `PLAYER_PLAYING dramaId=3474 episode=1 sessionRef=${sessionRef} showRef=${providerShowRef}`,
     ].join('\n'),
     exchanges: [
       exchange(
@@ -177,10 +177,21 @@ test('rejects evidence assembled from the wrong run, content scope, or provider 
 
   const wrongPlayerEpisode = validEvidence();
   wrongPlayerEpisode.nativeLogs = wrongPlayerEpisode.nativeLogs.replace(
-    'PLAYER_STARTED dramaId=3474 episode=1',
-    'PLAYER_STARTED dramaId=3474 episode=2',
+    'PLAYER_PLAYING dramaId=3474 episode=1',
+    'PLAYER_PLAYING dramaId=3474 episode=2',
   );
   assert.throws(() => assertFreshRewardChainEvidence(wrongPlayerEpisode), /player|episode/i);
+
+  const failedPlayerRequest = validEvidence();
+  failedPlayerRequest.nativeLogs = failedPlayerRequest.nativeLogs.replace(
+    `PLAYER_PLAYING dramaId=3474 episode=1 sessionRef=${sessionRef} showRef=${providerShowRef}`,
+    `PLAYER_REQUEST_FAILED dramaId=3474 episode=1 sessionRef=${sessionRef} showRef=${providerShowRef} code=-3\n`
+      + `PLAYER_PLAYING dramaId=3474 episode=1 sessionRef=${sessionRef} showRef=${providerShowRef}`,
+  );
+  assert.throws(
+    () => assertFreshRewardChainEvidence(failedPlayerRequest),
+    /player request|failed/i,
+  );
 });
 
 test('diagnostics use stable aliases and omit raw identifiers and response messages', () => {
