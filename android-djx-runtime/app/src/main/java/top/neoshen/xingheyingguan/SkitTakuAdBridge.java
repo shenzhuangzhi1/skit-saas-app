@@ -67,7 +67,7 @@ public class SkitTakuAdBridge {
             protocol = parseProtocol(payload);
             showRewardedVideo(id, protocol);
         } catch (Throwable error) {
-            Log.w(TAG, "Rejected invalid Taku bridge message", error);
+            logInternalFailure("bridge-message", error);
             if (callbackId != null) {
                 emitTerminalError(callbackId, protocol);
             }
@@ -93,7 +93,7 @@ public class SkitTakuAdBridge {
             if (id.equals(pendingCallbackId)) {
                 pendingCallbackId = null;
             }
-            Log.w(TAG, "Taku startup failed", error);
+            logInternalFailure("startup", error);
             emitTerminalError(id, protocol);
         }
     }
@@ -106,7 +106,7 @@ public class SkitTakuAdBridge {
                         protocol, "native-" + protocol.getSessionId());
                 result = telemetryJson(machine.failed(null, null, null));
             } catch (Throwable invalidFailure) {
-                Log.w(TAG, "Unable to create strict Taku terminal telemetry", invalidFailure);
+                logInternalFailure("terminal-telemetry", invalidFailure);
             }
         }
         if (result.length() == 0) {
@@ -171,5 +171,13 @@ public class SkitTakuAdBridge {
             object.put(key, value == null ? JSONObject.NULL : value);
         } catch (Throwable ignored) {
         }
+    }
+
+    private static void logInternalFailure(String stage, Throwable error) {
+        String type = error == null ? "<none>" : error.getClass().getSimpleName();
+        if (!type.matches("[A-Za-z0-9_$]{1,64}")) {
+            type = "<invalid>";
+        }
+        Log.w(TAG, "Taku " + stage + " failed: type=" + type);
     }
 }

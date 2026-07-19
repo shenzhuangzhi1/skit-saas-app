@@ -50,6 +50,8 @@ public class DramaPlayerActivity extends Activity {
     private FrameLayout root;
     private long dramaId;
     private int initialEpisode;
+    private String launchSessionRef;
+    private String launchShowRef;
     private boolean destroyed;
     private final NativeEpisodeUnlockPolicy unlockPolicy = new NativeEpisodeUnlockPolicy();
     private IDJXDramaUnlockListener.CustomAdCallback activeUnlockCallback;
@@ -80,6 +82,11 @@ public class DramaPlayerActivity extends Activity {
             return;
         }
         try {
+            launchSessionRef = readEvidenceReference("rewardSessionRef");
+            launchShowRef = readEvidenceReference("rewardShowRef");
+            if ("<none>".equals(launchSessionRef) != "<none>".equals(launchShowRef)) {
+                throw new IllegalArgumentException("Incomplete launch evidence reference");
+            }
             playerGrant = readPlayerGrant();
             playerGrant.requireDrama(dramaId);
             nativeApiClient = new SkitNativeApiClient(this, playerGrant);
@@ -145,6 +152,21 @@ public class DramaPlayerActivity extends Activity {
                 .replace(root.getId(), fragment, String.valueOf(root.getId()))
                 .commit();
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        Log.i(TAG, "PLAYER_STARTED dramaId=" + dramaId
+                + " episode=" + initialEpisode
+                + " sessionRef=" + launchSessionRef
+                + " showRef=" + launchShowRef);
+    }
+
+    private String readEvidenceReference(String key) {
+        String value = getIntent().getStringExtra(key);
+        if (value == null) {
+            return "<none>";
+        }
+        if (!value.matches("[0-9a-f]{12}")) {
+            throw new IllegalArgumentException("Invalid launch evidence reference");
+        }
+        return value;
     }
 
     private IDJXDramaUnlockListener createUnlockListener(long fallbackDramaId) {

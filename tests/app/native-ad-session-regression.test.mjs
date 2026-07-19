@@ -95,6 +95,11 @@ test('reward-chain verifier delegates to structured evidence correlation', () =>
   const controller = read(
     'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/TakuRewardedAdController.java',
   );
+  const player = read(
+    'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/DramaPlayerActivity.java',
+  );
+  const contentBridge = read('pages/drama/services/pangle-content.js');
+  const page = read('pages/drama/play.vue');
 
   assert.match(verifier, /const initialTopActivity = await getTopActivity\(\)/);
   assert.match(
@@ -107,6 +112,16 @@ test('reward-chain verifier delegates to structured evidence correlation', () =>
   assert.match(verifier, /evidenceRunId/);
   assert.match(verifier, /memberExchanges/);
   assert.match(controller, /TAKU_TELEMETRY state=/);
+  assert.match(controller, /sessionRef=/);
+  assert.match(controller, /SafeEvidenceReference\.of\(telemetry\.getProtocol\(\)\.getSessionId\(\)\)/);
   assert.match(controller, /showRef=/);
-  assert.match(controller, /showReference\(telemetry\.getProviderShowId\(\)\)/);
+  assert.match(controller, /SafeEvidenceReference\.of\(telemetry\.getProviderShowId\(\)\)/);
+  assert.match(player, /PLAYER_STARTED dramaId=/);
+  assert.match(player, /launchSessionRef/);
+  assert.match(player, /launchShowRef/);
+  assert.match(contentBridge, /rewardEvidence/);
+  assert.match(
+    page,
+    /server_verified_reward[\s\S]*?sessionId:\s*result\.status\.sessionId[\s\S]*?providerShowId:\s*result\.status\.providerShowId/,
+  );
 });

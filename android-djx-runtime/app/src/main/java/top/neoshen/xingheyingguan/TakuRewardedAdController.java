@@ -13,13 +13,11 @@ import com.anythink.core.api.AdError;
 import com.anythink.rewardvideo.api.ATRewardVideoAd;
 import com.anythink.rewardvideo.api.ATRewardVideoListener;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.HashMap;
 import java.util.Map;
 
 import top.neoshen.xingheyingguan.ad.AdSessionProtocol;
+import top.neoshen.xingheyingguan.ad.SafeEvidenceReference;
 import top.neoshen.xingheyingguan.ad.TakuSessionStateMachine;
 import top.neoshen.xingheyingguan.ad.TakuTelemetry;
 
@@ -29,7 +27,6 @@ final class TakuRewardedAdController {
     static final String APP_KEY = BuildConfig.TAKU_APP_KEY;
 
     private static final String TAG = "SkitTakuAd";
-    private static final char[] HEX = "0123456789abcdef".toCharArray();
     private static boolean initialized;
 
     interface EventListener {
@@ -63,7 +60,7 @@ final class TakuRewardedAdController {
         try {
             ATSDK.start();
         } catch (Throwable error) {
-            Log.w(TAG, "Taku SDK start failed", error);
+            logInternalFailure("sdk-start", error);
         }
         initialized = true;
         Log.i(TAG, "Taku SDK initialized: " + ATSDK.getSDKVersionName());
@@ -98,7 +95,7 @@ final class TakuRewardedAdController {
         try {
             ad.load(activity);
         } catch (Throwable error) {
-            Log.w(TAG, "Taku load failed", error);
+            logInternalFailure("load-start", error);
             fail(session, ad, null);
         }
     }
@@ -127,7 +124,7 @@ final class TakuRewardedAdController {
                             .build();
                     ad.show(activity, showConfig);
                 } catch (Throwable error) {
-                    Log.w(TAG, "Taku show failed", error);
+                    logInternalFailure("show-start", error);
                     fail(session, ad, null);
                 }
             }
@@ -147,7 +144,7 @@ final class TakuRewardedAdController {
                     emit(session, session.machine.showing(
                             showId(adInfo), networkFirmId(adInfo), adsourceId(adInfo)));
                 } catch (Throwable invalidCallback) {
-                    Log.w(TAG, "Taku play-start identity rejected", invalidCallback);
+                    logInternalFailure("play-start-identity", invalidCallback);
                     fail(session, ad, adInfo);
                 }
             }
@@ -173,7 +170,7 @@ final class TakuRewardedAdController {
                             showId(adInfo), networkFirmId(adInfo), adsourceId(adInfo));
                     emit(session, telemetry);
                 } catch (Throwable invalidCallback) {
-                    Log.w(TAG, "Taku close identity rejected", invalidCallback);
+                    logInternalFailure("close-identity", invalidCallback);
                     fail(session, ad, adInfo);
                     return;
                 }
@@ -194,7 +191,7 @@ final class TakuRewardedAdController {
                     emit(session, session.machine.rewardObserved(
                             showId(adInfo), networkFirmId(adInfo), adsourceId(adInfo)));
                 } catch (Throwable invalidCallback) {
-                    Log.w(TAG, "Taku reward identity rejected", invalidCallback);
+                    logInternalFailure("reward-identity", invalidCallback);
                     fail(session, ad, adInfo);
                 }
             }
@@ -212,7 +209,7 @@ final class TakuRewardedAdController {
                 throw new IllegalStateException("Provider show ID changed");
             }
         } catch (Throwable invalidCallback) {
-            Log.w(TAG, "Taku " + callback + " identity rejected", invalidCallback);
+            logInternalFailure(callback + "-identity", invalidCallback);
             fail(session, ad, adInfo);
         }
     }
@@ -229,7 +226,9 @@ final class TakuRewardedAdController {
                 + " callbackSequence=" + telemetry.getCallbackSequence()
                 + " rewardObserved=" + telemetry.isClientRewardObserved()
                 + " closed=" + telemetry.isClosed()
-                + " showRef=" + showReference(telemetry.getProviderShowId()));
+                + " sessionRef="
+                + SafeEvidenceReference.of(telemetry.getProtocol().getSessionId())
+                + " showRef=" + SafeEvidenceReference.of(telemetry.getProviderShowId()));
         session.listener.onTelemetry(telemetry);
     }
 
@@ -247,7 +246,7 @@ final class TakuRewardedAdController {
             }
             emit(session, failure);
         } catch (Throwable ignored) {
-            Log.w(TAG, "Taku terminal failure callback was rejected", ignored);
+            logInternalFailure("terminal-callback", ignored);
         } finally {
             release(session, ad);
         }
@@ -316,24 +315,16 @@ final class TakuRewardedAdController {
         return value.matches("[A-Za-z0-9._-]{1,64}") ? value : "<invalid>";
     }
 
-    private static String showReference(String providerShowId) {
-        if (providerShowId == null) {
+    private static void logInternalFailure(String stage, Throwable error) {
+        Log.w(TAG, "Taku " + stage + " failed: type=" + safeThrowableType(error));
+    }
+
+    private static String safeThrowableType(Throwable error) {
+        if (error == null) {
             return "<none>";
         }
-        final byte[] digest;
-        try {
-            digest = MessageDigest.getInstance("SHA-256")
-                    .digest(providerShowId.getBytes(StandardCharsets.UTF_8));
-        } catch (NoSuchAlgorithmException unavailable) {
-            throw new IllegalStateException("SHA-256 is unavailable", unavailable);
-        }
-        char[] reference = new char[12];
-        for (int index = 0; index < 6; index += 1) {
-            int value = digest[index] & 0xff;
-            reference[index * 2] = HEX[value >>> 4];
-            reference[index * 2 + 1] = HEX[value & 0x0f];
-        }
-        return new String(reference);
+        String type = error.getClass().getSimpleName();
+        return type.matches("[A-Za-z0-9_$]{1,64}") ? type : "<invalid>";
     }
 
     private static final class ActiveSession {

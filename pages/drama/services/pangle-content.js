@@ -4,6 +4,8 @@ import { cacheExternalDramas } from '@/pages/drama/data';
 const PANGLE_PLUGIN_NAME = 'SkitPangleDrama';
 const DEFAULT_SETTING_FILE = import.meta.env?.VITE_PANGLE_DRAMA_SETTING_FILE || 'SDK_Setting.json';
 const DEFAULT_PAGE_SIZE = Number(import.meta.env?.VITE_PANGLE_DRAMA_PAGE_SIZE || 24);
+const SESSION_PATTERN = /^[A-Za-z0-9_-]{22}$/;
+const SAFE_PROVIDER_SHOW_PATTERN = /^[A-Za-z0-9._:/-]{1,128}$/;
 let startPromise;
 
 export function isPangleContentReady() {
@@ -104,6 +106,25 @@ function normalizePlayerGrant(playerGrant, dramaId) {
   };
 }
 
+function normalizeRewardEvidence(rewardEvidence, dramaId, episode) {
+  if (rewardEvidence == null) {
+    return null;
+  }
+  const evidenceDramaId = getPositiveInteger(rewardEvidence.dramaId);
+  const evidenceEpisode = getPositiveInteger(rewardEvidence.episodeNo);
+  const sessionId = String(rewardEvidence.sessionId || '');
+  const providerShowId = String(rewardEvidence.providerShowId || '');
+  if (
+    evidenceDramaId !== dramaId ||
+    evidenceEpisode !== episode ||
+    !SESSION_PATTERN.test(sessionId) ||
+    !SAFE_PROVIDER_SHOW_PATTERN.test(providerShowId)
+  ) {
+    throw new Error('服务端奖励播放证据无效');
+  }
+  return { dramaId, episodeNo: episode, sessionId, providerShowId };
+}
+
 export function hasPangleDramaId(drama = {}) {
   return getPositiveDramaId(drama) !== null;
 }
@@ -164,16 +185,19 @@ export async function openPangleDramaPlayer(options = {}) {
     return { skipped: true, reason: 'pangle-drama-id-missing' };
   }
   const playerGrant = normalizePlayerGrant(options.playerGrant, dramaId);
+  const episode = getPositiveInteger(options.episode) || 1;
+  const rewardEvidence = normalizeRewardEvidence(options.rewardEvidence, dramaId, episode);
   return callNativeMethod(
     plugin,
     'openPlayer',
     {
       dramaId,
-      episode: options.episode || 1,
+      episode,
       progress: options.progress || 0,
       source: options.source || 'drama_page',
       settingFile: options.settingFile || DEFAULT_SETTING_FILE,
       playerGrant,
+      ...(rewardEvidence ? { rewardEvidence } : {}),
     },
     { timeoutMs: 10000 },
   );

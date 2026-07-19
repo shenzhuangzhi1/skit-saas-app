@@ -161,6 +161,7 @@ export function assertFreshRewardChainEvidence({
     throw new Error('Same-session signed reward, entitlement, and provider show evidence is missing');
   }
 
+  const sessionRef = showReference(sessionId);
   const providerShowRef = verified.response.providerShowRef;
   const clientShow = current.find(
     (exchange) =>
@@ -176,11 +177,12 @@ export function assertFreshRewardChainEvidence({
   }
 
   const requiredNativeEvidence = [
-    'TAKU_TELEMETRY state=LOADING callbackSequence=0 rewardObserved=false closed=false showRef=<none>',
-    'TAKU_TELEMETRY state=LOADED callbackSequence=1 rewardObserved=false closed=false showRef=<none>',
-    `TAKU_TELEMETRY state=SHOWING callbackSequence=2 rewardObserved=false closed=false showRef=${providerShowRef}`,
-    `TAKU_TELEMETRY state=SHOWING callbackSequence=3 rewardObserved=true closed=false showRef=${providerShowRef}`,
-    `TAKU_TELEMETRY state=CLOSED callbackSequence=4 rewardObserved=true closed=true showRef=${providerShowRef}`,
+    `TAKU_TELEMETRY state=LOADING callbackSequence=0 rewardObserved=false closed=false sessionRef=${sessionRef} showRef=<none>`,
+    `TAKU_TELEMETRY state=LOADED callbackSequence=1 rewardObserved=false closed=false sessionRef=${sessionRef} showRef=<none>`,
+    `TAKU_TELEMETRY state=SHOWING callbackSequence=2 rewardObserved=false closed=false sessionRef=${sessionRef} showRef=${providerShowRef}`,
+    `TAKU_TELEMETRY state=SHOWING callbackSequence=3 rewardObserved=true closed=false sessionRef=${sessionRef} showRef=${providerShowRef}`,
+    `TAKU_TELEMETRY state=CLOSED callbackSequence=4 rewardObserved=true closed=true sessionRef=${sessionRef} showRef=${providerShowRef}`,
+    `PLAYER_STARTED dramaId=${requestedDrama} episode=${requestedEpisode} sessionRef=${sessionRef} showRef=${providerShowRef}`,
   ];
   let cursor = 0;
   for (const evidence of requiredNativeEvidence) {
@@ -219,7 +221,7 @@ export function assertFreshRewardChainEvidence({
     throw new Error('Fresh drama-bound player grant evidence is missing');
   }
 
-  return { sessionId, providerShowRef };
+  return { sessionId, sessionRef, providerShowRef };
 }
 
 export function toSafeEvidenceLog(exchanges) {

@@ -246,6 +246,7 @@ public class MainActivity extends Activity {
         private final AssetManager assets;
         private final String root;
         private final File updateRoot;
+        private final int preferredPort;
         private final Set<Socket> activeConnections =
                 Collections.newSetFromMap(new ConcurrentHashMap<Socket, Boolean>());
         private final ThreadPoolExecutor requestExecutor;
@@ -254,9 +255,17 @@ public class MainActivity extends Activity {
         private Thread thread;
 
         LocalAssetServer(AssetManager assets, String root, File updateRoot) {
+            this(assets, root, updateRoot, ASSET_PORT);
+        }
+
+        LocalAssetServer(AssetManager assets, String root, File updateRoot, int preferredPort) {
+            if (preferredPort <= 0 || preferredPort > 65_535) {
+                throw new IllegalArgumentException("preferredPort is invalid");
+            }
             this.assets = assets;
             this.root = root;
             this.updateRoot = updateRoot;
+            this.preferredPort = preferredPort;
             AtomicInteger workerNumber = new AtomicInteger();
             requestExecutor = new ThreadPoolExecutor(
                     REQUEST_WORKER_COUNT,
@@ -301,14 +310,24 @@ public class MainActivity extends Activity {
             ServerSocket socket = new ServerSocket();
             socket.setReuseAddress(true);
             try {
-                socket.bind(new InetSocketAddress(ASSET_HOST, ASSET_PORT));
+                socket.bind(new InetSocketAddress(ASSET_HOST, preferredPort));
                 return socket;
             } catch (IOException fixedPortError) {
                 socket.close();
                 ServerSocket fallback = new ServerSocket();
                 fallback.bind(new InetSocketAddress(ASSET_HOST, 0));
-                Log.w(TAG, "Stable asset port unavailable; local state will be session-only", fixedPortError);
+                logPortFallback(fixedPortError);
                 return fallback;
+            }
+        }
+
+        private void logPortFallback(IOException fixedPortError) {
+            try {
+                Log.w(TAG,
+                        "Stable asset port unavailable; local state will be session-only",
+                        fixedPortError);
+            } catch (RuntimeException unavailableInLocalUnitTests) {
+                // Android's local-unit-test stub throws here; logging must not break fallback.
             }
         }
 

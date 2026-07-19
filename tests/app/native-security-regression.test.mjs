@@ -55,10 +55,16 @@ test('Taku ADX debugger mode is debug-only and cannot enter a release build', ()
 
 test('Taku SDK failures expose codes but never provider descriptions in production logs', () => {
   const source = read(controllerPath);
+  const bridge = read(
+    'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/SkitTakuAdBridge.java',
+  );
   assert.match(source, /error\.getCode\(\)/);
   assert.match(source, /error\.getPlatformCode\(\)/);
   assert.doesNotMatch(source, /error\.getDesc\(\)/);
   assert.doesNotMatch(source, /error\.getPlatformMSG\(\)/);
+  const throwableSink = /Log\.w\([^;]+,\s*(?:error|invalidCallback|ignored|invalidFailure)\s*\);/;
+  assert.doesNotMatch(source, throwableSink);
+  assert.doesNotMatch(bridge, throwableSink);
 });
 
 test('network security keeps production HTTPS-only while debug permits local API hosts', () => {

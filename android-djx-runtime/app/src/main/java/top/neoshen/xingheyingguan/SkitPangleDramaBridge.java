@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import top.neoshen.xingheyingguan.ad.NativePlayerGrant;
+import top.neoshen.xingheyingguan.ad.SafeEvidenceReference;
 
 public class SkitPangleDramaBridge {
     private static final String TAG = "SkitPangleDrama";
@@ -132,16 +133,28 @@ public class SkitPangleDramaBridge {
                             resolve(id, fail(-6, "Invalid Pangle dramaId"));
                             return;
                         }
+                        int episode = args.optInt("episode", 1);
+                        if (episode <= 0) {
+                            resolve(id, fail(-6, "Invalid Pangle episode"));
+                            return;
+                        }
                         NativePlayerGrant playerGrant = parsePlayerGrant(
                                 args.optJSONObject("playerGrant"), dramaId);
+                        RewardEvidenceRefs rewardEvidence = parseRewardEvidence(
+                                args.optJSONObject("rewardEvidence"),
+                                dramaId,
+                                episode,
+                                "server_verified_reward".equals(args.optString("source", "")));
                         Intent intent = new Intent(activity, DramaPlayerActivity.class);
                         intent.putExtra("dramaId", dramaId);
-                        intent.putExtra("episode", args.optInt("episode", 1));
+                        intent.putExtra("episode", episode);
                         intent.putExtra("progress", args.optInt("progress", 0));
                         intent.putExtra("playerGrantId", playerGrant.getGrantId());
                         intent.putExtra("playerGrantDramaId", playerGrant.getDramaId());
                         intent.putExtra("playerGrantToken", playerGrant.getGrantToken());
                         intent.putExtra("playerGrantExpiresAt", playerGrant.getExpiresAtEpochMillis());
+                        intent.putExtra("rewardSessionRef", rewardEvidence.sessionRef);
+                        intent.putExtra("rewardShowRef", rewardEvidence.showRef);
                         activity.startActivity(intent);
                         JSONObject result = ok();
                         put(result, "opened", true);
@@ -379,6 +392,43 @@ public class SkitPangleDramaBridge {
                 expiresAt, System.currentTimeMillis());
         grant.requireDrama(expectedDramaId);
         return grant;
+    }
+
+    private static RewardEvidenceRefs parseRewardEvidence(JSONObject value, long expectedDramaId,
+                                                           int expectedEpisode,
+                                                           boolean required) {
+        if (value == null) {
+            if (required) {
+                throw new IllegalArgumentException("Server reward evidence is required");
+            }
+            return new RewardEvidenceRefs("<none>", "<none>");
+        }
+        if (value.length() != 4 || !value.has("dramaId") || !value.has("episodeNo")
+                || !value.has("sessionId") || !value.has("providerShowId")) {
+            throw new IllegalArgumentException("Server reward evidence is incomplete");
+        }
+        long dramaId = optLong(value, "dramaId", 0L);
+        int episodeNo = value.optInt("episodeNo", 0);
+        String sessionId = value.optString("sessionId", "");
+        String providerShowId = value.optString("providerShowId", "");
+        if (dramaId != expectedDramaId || episodeNo != expectedEpisode
+                || !sessionId.matches("[A-Za-z0-9_-]{22}")
+                || !providerShowId.matches("[A-Za-z0-9._:/-]{1,128}")) {
+            throw new IllegalArgumentException("Server reward evidence scope is invalid");
+        }
+        return new RewardEvidenceRefs(
+                SafeEvidenceReference.of(sessionId),
+                SafeEvidenceReference.of(providerShowId));
+    }
+
+    private static final class RewardEvidenceRefs {
+        private final String sessionRef;
+        private final String showRef;
+
+        private RewardEvidenceRefs(String sessionRef, String showRef) {
+            this.sessionRef = sessionRef;
+            this.showRef = showRef;
+        }
     }
 
     private static void put(JSONObject object, String key, Object value) {

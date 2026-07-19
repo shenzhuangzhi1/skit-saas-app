@@ -335,7 +335,7 @@
     return '广告奖励暂不可用，请稍后重试';
   }
 
-  async function playCurrentEpisode(source) {
+  async function playCurrentEpisode(source, rewardEvidence = null) {
     try {
       if (!userStore.isLogin) {
         if (source !== 'page_load') {
@@ -368,6 +368,7 @@
         episode: currentEpisode.value,
         source,
         playerGrant,
+        rewardEvidence,
       });
     } catch (error) {
       console.warn('[drama] protected player open failed:', error?.message || error);
@@ -453,7 +454,12 @@
       if (result.resolution === 'GRANTED') {
         grantedEpisodeNos.value = result.entitlements.grantedEpisodeNos;
         uni.showToast({ title: `已解锁第${currentEpisode.value}集`, icon: 'none' });
-        await playCurrentEpisode('server_verified_reward');
+        await playCurrentEpisode('server_verified_reward', {
+          dramaId,
+          episodeNo: currentEpisode.value,
+          sessionId: result.status.sessionId,
+          providerShowId: result.status.providerShowId,
+        });
       } else if (result.resolution === 'VERIFYING') {
         uni.showToast({ title: '奖励确认中，可稍后返回查看', icon: 'none' });
       } else {

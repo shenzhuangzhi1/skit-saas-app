@@ -11,6 +11,7 @@ import {
 
 const apiBase = 'https://api.example.test/app-api/skit/member';
 const sessionId = 'abcdefghijklmnopqrstuv';
+const sessionRef = showReference(sessionId);
 const providerShowId = 'taku-show-20260719';
 const providerShowRef = showReference(providerShowId);
 
@@ -34,11 +35,12 @@ function validEvidence() {
     requestedDrama: 3474,
     requestedEpisode: 1,
     nativeLogs: [
-      'TAKU_TELEMETRY state=LOADING callbackSequence=0 rewardObserved=false closed=false showRef=<none>',
-      'TAKU_TELEMETRY state=LOADED callbackSequence=1 rewardObserved=false closed=false showRef=<none>',
-      `TAKU_TELEMETRY state=SHOWING callbackSequence=2 rewardObserved=false closed=false showRef=${providerShowRef}`,
-      `TAKU_TELEMETRY state=SHOWING callbackSequence=3 rewardObserved=true closed=false showRef=${providerShowRef}`,
-      `TAKU_TELEMETRY state=CLOSED callbackSequence=4 rewardObserved=true closed=true showRef=${providerShowRef}`,
+      `TAKU_TELEMETRY state=LOADING callbackSequence=0 rewardObserved=false closed=false sessionRef=${sessionRef} showRef=<none>`,
+      `TAKU_TELEMETRY state=LOADED callbackSequence=1 rewardObserved=false closed=false sessionRef=${sessionRef} showRef=<none>`,
+      `TAKU_TELEMETRY state=SHOWING callbackSequence=2 rewardObserved=false closed=false sessionRef=${sessionRef} showRef=${providerShowRef}`,
+      `TAKU_TELEMETRY state=SHOWING callbackSequence=3 rewardObserved=true closed=false sessionRef=${sessionRef} showRef=${providerShowRef}`,
+      `TAKU_TELEMETRY state=CLOSED callbackSequence=4 rewardObserved=true closed=true sessionRef=${sessionRef} showRef=${providerShowRef}`,
+      `PLAYER_STARTED dramaId=3474 episode=1 sessionRef=${sessionRef} showRef=${providerShowRef}`,
     ].join('\n'),
     exchanges: [
       exchange(
@@ -160,6 +162,25 @@ test('rejects evidence assembled from the wrong run, content scope, or provider 
   const wrongGrantDrama = validEvidence();
   wrongGrantDrama.exchanges[4].request.dramaId = 999;
   assert.throws(() => assertFreshRewardChainEvidence(wrongGrantDrama), /grant/i);
+
+  const crossSessionNativePrefix = validEvidence();
+  const otherSessionRef = showReference('zyxwvutsrqponmlkjihgfe');
+  crossSessionNativePrefix.nativeLogs = crossSessionNativePrefix.nativeLogs
+    .replace(`state=LOADING callbackSequence=0 rewardObserved=false closed=false sessionRef=${sessionRef}`,
+      `state=LOADING callbackSequence=0 rewardObserved=false closed=false sessionRef=${otherSessionRef}`)
+    .replace(`state=LOADED callbackSequence=1 rewardObserved=false closed=false sessionRef=${sessionRef}`,
+      `state=LOADED callbackSequence=1 rewardObserved=false closed=false sessionRef=${otherSessionRef}`);
+  assert.throws(
+    () => assertFreshRewardChainEvidence(crossSessionNativePrefix),
+    /native|session/i,
+  );
+
+  const wrongPlayerEpisode = validEvidence();
+  wrongPlayerEpisode.nativeLogs = wrongPlayerEpisode.nativeLogs.replace(
+    'PLAYER_STARTED dramaId=3474 episode=1',
+    'PLAYER_STARTED dramaId=3474 episode=2',
+  );
+  assert.throws(() => assertFreshRewardChainEvidence(wrongPlayerEpisode), /player|episode/i);
 });
 
 test('diagnostics use stable aliases and omit raw identifiers and response messages', () => {

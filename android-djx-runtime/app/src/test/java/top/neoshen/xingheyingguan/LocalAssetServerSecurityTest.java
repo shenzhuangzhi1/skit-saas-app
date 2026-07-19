@@ -14,7 +14,9 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketException;
 import java.net.SocketTimeoutException;
@@ -70,6 +72,22 @@ public class LocalAssetServerSecurityTest {
 
         assertTrue("the server read deadline must be shorter than the client guard",
                 elapsedMillis < 2_900L);
+    }
+
+    @Test
+    public void occupiedPreferredPortFallsBackToAnEphemeralLoopbackPort() throws Exception {
+        try (ServerSocket occupied = new ServerSocket(
+                0, 1, InetAddress.getByName("127.0.0.1"))) {
+            URI baseUrl = startServer(0, occupied.getLocalPort());
+
+            assertEquals("127.0.0.1", baseUrl.getHost());
+            assertTrue(baseUrl.getPort() > 0);
+            assertTrue(baseUrl.getPort() != occupied.getLocalPort());
+            String responseHead = exchange(
+                    baseUrl,
+                    "GET /index.html HTTP/1.1\r\nHost: localhost\r\n\r\n");
+            assertTrue(responseHead, responseHead.startsWith("HTTP/1.1 200 "));
+        }
     }
 
     @Test
@@ -180,6 +198,10 @@ public class LocalAssetServerSecurityTest {
     }
 
     private URI startServer(int largeAssetBytes) throws Exception {
+        return startServer(largeAssetBytes, null);
+    }
+
+    private URI startServer(int largeAssetBytes, Integer preferredPort) throws Exception {
         temporaryFolder.create();
         File updateRoot = temporaryFolder.newFolder("www-update");
         try (FileOutputStream output = new FileOutputStream(new File(updateRoot, "index.html"))) {
@@ -199,10 +221,19 @@ public class LocalAssetServerSecurityTest {
 
         Class<?> serverType = Class.forName(
                 "top.neoshen.xingheyingguan.MainActivity$LocalAssetServer");
-        Constructor<?> constructor = serverType.getDeclaredConstructor(
-                AssetManager.class, String.class, File.class);
-        constructor.setAccessible(true);
-        Object instance = constructor.newInstance(null, "www", updateRoot);
+        Constructor<?> constructor;
+        Object instance;
+        if (preferredPort == null) {
+            constructor = serverType.getDeclaredConstructor(
+                    AssetManager.class, String.class, File.class);
+            constructor.setAccessible(true);
+            instance = constructor.newInstance(null, "www", updateRoot);
+        } else {
+            constructor = serverType.getDeclaredConstructor(
+                    AssetManager.class, String.class, File.class, int.class);
+            constructor.setAccessible(true);
+            instance = constructor.newInstance(null, "www", updateRoot, preferredPort);
+        }
         Method start = serverType.getDeclaredMethod("start");
         Method getBaseUrl = serverType.getDeclaredMethod("getBaseUrl");
         start.setAccessible(true);
