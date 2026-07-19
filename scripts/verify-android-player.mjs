@@ -240,7 +240,6 @@ async function main() {
 
   let client;
   const consoleMessages = [];
-  const responseReads = [];
   const memberRequestById = new Map();
   const memberExchanges = [];
   let responseReadFailures = 0;
@@ -293,7 +292,7 @@ async function main() {
         )
       ) {
         const requestRecord = memberRequestById.get(event.params.requestId);
-        const read = client
+        void client
           .send('Network.getResponseBody', { requestId: event.params.requestId })
           .then(({ body, base64Encoded }) => {
             const decoded = base64Encoded
@@ -325,7 +324,6 @@ async function main() {
           .catch(() => {
             responseReadFailures += 1;
           });
-        responseReads.push(read);
       }
     });
     await client.connect();
@@ -468,7 +466,6 @@ async function main() {
     if (verifyRewardChain && topActivity === playerActivity) {
       rewardEvidenceResult = await waitFor(
         async () => {
-          await Promise.allSettled([...responseReads]);
           const logs = await readNativeLogs();
           try {
             const correlation = assertFreshRewardChainEvidence({
@@ -497,7 +494,6 @@ async function main() {
       );
       nativeLogs = rewardEvidenceResult?.nativeLogs || (await readNativeLogs());
     } else {
-      await Promise.allSettled([...responseReads]);
       nativeLogs = await readNativeLogs();
     }
 

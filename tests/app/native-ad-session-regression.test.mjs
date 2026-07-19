@@ -115,6 +115,7 @@ test('reward-chain verifier delegates to structured evidence correlation', () =>
   assert.match(verifier, /rewardEvidenceDeadline = Date\.now\(\) \+ 240000/);
   assert.match(verifier, /await waitFor\([\s\S]*?assertFreshRewardChainEvidence\([\s\S]*?rewardEvidenceDeadline - Date\.now\(\)/);
   assert.match(verifier, /Target player request failed[\s\S]*?'FAILED'/);
+  assert.doesNotMatch(verifier, /Promise\.allSettled\(\[\.\.\.responseReads\]\)/);
   assert.match(verifier, /assertFreshRewardChainEvidence\(/);
   assert.match(verifier, /evidenceRunId/);
   assert.match(verifier, /memberExchanges/);
