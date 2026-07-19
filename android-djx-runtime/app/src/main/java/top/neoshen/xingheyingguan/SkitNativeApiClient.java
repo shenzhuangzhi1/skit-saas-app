@@ -25,6 +25,7 @@ import top.neoshen.xingheyingguan.ad.AdSessionProtocol;
 import top.neoshen.xingheyingguan.ad.NativePlayerGrant;
 import top.neoshen.xingheyingguan.ad.TakuNativeState;
 import top.neoshen.xingheyingguan.ad.TakuTelemetry;
+import top.neoshen.xingheyingguan.ad.VerifiedRewardEvidence;
 
 /** HTTP client whose only authority is the short-lived player grant. */
 final class SkitNativeApiClient {
@@ -134,6 +135,21 @@ final class SkitNativeApiClient {
             }
             return Collections.unmodifiableList(result);
         }, callback);
+    }
+
+    /**
+     * Gets the real display pair selected from a signed reward callback, never from H5 or local
+     * telemetry. A successful response with {@code verified=false} intentionally returns null.
+     */
+    void getVerifiedRewardProvenance(int episodeNo,
+                                     Callback<VerifiedRewardEvidence> callback) {
+        if (episodeNo <= 0) {
+            callback.onFailure();
+            return;
+        }
+        execute("GET", NATIVE_API_PATH + "/entitlements/" + episodeNo
+                + "/reward-provenance", null, data ->
+                parseVerifiedRewardProvenance(episodeNo, data), callback);
     }
 
     void createAdSession(long dramaId, int episodeNo, Callback<CreateResult> callback) {
@@ -297,6 +313,37 @@ final class SkitNativeApiClient {
         }
         return new SessionStatus(sessionId, reward, entitlement,
                 showId.length() == 0 ? null : showId);
+    }
+
+    static VerifiedRewardEvidence parseVerifiedRewardProvenance(int episodeNo, JSONObject data)
+            throws IOException {
+        if (data == null) {
+            return null;
+        }
+        return parseVerifiedRewardProvenance(episodeNo,
+                data.optBoolean("verified", false), data.optInt("episodeNo", -1),
+                data.optString("provider", ""), data.optString("sessionId", ""),
+                data.optString("providerShowId", ""));
+    }
+
+    static VerifiedRewardEvidence parseVerifiedRewardProvenance(int expectedEpisodeNo,
+                                                                 boolean verified,
+                                                                 int responseEpisodeNo,
+                                                                 String provider,
+                                                                 String sessionId,
+                                                                 String providerShowId)
+            throws IOException {
+        if (!verified) {
+            return null;
+        }
+        if (responseEpisodeNo != expectedEpisodeNo || !"TAKU".equals(provider)) {
+            throw new IOException("Invalid native reward provenance response");
+        }
+        try {
+            return new VerifiedRewardEvidence(sessionId, providerShowId);
+        } catch (IllegalArgumentException invalid) {
+            throw new IOException("Invalid native reward provenance response", invalid);
+        }
     }
 
     private static String eventType(TakuTelemetry telemetry) {

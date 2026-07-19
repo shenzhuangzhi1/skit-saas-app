@@ -33,6 +33,24 @@ public final class PlaybackEvidenceScope {
                 && exactLong(evidence.get("index"), episode);
     }
 
+    /**
+     * Correlates raw server provenance with the safe references received from the H5 bridge.
+     * A launch without reward evidence may use a valid historical server entitlement; a launch
+     * carrying evidence must match both values exactly after one-way reference derivation.
+     */
+    public boolean matchesVerifiedReward(String sessionId, String providerShowId) {
+        if (sessionId == null || !sessionId.matches("[A-Za-z0-9_-]{22}")
+                || providerShowId == null
+                || !providerShowId.matches("[A-Za-z0-9._:/-]{1,128}")) {
+            return false;
+        }
+        if (NONE.equals(sessionRef)) {
+            return true;
+        }
+        return sessionRef.equals(SafeEvidenceReference.of(sessionId))
+                && showRef.equals(SafeEvidenceReference.of(providerShowId));
+    }
+
     public String playingEvidence() {
         return "PLAYER_PLAYING dramaId=" + dramaId
                 + " episode=" + episode

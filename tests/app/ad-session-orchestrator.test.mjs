@@ -200,6 +200,47 @@ test('marks a reused active scope for polling instead of replaying another ad', 
   assert.equal(reused.requiresVerificationPoll, true);
 });
 
+test('replaces a terminal pending session in the same unlock preparation', async () => {
+  const { createAdSessionOrchestrator } = requireSubject();
+  const replacement = {
+    ...protocol,
+    sessionId: 'session_9876543210WXYZ',
+    customData: 'token_9876543210WXYZAB',
+  };
+  let createCalls = 0;
+  const orchestrator = createAdSessionOrchestrator({
+    api: makeApi({
+      createAdSession: async () => ok(createCalls++ === 0 ? protocol : replacement),
+      getAdSession: async (sessionId) =>
+        ok({
+          sessionId,
+          clientLifecycleStatus: 'CLOSED',
+          rewardVerificationStatus: 'VERIFY_TIMEOUT',
+          entitlementStatus: 'NONE',
+          revenueStatus: 'NONE',
+          providerShowId: 'show-1',
+          rewardAcceptUntil: protocol.rewardAcceptUntil,
+        }),
+    }),
+    storage: memoryStorage(),
+    sleep: async () => {},
+  });
+
+  await orchestrator.createSession(identityA, { dramaId: 901, episodeNo: 7 });
+  const prepared = await orchestrator.prepareUnlockSession(identityA, {
+    dramaId: 901,
+    episodeNo: 7,
+  });
+
+  assert.equal(prepared.kind, 'CREATED');
+  assert.equal(prepared.created.nativeProtocol.sessionId, replacement.sessionId);
+  assert.equal(createCalls, 2);
+  assert.deepEqual(
+    orchestrator.getPendingSessions(identityA).map((item) => item.sessionId),
+    [replacement.sessionId],
+  );
+});
+
 test('polls after close with the approved 0.5/1/2/3/3 second schedule', async () => {
   const { createAdSessionOrchestrator } = requireSubject();
   const waits = [];
@@ -227,6 +268,39 @@ test('polls after close with the approved 0.5/1/2/3/3 second schedule', async ()
   assert.deepEqual(waits, [500, 1000, 2000, 3000, 3000]);
   assert.equal(calls, 5);
   assert.equal(orchestrator.getPendingSessions(identityA).length, 1);
+});
+
+test('continues pending reward verification beyond the first confirmation window', async () => {
+  const { createAdSessionOrchestrator } = requireSubject();
+  const waits = [];
+  let calls = 0;
+  const orchestrator = createAdSessionOrchestrator({
+    api: makeApi({
+      getAdSession: async (sessionId) => {
+        calls += 1;
+        const granted = calls >= 7;
+        return ok({
+          sessionId,
+          clientLifecycleStatus: 'CLOSED',
+          rewardVerificationStatus: granted ? 'SIGNED_VERIFIED' : 'PENDING',
+          entitlementStatus: granted ? 'GRANTED' : 'NONE',
+          revenueStatus: granted ? 'FROZEN' : 'NONE',
+          providerShowId: 'show-1',
+        });
+      },
+      getEntitlements: async (dramaId) => ok({ dramaId, grantedEpisodeNos: [7] }),
+    }),
+    storage: memoryStorage(),
+    sleep: async (delay) => waits.push(delay),
+  });
+
+  await orchestrator.createSession(identityA, { dramaId: 901, episodeNo: 7 });
+  const result = await orchestrator.watchPendingSession(identityA, protocol.sessionId);
+
+  assert.equal(result.resolution, 'GRANTED');
+  assert.equal(calls, 7);
+  assert.deepEqual(waits, [500, 1000, 2000, 3000, 3000, 5000, 500, 1000]);
+  assert.equal(orchestrator.getPendingSessions(identityA).length, 0);
 });
 
 test('recovers a pending session after interruption and refreshes server entitlements', async () => {

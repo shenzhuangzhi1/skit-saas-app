@@ -19,6 +19,7 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertThrows;
 
 public class SkitNativeApiClientSecurityTest {
 
@@ -100,6 +101,23 @@ public class SkitNativeApiClientSecurityTest {
         RecordedRequest received = server.takeRequest(1, TimeUnit.SECONDS);
         assertEquals(PLAYER_GRANT, received == null ? null : received.getHeader(PLAYER_GRANT_HEADER));
         assertNull(server.takeRequest(200, TimeUnit.MILLISECONDS));
+    }
+
+    @Test
+    public void rewardProvenanceParserAcceptsOnlyVerifiedServerPairs() throws Exception {
+        assertEquals("abcdefghijklmnopqrstuv",
+                SkitNativeApiClient.parseVerifiedRewardProvenance(
+                        7, true, 7, "TAKU", "abcdefghijklmnopqrstuv", "taku-show-20260719")
+                        .getSessionId());
+        assertEquals("taku-show-20260719",
+                SkitNativeApiClient.parseVerifiedRewardProvenance(
+                        7, true, 7, "TAKU", "abcdefghijklmnopqrstuv", "taku-show-20260719")
+                        .getProviderShowId());
+        assertNull(SkitNativeApiClient.parseVerifiedRewardProvenance(
+                7, false, 7, "TAKU", "", ""));
+        assertThrows(java.io.IOException.class,
+                () -> SkitNativeApiClient.parseVerifiedRewardProvenance(
+                        7, true, 7, "TAKU", "f69f9b70d1c9", "taku-show-20260719"));
     }
 
     private void assertRedirectRejected(OkHttpClient client, HttpUrl start,

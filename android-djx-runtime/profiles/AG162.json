@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "profileVersion": 1,
+  "profileVersion": 2,
   "profileCode": "AG162",
   "tenantId": "AG162",
   "profileId": "ag162-cn-production",
@@ -17,7 +17,7 @@
   },
   "taku": {
     "appId": "a6a50ac83df403",
-    "rewardPlacementId": "b6a50acf394505",
+    "rewardPlacementId": "b6a5c424bbbb6c",
     "sdkVersion": "6.6.22"
   },
   "outputBaseName": "ag162"

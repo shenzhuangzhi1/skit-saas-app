@@ -146,3 +146,31 @@ test('reward-chain verifier delegates to structured evidence correlation', () =>
     /server_verified_reward[\s\S]*?episodeNo:\s*unlockEpisode[\s\S]*?sessionId:\s*result\.status\.sessionId[\s\S]*?providerShowId:\s*result\.status\.providerShowId[\s\S]*?unlockEpisode/,
   );
 });
+
+test('DJX skips its duplicate confirmation but only completes with signed server provenance', () => {
+  const player = read(
+    'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/DramaPlayerActivity.java',
+  );
+  const api = read(
+    'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/SkitNativeApiClient.java',
+  );
+  const scope = read(
+    'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/ad/PlaybackEvidenceScope.java',
+  );
+
+  assert.match(player, /\.hideRewardDialog\(true\)/);
+  assert.match(api, /getVerifiedRewardProvenance\(/);
+  assert.match(api, /\/entitlements\/" \+ episodeNo\s*\+ "\/reward-provenance/);
+  assert.match(player, /completeWithVerifiedRewardProvenance[\s\S]*?getVerifiedRewardProvenance/);
+  assert.match(player, /matchesLaunchRewardEvidence\(targetEpisode, proof\)/);
+  assert.match(scope, /matchesVerifiedReward\(String sessionId, String providerShowId\)/);
+  assert.match(player, /activeUnlockCallback\.onShow\(evidence\.getProviderShowId\(\)\)/);
+  assert.match(player, /callback\.onRewardVerify\(new DJXRewardAdResult\(true, rewardPayload\)\)/);
+  assert.ok(
+    player.indexOf('activeUnlockCallback.onShow(evidence.getProviderShowId())')
+      < player.indexOf('callback.onRewardVerify(new DJXRewardAdResult(true, rewardPayload))'),
+    'the real show identity must be reported before DJX reward verification',
+  );
+  assert.doesNotMatch(player, /onShow\(launchShowRef\)/);
+  assert.doesNotMatch(player, /server-entitlement/);
+});

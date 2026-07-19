@@ -37,6 +37,7 @@ import top.neoshen.xingheyingguan.ad.PlaybackEvidenceScope;
 import top.neoshen.xingheyingguan.ad.TakuNativeState;
 import top.neoshen.xingheyingguan.ad.TakuSessionStateMachine;
 import top.neoshen.xingheyingguan.ad.TakuTelemetry;
+import top.neoshen.xingheyingguan.ad.VerifiedRewardEvidence;
 
 /** DJX content player whose unlock authority is the server entitlement endpoint. */
 public class DramaPlayerActivity extends Activity {
@@ -60,6 +61,8 @@ public class DramaPlayerActivity extends Activity {
     private IDJXDramaUnlockListener.CustomAdCallback activeUnlockCallback;
     private AdSessionProtocol activeProtocol;
     private String activeProviderShowId;
+    private String callbackShowSessionId;
+    private String callbackShowId;
     private int pollAttempt;
     private long unlockGeneration;
     private int activeUnlockEpisode;
@@ -134,6 +137,7 @@ public class DramaPlayerActivity extends Activity {
                         createUnlockListener(dramaId))
                 .infiniteScrollEnabled(false)
                 .hideCellularToast(true)
+                .hideRewardDialog(true)
                 .adListener(createAdListener())
                 .listener(new IDJXDramaListener() {
                     @Override
@@ -245,7 +249,7 @@ public class DramaPlayerActivity extends Activity {
                     return;
                 }
                 if (grantedEpisodes != null && grantedEpisodes.contains(targetEpisode)) {
-                    completeFromServerEntitlement(
+                    completeWithVerifiedRewardProvenance(
                             generation, targetEpisode, null, null, grantedEpisodes);
                     return;
                 }
@@ -328,7 +332,16 @@ public class DramaPlayerActivity extends Activity {
         if (telemetry.getProviderShowId() != null) {
             if (activeProviderShowId == null) {
                 activeProviderShowId = telemetry.getProviderShowId();
-                activeUnlockCallback.onShow(activeProviderShowId);
+                try {
+                    if (!reportCustomAdShown(new VerifiedRewardEvidence(
+                            activeProtocol.getSessionId(), activeProviderShowId),
+                            generation, targetEpisode)) {
+                        return;
+                    }
+                } catch (IllegalArgumentException invalidShow) {
+                    failActiveUnlock(generation, targetEpisode, "广告展示编号无效");
+                    return;
+                }
             } else if (!activeProviderShowId.equals(telemetry.getProviderShowId())) {
                 failActiveUnlock(generation, targetEpisode, "广告展示编号不一致");
                 return;
@@ -463,10 +476,14 @@ public class DramaPlayerActivity extends Activity {
         if (!isActiveUnlock(generation, targetEpisode)) {
             return;
         }
+        if ((sessionId == null) != (providerShowId == null)) {
+            failActiveUnlock(generation, targetEpisode, "服务端奖励证明不完整");
+            return;
+        }
         nativeApiClient.getEntitlements(new SkitNativeApiClient.Callback<List<Integer>>() {
             @Override
             public void onSuccess(List<Integer> grantedEpisodes) {
-                completeFromServerEntitlement(
+                completeWithVerifiedRewardProvenance(
                         generation, targetEpisode, sessionId, providerShowId, grantedEpisodes);
             }
 
@@ -477,10 +494,90 @@ public class DramaPlayerActivity extends Activity {
         });
     }
 
+    private void completeWithVerifiedRewardProvenance(long generation, int targetEpisode,
+                                                       String expectedSessionId,
+                                                       String expectedProviderShowId,
+                                                       List<Integer> grantedEpisodes) {
+        if (!isActiveUnlock(generation, targetEpisode)) {
+            return;
+        }
+        if ((expectedSessionId == null) != (expectedProviderShowId == null)
+                || grantedEpisodes == null || !grantedEpisodes.contains(targetEpisode)) {
+            failActiveUnlock(generation, targetEpisode, "目标剧集尚未获得服务端权益");
+            return;
+        }
+        nativeApiClient.getVerifiedRewardProvenance(targetEpisode,
+                new SkitNativeApiClient.Callback<VerifiedRewardEvidence>() {
+                    @Override
+                    public void onSuccess(VerifiedRewardEvidence evidence) {
+                        if (!isActiveUnlock(generation, targetEpisode)) {
+                            return;
+                        }
+                        if (evidence == null) {
+                            failActiveUnlock(generation, targetEpisode,
+                                    "服务端奖励凭证暂不可用");
+                            return;
+                        }
+                        if (expectedSessionId != null
+                                && !evidence.matches(expectedSessionId, expectedProviderShowId)) {
+                            failActiveUnlock(generation, targetEpisode,
+                                    "服务端奖励证明不匹配");
+                            return;
+                        }
+                        completeFromServerEntitlement(
+                                generation, targetEpisode, evidence, grantedEpisodes);
+                    }
+
+                    @Override
+                    public void onFailure() {
+                        failActiveUnlock(generation, targetEpisode, "服务端奖励凭证校验失败");
+                    }
+                });
+    }
+
+    /** Calls DJX onShow exactly once with a real server- or SDK-derived show identity. */
+    private boolean reportCustomAdShown(VerifiedRewardEvidence evidence,
+                                        long generation, int targetEpisode) {
+        if (!isActiveUnlock(generation, targetEpisode) || evidence == null) {
+            return false;
+        }
+        if ((callbackShowSessionId == null) != (callbackShowId == null)) {
+            failActiveUnlock(generation, targetEpisode, "广告展示状态异常");
+            return false;
+        }
+        if (callbackShowSessionId == null) {
+            callbackShowSessionId = evidence.getSessionId();
+            callbackShowId = evidence.getProviderShowId();
+            try {
+                activeUnlockCallback.onShow(evidence.getProviderShowId());
+                return true;
+            } catch (Throwable callbackFailure) {
+                failActiveUnlock(generation, targetEpisode, "广告展示状态同步失败");
+                return false;
+            }
+        }
+        if (!evidence.matches(callbackShowSessionId, callbackShowId)) {
+            failActiveUnlock(generation, targetEpisode, "广告展示编号不一致");
+            return false;
+        }
+        return true;
+    }
+
     private void completeFromServerEntitlement(long generation, int targetEpisode,
-                                               String sessionId, String providerShowId,
+                                               VerifiedRewardEvidence proof,
                                                List<Integer> grantedEpisodes) {
         if (!isActiveUnlock(generation, targetEpisode)) {
+            return;
+        }
+        if (proof == null || !matchesLaunchRewardEvidence(targetEpisode, proof)) {
+            failActiveUnlock(generation, targetEpisode, "服务端奖励证明不匹配");
+            return;
+        }
+        if (grantedEpisodes == null || !grantedEpisodes.contains(targetEpisode)) {
+            failActiveUnlock(generation, targetEpisode, "目标剧集尚未获得服务端权益");
+            return;
+        }
+        if (!reportCustomAdShown(proof, generation, targetEpisode)) {
             return;
         }
         if (!unlockPolicy.consumeIfEntitled(
@@ -493,19 +590,20 @@ public class DramaPlayerActivity extends Activity {
         if (callback == null || destroyed) {
             return;
         }
-        HashMap<String, Object> evidence = new HashMap<>();
-        evidence.put("authority", "server_entitlement");
-        evidence.put("dramaId", dramaId);
-        evidence.put("episode", targetEpisode);
-        if (sessionId != null) {
-            evidence.put("sessionId", sessionId);
-        }
-        if (providerShowId != null) {
-            evidence.put("providerShowId", providerShowId);
-        }
-        boolean serverEntitled = true;
-        callback.onRewardVerify(new DJXRewardAdResult(serverEntitled, evidence));
+        HashMap<String, Object> rewardPayload = new HashMap<>();
+        rewardPayload.put("authority", "signed_reward_provenance");
+        rewardPayload.put("dramaId", dramaId);
+        rewardPayload.put("episode", targetEpisode);
+        rewardPayload.put("sessionId", proof.getSessionId());
+        rewardPayload.put("providerShowId", proof.getProviderShowId());
+        callback.onRewardVerify(new DJXRewardAdResult(true, rewardPayload));
         Toast.makeText(this, "服务端验奖通过，已解锁", Toast.LENGTH_SHORT).show();
+    }
+
+    /** The H5-provided safe references bind only the episode that launched this player. */
+    private boolean matchesLaunchRewardEvidence(int targetEpisode,
+                                                VerifiedRewardEvidence evidence) {
+        return targetEpisode != initialEpisode || evidence.matches(playbackEvidenceScope);
     }
 
     private void failActiveUnlock(long generation, int targetEpisode, String message) {
@@ -529,6 +627,8 @@ public class DramaPlayerActivity extends Activity {
         activeUnlockCallback = null;
         activeProtocol = null;
         activeProviderShowId = null;
+        callbackShowSessionId = null;
+        callbackShowId = null;
         pollAttempt = 0;
         unlockGeneration = 0L;
         activeUnlockEpisode = 0;
@@ -584,6 +684,8 @@ public class DramaPlayerActivity extends Activity {
             nativeApiClient = null;
         }
         activeUnlockCallback = null;
+        callbackShowSessionId = null;
+        callbackShowId = null;
         super.onDestroy();
     }
 }

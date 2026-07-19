@@ -33,6 +33,39 @@ test('does not invent runtime headers when the native bridge is unavailable', as
   assert.deepEqual(buildClientRuntimeHeaders(null), {});
 });
 
+test('uses the embedded native metadata when an older shell lacks the runtime bridge', async () => {
+  const { createClientRuntimeProvider, createEmbeddedRuntimeProvider } = requireSubject();
+  const embeddedRuntimeProvider = createEmbeddedRuntimeProvider(
+    () => ({ showRewardedVideo() {} }),
+    {
+      VITE_SKIT_NATIVE_VERSION: '2026.7.19.4',
+      VITE_SKIT_AD_PROTOCOL_VERSION: '1',
+    },
+  );
+  const provider = createClientRuntimeProvider(
+    () => null,
+    embeddedRuntimeProvider,
+  );
+
+  assert.deepEqual(await provider(), {
+    nativeVersion: '2026.7.19.4',
+    protocolVersion: 1,
+  });
+});
+
+test('does not use embedded metadata when the native Taku host is unavailable', () => {
+  const { createEmbeddedRuntimeProvider } = requireSubject();
+  const embeddedRuntimeProvider = createEmbeddedRuntimeProvider(
+    () => null,
+    {
+      VITE_SKIT_NATIVE_VERSION: '2026.7.19.4',
+      VITE_SKIT_AD_PROTOCOL_VERSION: '1',
+    },
+  );
+
+  assert.equal(embeddedRuntimeProvider(), null);
+});
+
 test('retries runtime discovery after the bridge becomes available', async () => {
   const { createClientRuntimeProvider } = requireSubject();
   let bridgeReady = false;

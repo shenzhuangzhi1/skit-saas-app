@@ -112,7 +112,15 @@ test('native sources contain no local reward success or sentinel fallback', () =
   roots.forEach(visit);
   for (const file of files) {
     const source = read(file);
-    assert.doesNotMatch(source, /DJXRewardAdResult\s*\(\s*true\b/);
+    if (file === 'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/DramaPlayerActivity.java') {
+      assert.match(source, /getVerifiedRewardProvenance\s*\(/);
+      assert.match(source, /if\s*\(\s*!reportCustomAdShown\s*\(\s*proof\s*,/);
+      assert.match(source, /rewardPayload\.put\(\s*"authority"\s*,\s*"signed_reward_provenance"\s*\)/);
+      assert.match(source, /onRewardVerify\s*\(\s*new DJXRewardAdResult\s*\(\s*true\s*,\s*rewardPayload\s*\)\s*\)/);
+      assert.doesNotMatch(source, /DJXRewardAdResult\s*\(\s*true\s*\)/);
+    } else {
+      assert.doesNotMatch(source, /DJXRewardAdResult\s*\(\s*true\b/);
+    }
     assert.doesNotMatch(source, /skit-local-unlock|local unlock fallback|unlocked\.add/i);
   }
 });
@@ -132,7 +140,8 @@ test('native player requires and server-validates the short-lived player grant',
   assert.match(client, /X-Skit-Ad-Protocol-Version/);
   assert.match(client, /\/skit\/member\/native/);
   assert.match(player, /NativeRewardGate/);
-  assert.match(player, /server_entitlement/);
+  assert.match(player, /signed_reward_provenance/);
+  assert.match(player, /getVerifiedRewardProvenance/);
   assert.match(player, /unlockGeneration/);
   assert.match(player, /cancelActiveSession\s*\(/);
 });

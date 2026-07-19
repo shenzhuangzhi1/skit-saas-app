@@ -2,6 +2,7 @@ const PROTOCOL_VERSION = 1;
 const PROVIDER = 'TAKU';
 const SCENE = 'drama_unlock';
 const POLL_DELAYS_MS = Object.freeze([500, 1000, 2000, 3000, 3000]);
+const PENDING_RECOVERY_DELAYS_MS = Object.freeze([5000, 10000, 15000, 30000, 30000]);
 const SESSION_PATTERN = /^[A-Za-z0-9_-]{22}$/;
 const SAFE_TEXT_PATTERN = /^[A-Za-z0-9._:/-]{1,128}$/;
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{22,256}$/;
@@ -312,6 +313,25 @@ export function createAdSessionOrchestrator(options = {}) {
     };
   }
 
+  async function prepareUnlockSession(identity, input = {}) {
+    const normalized = requireIdentity(identity);
+    const dramaId = requirePositiveInteger(input.dramaId, '短剧编号');
+    const episodeNo = requirePositiveInteger(input.episodeNo, '解锁集数');
+    const existing = getPendingSessions(normalized).find(
+      (item) => item.dramaId === dramaId && item.episodeNo === episodeNo,
+    );
+    if (existing) {
+      const recovered = await pollSession(normalized, existing.sessionId);
+      if (recovered.resolution !== 'REJECTED' && recovered.resolution !== 'VERIFY_TIMEOUT') {
+        return { kind: 'RECOVERED', result: recovered };
+      }
+    }
+    return {
+      kind: 'CREATED',
+      created: await createSession(normalized, { dramaId, episodeNo }),
+    };
+  }
+
   async function issuePlayerGrant(identity, dramaIdInput) {
     requireIdentity(identity);
     const dramaId = requirePositiveInteger(dramaIdInput, '短剧编号');
@@ -381,6 +401,18 @@ export function createAdSessionOrchestrator(options = {}) {
     return { resolution: 'VERIFYING', status };
   }
 
+  async function watchPendingSession(identity, sessionId) {
+    let result = await pollSession(identity, sessionId);
+    for (const delay of PENDING_RECOVERY_DELAYS_MS) {
+      if (result.resolution !== 'VERIFYING') {
+        return result;
+      }
+      await sleep(delay);
+      result = await pollSession(identity, sessionId);
+    }
+    return result;
+  }
+
   async function recoverPendingSessions(identity) {
     const normalized = requireIdentity(identity);
     const sessions = getPendingSessions(normalized);
@@ -397,9 +429,11 @@ export function createAdSessionOrchestrator(options = {}) {
 
   return Object.freeze({
     createSession,
+    prepareUnlockSession,
     issuePlayerGrant,
     recordClientEvent,
     pollSession,
+    watchPendingSession,
     recoverPendingSessions,
     refreshEntitlements,
     isAuthoritativelyEntitled,

@@ -7,6 +7,38 @@ function getNativeRuntimePlugin() {
   return uni.requireNativePlugin('SkitRuntimeUpdate');
 }
 
+function getNativeTakuPlugin() {
+  if (typeof uni === 'undefined' || typeof uni.requireNativePlugin !== 'function') {
+    return null;
+  }
+  return uni.requireNativePlugin('SkitTakuAd');
+}
+
+export function createEmbeddedRuntimeProvider(
+  nativeTakuPluginFactory = getNativeTakuPlugin,
+  buildEnv = import.meta.env,
+) {
+  return () => {
+    let nativeTakuPlugin;
+    try {
+      nativeTakuPlugin = nativeTakuPluginFactory();
+    } catch (error) {
+      return null;
+    }
+    // Older signed shells can lack SkitRuntimeUpdate. The Taku bridge is the
+    // native-host marker required for this protected fallback to be valid.
+    if (!nativeTakuPlugin || typeof nativeTakuPlugin.showRewardedVideo !== 'function') {
+      return null;
+    }
+    return {
+      nativeVersion: buildEnv?.VITE_SKIT_NATIVE_VERSION,
+      protocolVersion: buildEnv?.VITE_SKIT_AD_PROTOCOL_VERSION,
+    };
+  };
+}
+
+const getEmbeddedNativeRuntimeInfo = createEmbeddedRuntimeProvider();
+
 function normalizeRuntimeInfo(result) {
   const nativeVersion = String(result?.nativeVersion || '').trim();
   const protocolVersion = Number(result?.protocolVersion);
@@ -21,7 +53,10 @@ function normalizeRuntimeInfo(result) {
   return Object.freeze({ nativeVersion, protocolVersion });
 }
 
-export function createClientRuntimeProvider(pluginFactory = getNativeRuntimePlugin) {
+export function createClientRuntimeProvider(
+  pluginFactory = getNativeRuntimePlugin,
+  embeddedRuntimeProvider = getEmbeddedNativeRuntimeInfo,
+) {
   let runtimePromise;
 
   return () => {
@@ -41,7 +76,16 @@ export function createClientRuntimeProvider(pluginFactory = getNativeRuntimePlug
         if (timeout) {
           clearTimeout(timeout);
         }
-        resolve(normalizeRuntimeInfo(result));
+        const nativeRuntime = normalizeRuntimeInfo(result);
+        if (nativeRuntime) {
+          resolve(nativeRuntime);
+          return;
+        }
+        try {
+          resolve(normalizeRuntimeInfo({ success: true, ...embeddedRuntimeProvider?.() }));
+        } catch (error) {
+          resolve(null);
+        }
       };
 
       let plugin;

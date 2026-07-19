@@ -166,6 +166,7 @@
   const unlocking = ref(false);
   const videoErrored = ref(false);
   const pangleReady = ref(false);
+  const pendingVerificationSessions = new Set();
   const userStore = sheep.$store('user');
 
   const locked = computed(() => {
@@ -260,6 +261,44 @@
       uni.showToast({ title: '广告奖励已通过服务端验证', icon: 'none' });
     }
     return results;
+  }
+
+  function schedulePendingRewardVerification(identity, episodeNo, sessionId) {
+    if (pendingVerificationSessions.has(sessionId)) {
+      return;
+    }
+    pendingVerificationSessions.add(sessionId);
+    adSessionOrchestrator
+      .watchPendingSession(identity, sessionId)
+      .then(async (result) => {
+        if (result.resolution === 'GRANTED') {
+          if (!result.entitlements.grantedEpisodeNos.includes(episodeNo)) {
+            throw new Error('目标剧集尚未获得服务端权益');
+          }
+          grantedEpisodeNos.value = result.entitlements.grantedEpisodeNos;
+          uni.showToast({ title: `已解锁第${episodeNo}集`, icon: 'none' });
+          if (currentEpisode.value !== episodeNo) {
+            return;
+          }
+          const dramaId = resolveServerDramaId();
+          await playCurrentEpisode(
+            'server_verified_reward',
+            {
+              dramaId,
+              episodeNo,
+              sessionId: result.status.sessionId,
+              providerShowId: result.status.providerShowId,
+            },
+            episodeNo,
+          );
+        }
+      })
+      .catch((error) => {
+        console.warn('[ad-session] pending reward verification unavailable', error?.message || error);
+      })
+      .finally(() => {
+        pendingVerificationSessions.delete(sessionId);
+      });
   }
 
   async function syncServerState() {
@@ -426,17 +465,15 @@
     try {
       const identity = currentIdentity();
       const dramaId = resolveServerDramaId();
-      const existing = adSessionOrchestrator
-        .getPendingSessions(identity)
-        .find((item) => item.dramaId === dramaId && item.episodeNo === unlockEpisode);
       let result;
-      if (existing) {
-        result = await adSessionOrchestrator.pollSession(identity, existing.sessionId);
+      const prepared = await adSessionOrchestrator.prepareUnlockSession(identity, {
+        dramaId,
+        episodeNo: unlockEpisode,
+      });
+      if (prepared.kind === 'RECOVERED') {
+        result = prepared.result;
       } else {
-        const created = await adSessionOrchestrator.createSession(identity, {
-          dramaId,
-          episodeNo: unlockEpisode,
-        });
+        const created = prepared.created;
         if (created.outcome === 'ALREADY_ENTITLED') {
           const snapshot = await refreshAuthoritativeEntitlements(identity);
           if (!snapshot.grantedEpisodeNos.includes(unlockEpisode)) {
@@ -481,6 +518,7 @@
           providerShowId: result.status.providerShowId,
         }, unlockEpisode);
       } else if (result.resolution === 'VERIFYING') {
+        schedulePendingRewardVerification(identity, unlockEpisode, result.status.sessionId);
         uni.showToast({ title: '奖励确认中，可稍后返回查看', icon: 'none' });
       } else {
         throw new Error('广告奖励未确认');
