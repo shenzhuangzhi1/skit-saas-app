@@ -397,7 +397,13 @@
         const snapshot = await refreshAuthoritativeEntitlements(identity);
         if (!snapshot.grantedEpisodeNos.includes(targetEpisode)) {
           activePlaybackEpisode.value = null;
-          return;
+          if (source === 'manual_open' || source === 'episode_select') {
+            uni.showToast({
+              title: `第${targetEpisode}集需要解锁`,
+              icon: 'none',
+            });
+          }
+          return { skipped: true, reason: 'not-entitled' };
         }
       }
       const playerGrant = await adSessionOrchestrator.issuePlayerGrant(identity, dramaId);
@@ -453,9 +459,6 @@
     if (unlocking.value) {
       return;
     }
-    if (isUnlocked(currentEpisode.value)) {
-      return;
-    }
     if (!userStore.isLogin) {
       uni.navigateTo({
         url: '/pages/auth/index?mode=login',
@@ -467,6 +470,16 @@
     try {
       const identity = currentIdentity();
       const dramaId = resolveServerDramaId();
+      if (isUnlocked(unlockEpisode)) {
+        const snapshot = await refreshAuthoritativeEntitlements(identity);
+        if (snapshot.grantedEpisodeNos.includes(unlockEpisode)) {
+          if (currentEpisode.value !== unlockEpisode) {
+            return;
+          }
+          await playCurrentEpisode('server_entitled', null, unlockEpisode);
+          return;
+        }
+      }
       let result;
       const prepared = await adSessionOrchestrator.prepareUnlockSession(identity, {
         dramaId,

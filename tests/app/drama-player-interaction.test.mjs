@@ -40,6 +40,28 @@ test('a terminal reward session is retried in the same unlock tap', () => {
   assert.doesNotMatch(unlockFlow, /\.getPendingSessions\(/);
 });
 
+test('refreshes a cached unlock against the server before deciding whether to show another ad', () => {
+  const unlockStart = playerSource.indexOf('async function unlockCurrent()');
+  const unlockEnd = playerSource.indexOf('\n  function ', unlockStart + 1);
+  assert.notEqual(unlockStart, -1, 'unlock flow must exist');
+  assert.notEqual(unlockEnd, -1, 'unlock flow must have a closing boundary');
+  const unlockFlow = playerSource.slice(unlockStart, unlockEnd);
+
+  assert.doesNotMatch(
+    unlockFlow,
+    /if \(isUnlocked\(currentEpisode\.value\)\) \{\s*return;/,
+    'a display-only entitlement cache must never end the unlock flow before server refresh',
+  );
+  assert.match(
+    unlockFlow,
+    /if \(isUnlocked\(unlockEpisode\)\) \{\s*const snapshot = await refreshAuthoritativeEntitlements\(identity\);\s*if \(snapshot\.grantedEpisodeNos\.includes\(unlockEpisode\)\) \{[\s\S]*?await playCurrentEpisode\('server_entitled', null, unlockEpisode\)/,
+  );
+  assert.match(
+    unlockFlow,
+    /const prepared = await adSessionOrchestrator\.prepareUnlockSession\(identity, \{[\s\S]*?episodeNo: unlockEpisode,/,
+  );
+});
+
 test('keeps a pending reward verification active without a second tap', () => {
   const unlockStart = playerSource.indexOf('async function unlockCurrent()');
   const unlockEnd = playerSource.indexOf('\n  function ', unlockStart + 1);
@@ -86,6 +108,23 @@ test('watch history begins after a player actually opens', () => {
   const onLoadFlow = playerSource.slice(onLoadStart, onLoadEnd);
 
   assert.doesNotMatch(onLoadFlow, /saveHistory\(/);
+});
+
+test('expired server entitlement gives a clear locked result instead of a silent player return', () => {
+  const playStart = playerSource.indexOf('async function playCurrentEpisode(');
+  const playEnd = playerSource.indexOf('\n  function chooseEpisode', playStart);
+  assert.notEqual(playStart, -1, 'protected player launch must exist');
+  assert.notEqual(playEnd, -1, 'protected player launch must have a closing boundary');
+  const playFlow = playerSource.slice(playStart, playEnd);
+
+  assert.match(
+    playFlow,
+    /if \(!snapshot\.grantedEpisodeNos\.includes\(targetEpisode\)\) \{[\s\S]*?return \{ skipped: true, reason: 'not-entitled' \};/,
+  );
+  assert.match(
+    playFlow,
+    /source === 'manual_open' \|\| source === 'episode_select'[\s\S]*?title: `第\$\{targetEpisode\}集需要解锁`/,
+  );
 });
 
 test('retries automatic playback after login identity hydration', () => {
