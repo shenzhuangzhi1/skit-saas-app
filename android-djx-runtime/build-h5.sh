@@ -3,7 +3,6 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 HBUILDERX_DIR="${HBUILDERX_DIR:-/Applications/HBuilderX.app/Contents/HBuilderX/plugins/uniapp-cli-vite}"
-HBUILDERX_APP_ROOT="${HX_APP_ROOT:-$(cd "$HBUILDERX_DIR/../.." && pwd)}"
 UNI_CLI="${UNI_CLI:-$HBUILDERX_DIR/node_modules/.bin/uni}"
 UNI_NODE_MODULES="$HBUILDERX_DIR/node_modules"
 OUTPUT_DIR="${H5_DIR:-$ROOT_DIR/unpackage/dist/build/h5-android-runtime}"
@@ -27,6 +26,7 @@ if not inside_root or output_dir == controlled_root:
 print(output_dir)
 PY
 )"
+HBUILDERX_APP_ROOT="${HX_APP_ROOT:-$(cd "$HBUILDERX_DIR/../.." && pwd)}"
 
 if [[ -z "${SKIT_AGENT_CODE:-}" || ! "$SKIT_AGENT_CODE" =~ ^[A-Z0-9_-]{3,32}$ ]]; then
   echo "SKIT_AGENT_CODE is required for Android H5 builds" >&2

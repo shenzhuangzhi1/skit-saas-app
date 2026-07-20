@@ -135,6 +135,7 @@ test('Android H5 builder rejects paths outside its controlled output root withou
     env: {
       ...process.env,
       H5_DIR: temporaryRoot,
+      HBUILDERX_DIR: join(temporaryRoot, 'missing-hbuilderx'),
       SKIT_AGENT_CODE: selectedProfile.profileCode,
       SKIT_API_BASE_URL: 'https://alpha.example.test',
     },
