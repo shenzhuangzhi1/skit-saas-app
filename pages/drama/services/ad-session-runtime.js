@@ -1,6 +1,7 @@
 import AdSessionApi from '@/sheep/api/member/ad-session';
 import EntitlementApi from '@/sheep/api/member/entitlement';
 import { createAdSessionOrchestrator } from './ad-session-orchestrator';
+import { createAdSessionRecoveryCoordinator } from './ad-session-recovery-coordinator';
 
 export const adSessionOrchestrator = createAdSessionOrchestrator({
   api: {
@@ -12,26 +13,14 @@ export const adSessionOrchestrator = createAdSessionOrchestrator({
   },
 });
 
-const recoveryPromises = new Map();
+const recoveryCoordinator = createAdSessionRecoveryCoordinator();
 
-function identityKey(identity) {
-  const tenantId = String(identity?.tenantId ?? '').trim();
-  const memberId = String(identity?.memberId ?? '').trim();
-  if (!tenantId || !memberId) {
-    throw new Error('待验证广告会话缺少当前租户或会员 identity');
-  }
-  return `${tenantId}:${memberId}`;
+export function acquireAdSessionOwnership(identity) {
+  return recoveryCoordinator.acquire(identity);
 }
 
 export function recoverPendingAdSessions(identity) {
-  const key = identityKey(identity);
-  const existing = recoveryPromises.get(key);
-  if (existing) {
-    return existing;
-  }
-  const recovery = adSessionOrchestrator
-    .recoverPendingSessions(identity)
-    .finally(() => recoveryPromises.delete(key));
-  recoveryPromises.set(key, recovery);
-  return recovery;
+  return recoveryCoordinator.runRecovery(identity, () =>
+    adSessionOrchestrator.recoverPendingSessions(identity),
+  );
 }

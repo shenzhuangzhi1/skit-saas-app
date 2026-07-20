@@ -428,8 +428,12 @@ test('App foreground resumes the identity-scoped pending verification queue', ()
   const appSource = readFileSync(resolve(root, 'App.vue'), 'utf8');
   const playSource = readFileSync(resolve(root, 'pages/drama/play.vue'), 'utf8');
   const runtimePath = resolve(root, 'pages/drama/services/ad-session-runtime.js');
+  const runtimeSource = readFileSync(runtimePath, 'utf8');
   assert.equal(existsSync(runtimePath), true);
   assert.match(appSource, /recoverPendingAdSessions/);
   assert.match(appSource, /onShow/);
   assert.match(playSource, /watch\(\s*\(\) => \[\s*userStore\.userInfo\?\.tenantId/);
+  assert.match(runtimeSource, /createAdSessionRecoveryCoordinator/);
+  assert.match(runtimeSource, /export function acquireAdSessionOwnership/);
+  assert.match(runtimeSource, /recoveryCoordinator\.runRecovery/);
 });

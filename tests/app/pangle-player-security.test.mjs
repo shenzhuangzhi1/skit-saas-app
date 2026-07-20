@@ -36,7 +36,7 @@ test('H5 cannot send malicious freeSet or lockSet policy to the native player', 
     start: async () => ({ success: true }),
     openPlayer: async (payload) => {
       openPayload = payload;
-      return { success: true };
+      return { success: true, opened: true };
     },
   });
 
@@ -62,6 +62,33 @@ test('H5 cannot send malicious freeSet or lockSet policy to the native player', 
   assert.equal(Object.hasOwn(openPayload, 'freeSet'), false);
   assert.equal(Object.hasOwn(openPayload, 'lockSet'), false);
   assert.equal(openPayload.playerGrant.expiresAt, Date.parse('2099-01-01T00:00:00Z'));
+});
+
+test('H5 rejects every native openPlayer result that did not actually open an Activity', async () => {
+  const grant = {
+    grantId: 17,
+    dramaId: 901,
+    grantToken: 'abcdefghijklmnopqrstuvwxyzABCDEFGH123456789',
+    expiresAt: '2099-01-01T00:00:00Z',
+  };
+  for (const result of [
+    { success: false, message: 'native failed' },
+    { success: true, opened: false },
+    { skipped: true, reason: 'bridge unavailable' },
+  ]) {
+    const content = await importPangleContent({
+      start: async () => ({ success: true }),
+      openPlayer: async () => result,
+    });
+    await assert.rejects(
+      content.openPangleDramaPlayer({
+        drama: { id: '901', pangleDramaId: 901 },
+        episode: 7,
+        playerGrant: grant,
+      }),
+      /原生播放器未启动|native failed/,
+    );
+  }
 });
 
 test('native bridge and activity never read H5 or Intent unlock-range policy', () => {

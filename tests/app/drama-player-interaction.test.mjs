@@ -71,7 +71,7 @@ test('keeps a pending reward verification active without a second tap', () => {
 
   assert.match(
     unlockFlow,
-    /schedulePendingRewardVerification\(identity, unlockEpisode, result\.status\.sessionId\)/,
+    /schedulePendingRewardVerification\([\s\S]*?identity,[\s\S]*?unlockEpisode,[\s\S]*?result\.status\.sessionId,[\s\S]*?releaseUnlockOwnership,[\s\S]*?\)/,
   );
 
   const scheduleStart = playerSource.indexOf('function schedulePendingRewardVerification(');
@@ -83,6 +83,26 @@ test('keeps a pending reward verification active without a second tap', () => {
   assert.match(scheduler, /watchPendingSession\(/);
   assert.match(scheduler, /result\.resolution === 'GRANTED'/);
   assert.match(scheduler, /grantedEpisodeNos\.value = result\.entitlements\.grantedEpisodeNos/);
+});
+
+test('unlock polling and its pending watcher hold shared foreground-recovery ownership', () => {
+  const unlockStart = playerSource.indexOf('async function unlockCurrent()');
+  const unlockEnd = playerSource.indexOf('\n  function ', unlockStart + 1);
+  const unlockFlow = playerSource.slice(unlockStart, unlockEnd);
+  assert.match(
+    unlockFlow,
+    /releaseUnlockOwnership = await acquireAdSessionOwnership\(identity\)/,
+  );
+  assert.match(unlockFlow, /if \(!releaseUnlockOwnership\) \{/);
+  assert.match(unlockFlow, /schedulePendingRewardVerification\([\s\S]*?releaseUnlockOwnership/);
+  assert.match(unlockFlow, /if \(ownershipTransferred\) \{\s*releaseUnlockOwnership = null/);
+  assert.match(unlockFlow, /finally \{\s*releaseUnlockOwnership\?\.\(\)/);
+
+  const scheduleStart = playerSource.indexOf('function schedulePendingRewardVerification(');
+  const scheduleEnd = playerSource.indexOf('\n  async function ', scheduleStart + 1);
+  const scheduler = playerSource.slice(scheduleStart, scheduleEnd);
+  assert.match(scheduler, /typeof releaseOwnership !== 'function'/);
+  assert.match(scheduler, /\.finally\(\(\) => \{[\s\S]*?releaseOwnership\(\)/);
 });
 
 test('watch history begins after a player actually opens', () => {

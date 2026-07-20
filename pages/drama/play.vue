@@ -151,6 +151,7 @@
     openPangleDramaPlayer,
   } from '@/pages/drama/services/pangle-content';
   import {
+    acquireAdSessionOwnership,
     adSessionOrchestrator,
     recoverPendingAdSessions,
   } from '@/pages/drama/services/ad-session-runtime';
@@ -263,9 +264,12 @@
     return results;
   }
 
-  function schedulePendingRewardVerification(identity, episodeNo, sessionId) {
+  function schedulePendingRewardVerification(identity, episodeNo, sessionId, releaseOwnership) {
     if (pendingVerificationSessions.has(sessionId)) {
-      return;
+      return false;
+    }
+    if (typeof releaseOwnership !== 'function') {
+      throw new Error('待验奖会话缺少 owner');
     }
     pendingVerificationSessions.add(sessionId);
     adSessionOrchestrator
@@ -298,7 +302,9 @@
       })
       .finally(() => {
         pendingVerificationSessions.delete(sessionId);
+        releaseOwnership();
       });
+    return true;
   }
 
   async function syncServerState() {
@@ -467,8 +473,14 @@
     }
     const unlockEpisode = currentEpisode.value;
     unlocking.value = true;
+    let releaseUnlockOwnership;
     try {
       const identity = currentIdentity();
+      releaseUnlockOwnership = await acquireAdSessionOwnership(identity);
+      if (!releaseUnlockOwnership) {
+        uni.showToast({ title: '广告奖励确认中，请稍后查看', icon: 'none' });
+        return;
+      }
       const dramaId = resolveServerDramaId();
       if (isUnlocked(unlockEpisode)) {
         const snapshot = await refreshAuthoritativeEntitlements(identity);
@@ -533,7 +545,15 @@
           providerShowId: result.status.providerShowId,
         }, unlockEpisode);
       } else if (result.resolution === 'VERIFYING') {
-        schedulePendingRewardVerification(identity, unlockEpisode, result.status.sessionId);
+        const ownershipTransferred = schedulePendingRewardVerification(
+          identity,
+          unlockEpisode,
+          result.status.sessionId,
+          releaseUnlockOwnership,
+        );
+        if (ownershipTransferred) {
+          releaseUnlockOwnership = null;
+        }
         uni.showToast({ title: '奖励确认中，可稍后返回查看', icon: 'none' });
       } else {
         throw new Error('广告奖励未确认');
@@ -544,6 +564,7 @@
         icon: 'none',
       });
     } finally {
+      releaseUnlockOwnership?.();
       unlocking.value = false;
     }
   }

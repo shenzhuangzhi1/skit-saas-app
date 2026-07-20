@@ -175,19 +175,19 @@ export function normalizePangleDrama(raw = {}) {
 export async function openPangleDramaPlayer(options = {}) {
   const plugin = getPanglePlugin();
   if (!plugin || typeof plugin.openPlayer !== 'function') {
-    return { skipped: true, reason: 'pangle-plugin-missing' };
+    throw new Error('原生播放器未启动：bridge unavailable');
   }
 
   await startPangleContentSdk(options);
   const drama = options.drama || {};
   const dramaId = getPositiveDramaId(drama);
   if (!dramaId) {
-    return { skipped: true, reason: 'pangle-drama-id-missing' };
+    throw new Error('原生播放器未启动：drama id unavailable');
   }
   const playerGrant = normalizePlayerGrant(options.playerGrant, dramaId);
   const episode = getPositiveInteger(options.episode) || 1;
   const rewardEvidence = normalizeRewardEvidence(options.rewardEvidence, dramaId, episode);
-  return callNativeMethod(
+  const result = await callNativeMethod(
     plugin,
     'openPlayer',
     {
@@ -201,6 +201,10 @@ export async function openPangleDramaPlayer(options = {}) {
     },
     { timeoutMs: 10000 },
   );
+  if (result?.success !== true || result?.opened !== true) {
+    throw new Error(result?.message || '原生播放器未启动');
+  }
+  return result;
 }
 
 export async function openDirectDramaPlayer(drama, episode = 1, source = 'drama_card') {
