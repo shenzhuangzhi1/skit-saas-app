@@ -11,3 +11,10 @@ test('ordinary app pushes compile and test the Android runtime', () => {
   assert.match(workflow, /:app:testDebugUnitTest/)
   assert.match(workflow, /:app:assembleDebug/)
 })
+
+test('ordinary app pushes use an isolated non-production Pangle settings fixture', () => {
+  assert.match(workflow, /SKIT_PANGLE_SETTINGS_JSON=/)
+  assert.match(workflow, /\$\{RUNNER_TEMP\}\/skit-debug-pangle\/SDK_Setting\.json/)
+  assert.match(workflow, /printf '%s\\n' '\{\}'/)
+  assert.doesNotMatch(workflow, /secrets\.PANGLE_SETTINGS_JSON_BASE64/)
+})

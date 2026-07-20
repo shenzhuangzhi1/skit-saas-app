@@ -57,7 +57,11 @@ jobs:
       - name: Compile and test Android debug runtime
         run: |
           set -euo pipefail
-          gradle --no-daemon -p android-djx-runtime \
+          DEBUG_PANGLE_SETTINGS="${RUNNER_TEMP}/skit-debug-pangle/SDK_Setting.json"
+          mkdir -p "$(dirname "${DEBUG_PANGLE_SETTINGS}")"
+          printf '%s\n' '{}' > "${DEBUG_PANGLE_SETTINGS}"
+          SKIT_PANGLE_SETTINGS_JSON="${DEBUG_PANGLE_SETTINGS}" \
+            gradle --no-daemon -p android-djx-runtime \
             :app:testDebugUnitTest :app:assembleDebug
           jar tf android-djx-runtime/app/build/outputs/apk/debug/app-debug.apk \
             > "${RUNNER_TEMP}/skit-debug-apk-entries.txt"
