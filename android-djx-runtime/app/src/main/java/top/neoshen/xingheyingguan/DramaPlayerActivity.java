@@ -34,6 +34,7 @@ import java.util.List;
 import java.util.Map;
 
 import top.neoshen.xingheyingguan.ad.AdSessionProtocol;
+import top.neoshen.xingheyingguan.ad.NativeAdSessionRecoveryPolicy;
 import top.neoshen.xingheyingguan.ad.NativeEpisodeUnlockPolicy;
 import top.neoshen.xingheyingguan.ad.NativePlayerCallbackEpoch;
 import top.neoshen.xingheyingguan.ad.NativePlayerGrant;
@@ -68,12 +69,15 @@ public class DramaPlayerActivity extends Activity {
     private boolean targetPlaybackLogged;
     private boolean destroyed;
     private final NativeEpisodeUnlockPolicy unlockPolicy = new NativeEpisodeUnlockPolicy();
+    private final NativeAdSessionRecoveryPolicy adSessionRecoveryPolicy =
+            new NativeAdSessionRecoveryPolicy();
     private final NativePlayerCallbackEpoch playerCallbackEpoch =
             new NativePlayerCallbackEpoch();
     private IDJXDramaUnlockListener.CustomAdCallback activeUnlockCallback;
     private AdSessionProtocol activeProtocol;
     private String activeSessionId;
     private String activeProviderShowId;
+    private boolean activeSessionPollOnly;
     private String callbackShowSessionId;
     private String callbackShowId;
     private int pollAttempt;
@@ -296,6 +300,7 @@ public class DramaPlayerActivity extends Activity {
         }
 
         unlockGeneration = access.getGeneration();
+        adSessionRecoveryPolicy.begin(unlockGeneration);
         activeUnlockEpisode = episode;
         activePageGateProgress = Math.max(0, progress);
         activePageGateUnlock = true;
@@ -471,6 +476,7 @@ public class DramaPlayerActivity extends Activity {
                 }
                 try {
                     unlockGeneration = unlockPolicy.begin(targetDramaId, targetEpisode);
+                    adSessionRecoveryPolicy.begin(unlockGeneration);
                 } catch (IllegalArgumentException invalidScope) {
                     callback.onError();
                     return;
@@ -571,9 +577,11 @@ public class DramaPlayerActivity extends Activity {
                         activeProtocol = result.getProtocol();
                         activeSessionId = result.getSessionId();
                         activeProviderShowId = null;
+                        activeSessionPollOnly = false;
                         pollAttempt = 0;
                         if ("REUSED".equals(result.getOutcome())
                                 || "VERIFYING".equals(result.getOutcome())) {
+                            activeSessionPollOnly = true;
                             scheduleNextPoll(
                                     generation, targetEpisode,
                                     activeSessionId, null);
@@ -705,12 +713,18 @@ public class DramaPlayerActivity extends Activity {
                         }
                         Log.i(TAG, "TAKU_SERVER_STATUS rewardVerification="
                                 + status.getRewardVerificationStatus()
+                                + " lifecycle=" + status.getClientLifecycleStatus()
                                 + " entitlement=" + status.getEntitlementStatus()
                                 + " hasShowId=" + (status.getProviderShowId() != null));
                         String serverShowId = expectedShowId;
                         if (serverShowId == null) {
                             serverShowId = status.getProviderShowId();
                             if (serverShowId == null) {
+                                if (retryExpiredPollOnlySession(
+                                        generation, targetEpisode,
+                                        expectedSessionId, status)) {
+                                    return;
+                                }
                                 if ("SIGNED_VERIFIED".equals(
                                         status.getRewardVerificationStatus())
                                         || "GRANTED".equals(status.getEntitlementStatus())) {
@@ -768,6 +782,27 @@ public class DramaPlayerActivity extends Activity {
                                 generation, targetEpisode, expectedSessionId, expectedShowId);
                     }
                 });
+    }
+
+    private boolean retryExpiredPollOnlySession(
+            long generation, int targetEpisode, String expectedSessionId,
+            SkitNativeApiClient.SessionStatus status) {
+        if ((callbackShowSessionId != null || callbackShowId != null)
+                || !adSessionRecoveryPolicy.consumeIfRecoverable(
+                generation, activeSessionPollOnly,
+                expectedSessionId, status.getSessionId(),
+                status.getClientLifecycleStatus(),
+                status.getRewardVerificationStatus(), status.getProviderShowId())) {
+            return false;
+        }
+        Log.i(TAG, "Replacing expired poll-only ad session within the active unlock flow");
+        activeProtocol = null;
+        activeSessionId = null;
+        activeProviderShowId = null;
+        activeSessionPollOnly = false;
+        pollAttempt = 0;
+        createServerAdSession(targetEpisode, generation);
+        return true;
     }
 
     private void verifyAuthoritativeEpisodeEntitlement(int targetEpisode, long generation,
@@ -942,6 +977,7 @@ public class DramaPlayerActivity extends Activity {
     }
 
     private void clearActiveUnlock() {
+        adSessionRecoveryPolicy.cancel(unlockGeneration);
         unlockPolicy.cancel(unlockGeneration);
         handler.removeCallbacksAndMessages(null);
         if (takuRewardedAdController != null) {
@@ -953,6 +989,7 @@ public class DramaPlayerActivity extends Activity {
         activeProtocol = null;
         activeSessionId = null;
         activeProviderShowId = null;
+        activeSessionPollOnly = false;
         callbackShowSessionId = null;
         callbackShowId = null;
         pollAttempt = 0;
@@ -1026,6 +1063,7 @@ public class DramaPlayerActivity extends Activity {
         destroyed = true;
         fragmentTransactionsAllowed = false;
         playerCallbackEpoch.invalidate();
+        adSessionRecoveryPolicy.cancel(unlockGeneration);
         unlockPolicy.cancel(unlockGeneration);
         handler.removeCallbacksAndMessages(null);
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);

@@ -41,6 +41,8 @@ final class SkitNativeApiClient {
     private static final Pattern SESSION_ID = Pattern.compile("[A-Za-z0-9_-]{22}");
     private static final Pattern SAFE_PROTOCOL_TEXT =
             Pattern.compile("[A-Za-z0-9._:/-]{1,128}");
+    private static final Pattern CLIENT_LIFECYCLE_STATUS = Pattern.compile(
+            "CREATED|LOADING|SHOWN|CLIENT_REWARDED|CLOSED|FAILED|LOAD_EXPIRED");
 
     interface Callback<T> {
         void onSuccess(T result);
@@ -74,13 +76,16 @@ final class SkitNativeApiClient {
 
     static final class SessionStatus {
         private final String sessionId;
+        private final String clientLifecycleStatus;
         private final String rewardVerificationStatus;
         private final String entitlementStatus;
         private final String providerShowId;
 
-        SessionStatus(String sessionId, String rewardVerificationStatus,
-                      String entitlementStatus, String providerShowId) {
+        SessionStatus(String sessionId, String clientLifecycleStatus,
+                      String rewardVerificationStatus, String entitlementStatus,
+                      String providerShowId) {
             this.sessionId = sessionId;
+            this.clientLifecycleStatus = clientLifecycleStatus;
             this.rewardVerificationStatus = rewardVerificationStatus;
             this.entitlementStatus = entitlementStatus;
             this.providerShowId = providerShowId;
@@ -88,6 +93,10 @@ final class SkitNativeApiClient {
 
         String getSessionId() {
             return sessionId;
+        }
+
+        String getClientLifecycleStatus() {
+            return clientLifecycleStatus;
         }
 
         String getRewardVerificationStatus() {
@@ -348,15 +357,23 @@ final class SkitNativeApiClient {
     }
 
     private static SessionStatus parseSessionStatus(JSONObject data) throws IOException {
-        String sessionId = data.optString("sessionId", "");
-        String reward = data.optString("rewardVerificationStatus", "");
-        String entitlement = data.optString("entitlementStatus", "");
-        String showId = data.optString("providerShowId", "");
-        if (!sessionId.matches("[A-Za-z0-9_-]{22}") || reward.length() == 0
-                || entitlement.length() == 0) {
+        return parseSessionStatus(
+                data.optString("sessionId", ""),
+                data.optString("clientLifecycleStatus", ""),
+                data.optString("rewardVerificationStatus", ""),
+                data.optString("entitlementStatus", ""),
+                data.optString("providerShowId", ""));
+    }
+
+    static SessionStatus parseSessionStatus(String sessionId, String lifecycle,
+                                            String reward, String entitlement,
+                                            String showId) throws IOException {
+        if (!matches(SESSION_ID, sessionId)
+                || !matches(CLIENT_LIFECYCLE_STATUS, lifecycle)
+                || reward.length() == 0 || entitlement.length() == 0) {
             throw new IOException("Invalid native session response");
         }
-        return new SessionStatus(sessionId, reward, entitlement,
+        return new SessionStatus(sessionId, lifecycle, reward, entitlement,
                 showId.length() == 0 ? null : showId);
     }
 

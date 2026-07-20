@@ -62,6 +62,41 @@ test('native player polls in-flight or verifying sessions without starting anoth
   assert.match(reusedBranch, /activeSessionId/);
 });
 
+test('native player replaces a terminal orphaned poll-only session once in the same unlock flow', () => {
+  const player = read(
+    'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/DramaPlayerActivity.java',
+  );
+  const apiClient = read(
+    'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/SkitNativeApiClient.java',
+  );
+  const pollFlow = between(
+    player,
+    'private void pollServerReward',
+    'private void verifyAuthoritativeEpisodeEntitlement',
+  );
+
+  assert.match(apiClient, /private final String clientLifecycleStatus/);
+  assert.match(apiClient, /String getClientLifecycleStatus\(\)/);
+  assert.match(
+    apiClient,
+    /data\.optString\("clientLifecycleStatus", ""\)[\s\S]*?CLIENT_LIFECYCLE_STATUS/,
+  );
+  assert.match(
+    player,
+    /"REUSED"\.equals\(result\.getOutcome\(\)\)[\s\S]*?activeSessionPollOnly = true/,
+  );
+  assert.match(
+    pollFlow,
+    /serverShowId == null[\s\S]*?retryExpiredPollOnlySession\([\s\S]*?return/,
+  );
+  assert.match(
+    player,
+    /private boolean retryExpiredPollOnlySession[\s\S]*?consumeIfRecoverable\([\s\S]*?status\.getClientLifecycleStatus\(\)[\s\S]*?status\.getRewardVerificationStatus\(\)[\s\S]*?status\.getProviderShowId\(\)[\s\S]*?activeSessionId = null[\s\S]*?createServerAdSession\(targetEpisode, generation\)[\s\S]*?return true/,
+  );
+  assert.match(player, /adSessionRecoveryPolicy\.begin\(unlockGeneration\)/);
+  assert.match(player, /adSessionRecoveryPolicy\.cancel\(unlockGeneration\)/);
+});
+
 test('native Taku bridge terminates callbacks on protocol or startup errors', () => {
   const bridge = read(
     'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/SkitTakuAdBridge.java',
