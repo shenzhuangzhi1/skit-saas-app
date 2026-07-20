@@ -9,6 +9,7 @@ import java.util.List;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
 
 public class NativeEpisodeUnlockPolicyTest {
@@ -53,6 +54,59 @@ public class NativeEpisodeUnlockPolicyTest {
         long episodeCAfterCancelGeneration = (Long) begin.invoke(policy, dramaId, 9);
         assertTrue((Boolean) consumeIfEntitled.invoke(
                 policy, episodeCAfterCancelGeneration, dramaId, 9, Arrays.asList(9)));
+    }
+
+    @Test
+    public void eachPageBoundaryRequiresItsOwnServerEntitlementAndGeneration() throws Exception {
+        Class<?> type = policyType();
+        Object policy = type.getConstructor().newInstance();
+        Method request;
+        try {
+            request = type.getMethod("request", long.class, int.class, List.class);
+        } catch (NoSuchMethodException missingBoundaryGate) {
+            throw new AssertionError(
+                    "Native page changes are not protected by an episode access gate",
+                    missingBoundaryGate);
+        }
+        Method consumeIfEntitled = type.getMethod(
+                "consumeIfEntitled", long.class, long.class, int.class, List.class);
+
+        long dramaId = 901L;
+        Object episodeOne = request.invoke(policy, dramaId, 1, Arrays.<Integer>asList());
+        assertEquals("REQUIRE_AD", decisionOf(episodeOne));
+        long episodeOneGeneration = generationOf(episodeOne);
+
+        Object duplicateEpisodeOne = request.invoke(
+                policy, dramaId, 1, Arrays.<Integer>asList());
+        assertEquals("WAIT", decisionOf(duplicateEpisodeOne));
+        assertEquals(episodeOneGeneration, generationOf(duplicateEpisodeOne));
+
+        Object conflictingEpisodeTwo = request.invoke(
+                policy, dramaId, 2, Arrays.<Integer>asList());
+        assertEquals("CONFLICT", decisionOf(conflictingEpisodeTwo));
+        assertEquals(episodeOneGeneration, generationOf(conflictingEpisodeTwo));
+
+        assertTrue((Boolean) consumeIfEntitled.invoke(
+                policy, episodeOneGeneration, dramaId, 1, Arrays.asList(1)));
+        Object entitledEpisodeOne = request.invoke(policy, dramaId, 1, Arrays.asList(1));
+        assertEquals("ALLOW", decisionOf(entitledEpisodeOne));
+
+        Object episodeTwo = request.invoke(policy, dramaId, 2, Arrays.asList(1));
+        assertEquals("REQUIRE_AD", decisionOf(episodeTwo));
+        long episodeTwoGeneration = generationOf(episodeTwo);
+        assertNotEquals(episodeOneGeneration, episodeTwoGeneration);
+        assertFalse((Boolean) consumeIfEntitled.invoke(
+                policy, episodeOneGeneration, dramaId, 2, Arrays.asList(1, 2)));
+        assertTrue((Boolean) consumeIfEntitled.invoke(
+                policy, episodeTwoGeneration, dramaId, 2, Arrays.asList(1, 2)));
+    }
+
+    private static String decisionOf(Object request) throws Exception {
+        return String.valueOf(request.getClass().getMethod("getDecision").invoke(request));
+    }
+
+    private static long generationOf(Object request) throws Exception {
+        return (Long) request.getClass().getMethod("getGeneration").invoke(request);
     }
 
     private static Class<?> policyType() {

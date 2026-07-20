@@ -10,9 +10,18 @@ def configValue = { String key, String fallback ->
 def javaString = { String value ->
     return '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"'
 }
+def sha256Hex = { String value ->
+    return java.security.MessageDigest.getInstance('SHA-256')
+            .digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+            .encodeHex()
+            .toString()
+}
 
 def skitApplicationId = configValue('SKIT_APPLICATION_ID', 'top.neoshen.xingheyingguan')
 def skitAppName = configValue('SKIT_APP_NAME', '短剧 SaaS')
+def skitAgentCode = configValue('SKIT_AGENT_CODE', '')
+def skitProfileVersion = configValue('SKIT_PROFILE_VERSION', '')
+def skitProfileSha256 = configValue('SKIT_PROFILE_SHA256', '')
 def pangleAppId = configValue('SKIT_PANGLE_APP_ID', '5850994')
 def pangleSettingAsset = 'SDK_Setting.json'
 def h5AssetsDir = file(configValue(
@@ -48,10 +57,66 @@ def releaseKeyPassword = configValue('SKIT_RELEASE_KEY_PASSWORD', '')
 def releaseCertSha256 = configValue('SKIT_RELEASE_CERT_SHA256', '')
 
 def prepareSkitRuntimeAssets = tasks.register('prepareSkitRuntimeAssets', Sync) {
+    inputs.property('skitAgentCode', skitAgentCode)
+    inputs.property('skitProfileVersion', skitProfileVersion)
+    inputs.property('skitProfileSha256', skitProfileSha256)
+    inputs.property('skitApiBaseUrlSha256', sha256Hex(apiBaseUrl))
     into generatedRuntimeAssetsDir
     doFirst {
         if (!new File(h5AssetsDir, 'index.html').isFile()) {
             throw new GradleException("SKIT_H5_DIR must contain index.html: ${h5AssetsDir}")
+        }
+        if (!skitAgentCode.isEmpty()) {
+            if (!skitAgentCode.matches('[A-Z0-9_-]{3,32}')) {
+                throw new GradleException('SKIT_AGENT_CODE has an invalid format')
+            }
+            if (!skitProfileVersion.matches('[1-9][0-9]*')) {
+                throw new GradleException('SKIT_PROFILE_VERSION is required for an agent build')
+            }
+            if (!skitProfileSha256.matches('[a-f0-9]{64}')) {
+                throw new GradleException('SKIT_PROFILE_SHA256 is required for an agent build')
+            }
+            def marker = new File(h5AssetsDir, '.skit-h5-build-profile.json')
+            if (!marker.isFile()) {
+                throw new GradleException('H5 fallback profile marker is missing')
+            }
+            def markerProfile
+            try {
+                markerProfile = new groovy.json.JsonSlurper().parse(marker, 'UTF-8')
+            } catch (Exception invalidMarker) {
+                throw new GradleException('H5 fallback profile marker is invalid', invalidMarker)
+            }
+            def markerKeys = [
+                    'agentCode',
+                    'profileVersion',
+                    'profileSha256',
+                    'apiBaseUrlSha256'
+            ] as Set
+            if (!(markerProfile instanceof Map)
+                    || markerProfile.keySet().toSet() != markerKeys) {
+                throw new GradleException('H5 fallback profile marker is invalid')
+            }
+            if (markerProfile.agentCode != skitAgentCode) {
+                throw new GradleException('H5 fallback profile does not match SKIT_AGENT_CODE')
+            }
+            if (!(markerProfile.profileVersion instanceof Number)
+                    || markerProfile.profileVersion.toString() != skitProfileVersion) {
+                throw new GradleException('H5 fallback profile does not match SKIT_PROFILE_VERSION')
+            }
+            if (markerProfile.profileSha256 != skitProfileSha256) {
+                throw new GradleException('H5 fallback profile does not match SKIT_PROFILE_SHA256')
+            }
+            def apiBaseUrlSha256 = sha256Hex(apiBaseUrl)
+            if (markerProfile.apiBaseUrlSha256 != apiBaseUrlSha256) {
+                throw new GradleException('H5 fallback profile does not match SKIT_API_BASE_URL')
+            }
+            def loginAssetsDir = new File(h5AssetsDir, 'assets')
+            def loginAssets = loginAssetsDir.listFiles()?.findAll {
+                it.isFile() && it.name.startsWith('pages-auth-index') && it.name.endsWith('.js')
+            } ?: []
+            if (!loginAssets.any { it.getText('UTF-8').contains("\"${skitAgentCode}\"") }) {
+                throw new GradleException('H5 fallback profile does not match SKIT_AGENT_CODE')
+            }
         }
         if (!pangleSettingSource.isFile()) {
             throw new GradleException(
@@ -99,6 +164,10 @@ def takuDebuggerConfigured = !takuDebugDeviceId.isEmpty()
 if (takuDebuggerConfigured
         && (takuDebugDeviceId.isEmpty() || Integer.parseInt(takuDebugNetworkFirmId) <= 0)) {
     throw new GradleException('Taku debugger config requires both device ID and network firm ID')
+}
+def localApiEndpoint = apiBaseUrl == 'http://127.0.0.1:48080'
+if (!localApiEndpoint && takuAppKey.isEmpty()) {
+    throw new GradleException('Android builds for non-local APIs require SKIT_TAKU_APP_KEY')
 }
 
 android {

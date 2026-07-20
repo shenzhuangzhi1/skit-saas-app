@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 
 import okhttp3.HttpUrl;
 import okhttp3.MediaType;
@@ -37,6 +38,9 @@ final class SkitNativeApiClient {
     static final String NATIVE_API_PATH = "/skit/member/native";
     private static final int MAX_RESPONSE_CHARS = 1024 * 1024;
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
+    private static final Pattern SESSION_ID = Pattern.compile("[A-Za-z0-9_-]{22}");
+    private static final Pattern SAFE_PROTOCOL_TEXT =
+            Pattern.compile("[A-Za-z0-9._:/-]{1,128}");
 
     interface Callback<T> {
         void onSuccess(T result);
@@ -47,10 +51,12 @@ final class SkitNativeApiClient {
     static final class CreateResult {
         private final String outcome;
         private final AdSessionProtocol protocol;
+        private final String sessionId;
 
-        CreateResult(String outcome, AdSessionProtocol protocol) {
+        CreateResult(String outcome, AdSessionProtocol protocol, String sessionId) {
             this.outcome = outcome;
             this.protocol = protocol;
+            this.sessionId = sessionId;
         }
 
         String getOutcome() {
@@ -59,6 +65,10 @@ final class SkitNativeApiClient {
 
         AdSessionProtocol getProtocol() {
             return protocol;
+        }
+
+        String getSessionId() {
+            return sessionId;
         }
     }
 
@@ -163,24 +173,52 @@ final class SkitNativeApiClient {
         JSONObject request = new JSONObject();
         put(request, "dramaId", dramaId);
         put(request, "episodeNo", episodeNo);
-        execute("POST", NATIVE_API_PATH + "/ad-sessions", request, data -> {
-            String outcome = data.optString("outcome", "");
-            if ("ALREADY_ENTITLED".equals(outcome)) {
-                return new CreateResult(outcome, null);
+        execute("POST", NATIVE_API_PATH + "/ad-sessions", request, data ->
+                parseCreateResult(
+                        data.optString("outcome", ""),
+                        data.optInt("protocolVersion", -1),
+                        data.optString("sessionId", ""),
+                        data.optString("provider", ""),
+                        data.optString("placementId", ""),
+                        data.optString("userId", ""),
+                        data.optString("customData", ""),
+                        data.optString("scene", "")), callback);
+    }
+
+    static CreateResult parseCreateResult(String outcome, int protocolVersion,
+                                          String sessionId, String provider,
+                                          String placementId, String userId,
+                                          String customData, String scene) throws IOException {
+        if ("ALREADY_ENTITLED".equals(outcome)) {
+            return new CreateResult(outcome, null, null);
+        }
+        if (!"CREATED".equals(outcome) && !"REUSED".equals(outcome)
+                && !"VERIFYING".equals(outcome)) {
+            throw new IOException("Invalid ad session outcome");
+        }
+        if ("VERIFYING".equals(outcome)) {
+            if (protocolVersion != AdSessionProtocol.SUPPORTED_VERSION
+                    || !matches(SESSION_ID, sessionId)
+                    || !AdSessionProtocol.SUPPORTED_PROVIDER.equals(provider)
+                    || !matches(SAFE_PROTOCOL_TEXT, placementId)
+                    || !matches(SAFE_PROTOCOL_TEXT, userId)
+                    || !AdSessionProtocol.SUPPORTED_SCENE.equals(scene)) {
+                throw new IOException("Invalid ad session polling reference");
             }
-            if (!"CREATED".equals(outcome) && !"REUSED".equals(outcome)) {
-                throw new IOException("Invalid ad session outcome");
-            }
+            return new CreateResult(outcome, null, sessionId);
+        }
+        try {
             AdSessionProtocol protocol = new AdSessionProtocol(
-                    data.optInt("protocolVersion", -1),
-                    data.optString("sessionId", ""),
-                    data.optString("provider", ""),
-                    data.optString("placementId", ""),
-                    data.optString("userId", ""),
-                    data.optString("customData", ""),
-                    data.optString("scene", ""));
-            return new CreateResult(outcome, protocol);
-        }, callback);
+                    protocolVersion, sessionId, provider, placementId,
+                    userId, customData, scene);
+            return new CreateResult(outcome, protocol, protocol.getSessionId());
+        } catch (IllegalArgumentException invalidProtocol) {
+            throw new IOException("Invalid native ad session protocol", invalidProtocol);
+        }
+    }
+
+    private static boolean matches(Pattern pattern, String value) {
+        return value != null && pattern.matcher(value).matches();
     }
 
     void recordTelemetry(TakuTelemetry telemetry, Callback<SessionStatus> callback) {

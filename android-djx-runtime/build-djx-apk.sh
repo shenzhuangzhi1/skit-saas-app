@@ -53,6 +53,15 @@ assert_profile_override() {
 AGENT_CODE="${SKIT_AGENT_CODE:-$PROFILE_CODE}"
 PROFILE_CODE_VALUE="$(profile_value profileCode)"
 PROFILE_VERSION="$(profile_value profileVersion)"
+PROFILE_SHA256="$(
+  python3 - "$PROFILE_FILE" <<'PY'
+import hashlib
+import sys
+
+with open(sys.argv[1], "rb") as source:
+    print(hashlib.sha256(source.read()).hexdigest())
+PY
+)"
 PROFILE_TENANT_ID="$(profile_value tenantId)"
 PROFILE_ID="$(profile_value profileId)"
 AD_PROVIDER="$(profile_value adProvider)"
@@ -81,6 +90,10 @@ if [[ -n "${SKIT_TENANT_ID:-}" && "$SKIT_TENANT_ID" != "$PROFILE_TENANT_ID" ]]; 
   echo "SKIT_TENANT_ID must equal SKIT_AGENT_CODE" >&2
   exit 1
 fi
+assert_profile_override SKIT_PROFILE_VERSION "$PROFILE_VERSION"
+assert_profile_override SKIT_PROFILE_SHA256 "$PROFILE_SHA256"
+export SKIT_PROFILE_VERSION="$PROFILE_VERSION"
+export SKIT_PROFILE_SHA256="$PROFILE_SHA256"
 export SKIT_AGENT_CODE="$AGENT_CODE"
 export SKIT_TENANT_ID="$PROFILE_TENANT_ID"
 

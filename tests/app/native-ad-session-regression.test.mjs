@@ -15,9 +15,12 @@ function between(source, start, end) {
   return source.slice(startIndex, endIndex);
 }
 
-test('native player polls REUSED sessions without starting another Taku ad', () => {
+test('native player polls in-flight or verifying sessions without starting another Taku ad', () => {
   const player = read(
     'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/DramaPlayerActivity.java',
+  );
+  const apiClient = read(
+    'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/SkitNativeApiClient.java',
   );
   const createFlow = between(
     player,
@@ -30,15 +33,33 @@ test('native player polls REUSED sessions without starting another Taku ad', () 
     /"ALREADY_ENTITLED"\.equals\(result\.getOutcome\(\)\)[\s\S]*?verifyAuthoritativeEpisodeEntitlement/,
   );
 
-  const reusedStart = createFlow.indexOf('"REUSED".equals(result.getOutcome())');
+  const reusedStart = createFlow.indexOf(
+    '"REUSED".equals(result.getOutcome())\n                                || "VERIFYING".equals(result.getOutcome())',
+  );
   const createdStart = createFlow.indexOf('"CREATED".equals(result.getOutcome())');
-  assert.notEqual(reusedStart, -1, 'REUSED must have its own native outcome branch');
+  assert.notEqual(
+    reusedStart,
+    -1,
+    'REUSED and VERIFYING must share a poll-only native outcome branch',
+  );
   assert.notEqual(createdStart, -1, 'CREATED must have its own native outcome branch');
 
   const reusedBranch = createFlow.slice(reusedStart, createdStart);
   assert.match(reusedBranch, /scheduleNextPoll\(/);
   assert.doesNotMatch(reusedBranch, /takuRewardedAdController\.start\(/);
   assert.match(createFlow.slice(createdStart), /takuRewardedAdController\.start\(/);
+  assert.match(
+    apiClient,
+    /!"CREATED"\.equals\(outcome\)\s*&&\s*!"REUSED"\.equals\(outcome\)\s*&&\s*!"VERIFYING"\.equals\(outcome\)/,
+    'native API parser must accept the server settlement-pending outcome',
+  );
+  assert.match(
+    apiClient,
+    /"VERIFYING"\.equals\(outcome\)[\s\S]*?new CreateResult\(outcome, null, sessionId\)/,
+    'VERIFYING must create a poll-only reference without inventing an ad token',
+  );
+  assert.match(createFlow, /activeSessionId = result\.getSessionId\(\)/);
+  assert.match(reusedBranch, /activeSessionId/);
 });
 
 test('native Taku bridge terminates callbacks on protocol or startup errors', () => {

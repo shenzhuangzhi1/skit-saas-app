@@ -80,6 +80,66 @@ test('native bridge and activity never read H5 or Intent unlock-range policy', (
   assert.match(player, /NativeEpisodeUnlockPolicy\.LOCK_SET/);
 });
 
+test('native player enforces server entitlement again at every DJX page boundary', () => {
+  const player = read(
+    'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/DramaPlayerActivity.java',
+  );
+
+  assert.match(player, /onDJXPageChange\([\s\S]*?enforceEpisodeAccess/);
+  assert.match(player, /onDJXVideoPlay\([\s\S]*?enforceEpisodeAccess/);
+  assert.match(player, /unlockPolicy\.request\(/);
+  assert.match(player, /activePageGateUnlock/);
+  assert.match(player, /\.hideRewardDialog\(true\)/);
+  assert.match(player, /suspendPlayerForGate\([\s\S]*?removePlayerFragment/);
+  assert.match(player, /removePlayerFragment\([\s\S]*?commitNowAllowingStateLoss/);
+  assert.doesNotMatch(player, /onSuccess\(List<Integer> ignoredServerEntitlements\)/);
+});
+
+test('DJX custom-ad scope comes from the exact unlock-start evidence', () => {
+  const player = read(
+    'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/DramaPlayerActivity.java',
+  );
+
+  assert.match(player, /unlockFlowStart\([\s\S]*?capturePendingSdkUnlockScope/);
+  assert.match(player, /showCustomAd\([\s\S]*?pendingEpisode/);
+  assert.doesNotMatch(player, /drama == null \|\| drama\.index <= 0[\s\S]*?initialEpisode/);
+});
+
+test('DJX unlock callbacks are bound to the current widget epoch and preserve SDK unlock ownership', () => {
+  const player = read(
+    'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/DramaPlayerActivity.java',
+  );
+
+  assert.match(player, /createUnlockListener\(dramaId, callbackEpoch\)/);
+  assert.match(
+    player,
+    /createUnlockListener\(long fallbackDramaId,\s*long callbackEpoch\)[\s\S]*?unlockFlowStart[\s\S]*?playerCallbackEpoch\.isCurrent\(callbackEpoch\)/,
+  );
+  assert.match(
+    player,
+    /unlockFlowEnd[\s\S]*?playerCallbackEpoch\.isCurrent\(callbackEpoch\)/,
+  );
+  assert.match(
+    player,
+    /showCustomAd[\s\S]*?playerCallbackEpoch\.isCurrent\(callbackEpoch\)[\s\S]*?callback\.onError\(\)/,
+  );
+  assert.match(
+    player,
+    /Decision\.WAIT[\s\S]*?activeUnlockCallback != null[\s\S]*?showGateOverlay\(\)[\s\S]*?return false/,
+    'the page callback must not destroy the widget that owns an active SDK custom-ad callback',
+  );
+});
+
+test('DJX never receives reward verification without signed provider-show provenance', () => {
+  const player = read(
+    'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/DramaPlayerActivity.java',
+  );
+
+  assert.match(player, /getVerifiedRewardProvenance/);
+  assert.match(player, /proof == null[\s\S]*?failActiveUnlock/);
+  assert.match(player, /providerShowId/);
+});
+
 test('reward status and already-entitled outcomes still require exact episode entitlement', () => {
   const player = read(
     'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/DramaPlayerActivity.java',

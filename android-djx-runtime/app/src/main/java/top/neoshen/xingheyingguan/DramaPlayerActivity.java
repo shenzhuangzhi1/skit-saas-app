@@ -2,6 +2,8 @@ package top.neoshen.xingheyingguan;
 
 import android.app.Activity;
 import android.app.Fragment;
+import android.graphics.Color;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -25,12 +27,15 @@ import com.bytedance.sdk.djx.model.DJXDramaUnlockMethod;
 import com.bytedance.sdk.djx.model.DJXUnlockModeType;
 import com.bytedance.sdk.djx.params.DJXWidgetDramaDetailParams;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import top.neoshen.xingheyingguan.ad.AdSessionProtocol;
 import top.neoshen.xingheyingguan.ad.NativeEpisodeUnlockPolicy;
+import top.neoshen.xingheyingguan.ad.NativePlayerCallbackEpoch;
 import top.neoshen.xingheyingguan.ad.NativePlayerGrant;
 import top.neoshen.xingheyingguan.ad.NativeRewardGate;
 import top.neoshen.xingheyingguan.ad.PlaybackEvidenceScope;
@@ -52,6 +57,9 @@ public class DramaPlayerActivity extends Activity {
     private SkitNativeApiClient nativeApiClient;
     private NativePlayerGrant playerGrant;
     private FrameLayout root;
+    private FrameLayout playerContainer;
+    private Fragment playerFragment;
+    private View gateOverlay;
     private long dramaId;
     private int initialEpisode;
     private String launchSessionRef;
@@ -60,8 +68,11 @@ public class DramaPlayerActivity extends Activity {
     private boolean targetPlaybackLogged;
     private boolean destroyed;
     private final NativeEpisodeUnlockPolicy unlockPolicy = new NativeEpisodeUnlockPolicy();
+    private final NativePlayerCallbackEpoch playerCallbackEpoch =
+            new NativePlayerCallbackEpoch();
     private IDJXDramaUnlockListener.CustomAdCallback activeUnlockCallback;
     private AdSessionProtocol activeProtocol;
+    private String activeSessionId;
     private String activeProviderShowId;
     private String callbackShowSessionId;
     private String callbackShowId;
@@ -69,6 +80,13 @@ public class DramaPlayerActivity extends Activity {
     private int launchEvidencePollAttempt;
     private long unlockGeneration;
     private int activeUnlockEpisode;
+    private List<Integer> grantedEpisodes = Collections.emptyList();
+    private boolean activePageGateUnlock;
+    private int activePageGateProgress;
+    private int lastAuthorizedEpisode;
+    private boolean fragmentTransactionsAllowed;
+    private int pendingResumeEpisode;
+    private int pendingResumeProgress;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -76,6 +94,11 @@ public class DramaPlayerActivity extends Activity {
         Log.i(TAG, "creating protected player activity");
         root = new FrameLayout(this);
         root.setId(View.generateViewId());
+        playerContainer = new FrameLayout(this);
+        playerContainer.setId(View.generateViewId());
+        root.addView(playerContainer, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT));
         setContentView(root, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT));
@@ -114,10 +137,14 @@ public class DramaPlayerActivity extends Activity {
         takuRewardedAdController = new TakuRewardedAdController(this);
         nativeApiClient.getEntitlements(new SkitNativeApiClient.Callback<List<Integer>>() {
             @Override
-            public void onSuccess(List<Integer> ignoredServerEntitlements) {
-                if (!destroyed) {
+            public void onSuccess(List<Integer> serverEntitlements) {
+                if (destroyed) {
+                    return;
+                }
+                updateGrantedEpisodes(serverEntitlements);
+                if (enforceEpisodeAccess(initialEpisode, progress)) {
                     Log.i(TAG, "native entitlement check passed; initializing DJX player");
-                    initializePlayer(progress);
+                    initializePlayer(initialEpisode, progress);
                 }
             }
 
@@ -140,12 +167,26 @@ public class DramaPlayerActivity extends Activity {
                 System.currentTimeMillis());
     }
 
-    private void initializePlayer(int progress) {
+    private void initializePlayer(int episode, int progress) {
+        if (destroyed || isFinishing()) {
+            return;
+        }
+        if (!canAttachPlayer()) {
+            pendingResumeEpisode = episode;
+            pendingResumeProgress = Math.max(0, progress);
+            return;
+        }
+        pendingResumeEpisode = 0;
+        pendingResumeProgress = 0;
+        long callbackEpoch = playerCallbackEpoch.next();
+        removePlayerFragment();
+        destroyWidget();
+        hideGateOverlay();
         Log.i(TAG, "creating DJX detail widget");
         DJXDramaDetailConfig detailConfig = DJXDramaDetailConfig
                 .obtain(DJXDramaUnlockAdMode.MODE_SPECIFIC,
                         NativeEpisodeUnlockPolicy.FREE_SET,
-                        createUnlockListener(dramaId))
+                        createUnlockListener(dramaId, callbackEpoch))
                 .infiniteScrollEnabled(false)
                 .hideCellularToast(true)
                 .hideRewardDialog(true)
@@ -153,12 +194,28 @@ public class DramaPlayerActivity extends Activity {
                 .listener(new IDJXDramaListener() {
                     @Override
                     public void onDJXClose() {
+                        if (!playerCallbackEpoch.isCurrent(callbackEpoch)) {
+                            Log.d(TAG, "Ignoring stale DJX close callback");
+                            return;
+                        }
                         Log.i(TAG, "DJX detail widget closed");
                         finish();
                     }
 
                     @Override
+                    public void onDJXPageChange(int position, Map<String, Object> extra) {
+                        if (!playerCallbackEpoch.isCurrent(callbackEpoch)) {
+                            return;
+                        }
+                        enforceEpisodeAccess(extra, 0);
+                    }
+
+                    @Override
                     public void onDJXVideoPlay(Map<String, Object> extra) {
+                        if (!playerCallbackEpoch.isCurrent(callbackEpoch)
+                                || !enforceEpisodeAccess(extra, 0)) {
+                            return;
+                        }
                         if (!targetPlaybackLogged
                                 && playbackEvidenceScope.matchesTargetVideo(extra)) {
                             targetPlaybackLogged = true;
@@ -169,6 +226,9 @@ public class DramaPlayerActivity extends Activity {
                     @Override
                     public void onDJXRequestFail(int code, String message,
                                                  Map<String, Object> extra) {
+                        if (!playerCallbackEpoch.isCurrent(callbackEpoch)) {
+                            return;
+                        }
                         if (!targetPlaybackLogged
                                 && playbackEvidenceScope.matchesTargetVideo(extra)) {
                             Log.w(TAG, playbackEvidenceScope.requestFailureEvidence(code));
@@ -177,14 +237,164 @@ public class DramaPlayerActivity extends Activity {
                 });
 
         DJXWidgetDramaDetailParams params = DJXWidgetDramaDetailParams
-                .obtain(dramaId, initialEpisode, detailConfig)
+                .obtain(dramaId, episode, detailConfig)
                 .currentDuration(progress);
         widget = DJXSdk.factory().createDramaDetail(params);
-        Fragment fragment = widget.getFragment2();
+        playerFragment = widget.getFragment2();
         getFragmentManager().beginTransaction()
-                .replace(root.getId(), fragment, String.valueOf(root.getId()))
-                .commit();
+                .replace(playerContainer.getId(), playerFragment,
+                        String.valueOf(playerContainer.getId()))
+                .commitNow();
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+    }
+
+    private boolean canAttachPlayer() {
+        return fragmentTransactionsAllowed
+                && (Build.VERSION.SDK_INT < Build.VERSION_CODES.O
+                || !getFragmentManager().isStateSaved());
+    }
+
+    private boolean enforceEpisodeAccess(Map<String, Object> evidence, int progress) {
+        int episode = episodeFromEvidence(evidence);
+        if (episode <= 0) {
+            Log.w(TAG, "EPISODE_GATE invalid DJX playback evidence");
+            suspendPlayerForGate();
+            failAndFinish("剧集校验失败，请返回重试");
+            return false;
+        }
+        return enforceEpisodeAccess(episode, progress);
+    }
+
+    private boolean enforceEpisodeAccess(int episode, int progress) {
+        NativeEpisodeUnlockPolicy.AccessRequest access;
+        try {
+            access = unlockPolicy.request(dramaId, episode, grantedEpisodes);
+        } catch (IllegalArgumentException invalidScope) {
+            failAndFinish("剧集校验失败，请返回重试");
+            return false;
+        }
+        if (access.getDecision() == NativeEpisodeUnlockPolicy.Decision.ALLOW) {
+            lastAuthorizedEpisode = episode;
+            return true;
+        }
+        if (access.getDecision() == NativeEpisodeUnlockPolicy.Decision.WAIT) {
+            if (activeUnlockCallback != null && !activePageGateUnlock) {
+                showGateOverlay();
+                return false;
+            }
+            suspendPlayerForGate();
+            return false;
+        }
+        if (access.getDecision() == NativeEpisodeUnlockPolicy.Decision.CONFLICT) {
+            Log.w(TAG, "EPISODE_GATE conflicting page while an unlock is active");
+            suspendPlayerForGate();
+            long activeGeneration = unlockGeneration;
+            int activeEpisode = activeUnlockEpisode;
+            failActiveUnlock(activeGeneration, activeEpisode, "剧集切换状态异常，请重试");
+            finish();
+            return false;
+        }
+
+        unlockGeneration = access.getGeneration();
+        activeUnlockEpisode = episode;
+        activePageGateProgress = Math.max(0, progress);
+        activePageGateUnlock = true;
+        Log.i(TAG, "EPISODE_GATE REQUIRE_AD dramaId=" + dramaId
+                + " episode=" + episode + " generation=" + unlockGeneration);
+        suspendPlayerForGate();
+        verifyExistingEntitlementOrStartAd(episode, unlockGeneration);
+        return false;
+    }
+
+    private int episodeFromEvidence(Map<String, ? extends Object> evidence) {
+        if (evidence == null || !exactLong(evidence.get("drama_id"), dramaId)) {
+            return 0;
+        }
+        Object value = evidence.get("index");
+        if (!(value instanceof Number)) {
+            return 0;
+        }
+        Number number = (Number) value;
+        long episode = number.longValue();
+        double doubleValue = number.doubleValue();
+        if (!Double.isFinite(doubleValue) || doubleValue != (double) episode
+                || episode <= 0L || episode > Integer.MAX_VALUE) {
+            return 0;
+        }
+        return (int) episode;
+    }
+
+    private static boolean exactLong(Object value, long expected) {
+        if (!(value instanceof Number)) {
+            return false;
+        }
+        Number number = (Number) value;
+        long candidate = number.longValue();
+        double doubleValue = number.doubleValue();
+        return Double.isFinite(doubleValue)
+                && doubleValue == (double) candidate
+                && candidate == expected;
+    }
+
+    private void updateGrantedEpisodes(List<Integer> serverEntitlements) {
+        ArrayList<Integer> validated = new ArrayList<>();
+        if (serverEntitlements != null) {
+            for (Integer episode : serverEntitlements) {
+                if (episode != null && episode > 0 && !validated.contains(episode)) {
+                    validated.add(episode);
+                }
+            }
+        }
+        grantedEpisodes = Collections.unmodifiableList(validated);
+    }
+
+    private void suspendPlayerForGate() {
+        pendingResumeEpisode = 0;
+        pendingResumeProgress = 0;
+        playerCallbackEpoch.invalidate();
+        showGateOverlay();
+        removePlayerFragment();
+        destroyWidget();
+    }
+
+    private void showGateOverlay() {
+        if (root == null) {
+            return;
+        }
+        if (gateOverlay == null) {
+            gateOverlay = new View(this);
+            gateOverlay.setBackgroundColor(Color.BLACK);
+            gateOverlay.setClickable(true);
+            gateOverlay.setFocusable(true);
+            root.addView(gateOverlay, new FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT));
+        }
+        gateOverlay.bringToFront();
+    }
+
+    private void hideGateOverlay() {
+        if (root != null && gateOverlay != null) {
+            root.removeView(gateOverlay);
+            gateOverlay = null;
+        }
+    }
+
+    private void removePlayerFragment() {
+        Fragment fragment = playerFragment;
+        playerFragment = null;
+        if (fragment != null && fragment.isAdded()) {
+            getFragmentManager().beginTransaction()
+                    .remove(fragment)
+                    .commitNowAllowingStateLoss();
+        }
+    }
+
+    private void destroyWidget() {
+        if (widget != null) {
+            widget.destroy();
+            widget = null;
+        }
     }
 
     private String readEvidenceReference(String key) {
@@ -198,13 +408,21 @@ public class DramaPlayerActivity extends Activity {
         return value;
     }
 
-    private IDJXDramaUnlockListener createUnlockListener(long fallbackDramaId) {
+    private IDJXDramaUnlockListener createUnlockListener(long fallbackDramaId,
+                                                          long callbackEpoch) {
         return new IDJXDramaUnlockListener() {
+            private long pendingDramaId;
+            private int pendingEpisode;
+
             @Override
             public void unlockFlowStart(DJXDrama drama,
                                         IDJXDramaUnlockListener.UnlockCallback callback,
                                         Map<String, ? extends Object> extra) {
-                long targetDramaId = drama == null || drama.id <= 0L ? fallbackDramaId : drama.id;
+                if (!playerCallbackEpoch.isCurrent(callbackEpoch)) {
+                    return;
+                }
+                capturePendingSdkUnlockScope(drama, extra);
+                long targetDramaId = pendingDramaId > 0L ? pendingDramaId : fallbackDramaId;
                 if (callback != null) {
                     callback.onConfirm(new DJXDramaUnlockInfo(
                             targetDramaId,
@@ -213,7 +431,7 @@ public class DramaPlayerActivity extends Activity {
                             false,
                             null,
                             false,
-                            DJXUnlockModeType.UNLOCKTYPE_CONTINUES));
+                            DJXUnlockModeType.UNLOCKTYPE_DEFAULT));
                 }
             }
 
@@ -221,22 +439,33 @@ public class DramaPlayerActivity extends Activity {
             public void unlockFlowEnd(DJXDrama drama,
                                       IDJXDramaUnlockListener.UnlockErrorStatus status,
                                       Map<String, ? extends Object> extra) {
+                if (!playerCallbackEpoch.isCurrent(callbackEpoch)) {
+                    return;
+                }
+                clearPendingSdkUnlockScope();
                 Log.i(TAG, "server-gated unlock flow ended status=" + status);
             }
 
             @Override
             public void showCustomAd(DJXDrama drama,
                                      IDJXDramaUnlockListener.CustomAdCallback callback) {
-                if (callback == null || activeUnlockCallback != null || destroyed) {
+                if (!playerCallbackEpoch.isCurrent(callbackEpoch)) {
                     if (callback != null) {
                         callback.onError();
                     }
                     return;
                 }
-                long targetDramaId = drama == null || drama.id <= 0L ? fallbackDramaId : drama.id;
-                int targetEpisode = drama == null || drama.index <= 0
-                        ? initialEpisode : drama.index;
-                if (targetDramaId != dramaId) {
+                if (callback == null || hasActiveUnlock() || destroyed) {
+                    if (callback != null) {
+                        callback.onError();
+                    }
+                    return;
+                }
+                long targetDramaId = pendingDramaId;
+                int targetEpisode = pendingEpisode;
+                clearPendingSdkUnlockScope();
+                if (drama == null || drama.id <= 0L || drama.id != targetDramaId
+                        || targetDramaId != dramaId || targetEpisode <= 0) {
                     callback.onError();
                     return;
                 }
@@ -248,7 +477,28 @@ public class DramaPlayerActivity extends Activity {
                 }
                 activeUnlockEpisode = targetEpisode;
                 activeUnlockCallback = callback;
+                activePageGateUnlock = false;
+                activePageGateProgress = 0;
+                showGateOverlay();
                 verifyExistingEntitlementOrStartAd(targetEpisode, unlockGeneration);
+            }
+
+            private void capturePendingSdkUnlockScope(
+                    DJXDrama drama, Map<String, ? extends Object> extra) {
+                clearPendingSdkUnlockScope();
+                int targetEpisode = episodeFromEvidence(extra);
+                if (drama == null || drama.id <= 0L || drama.id != dramaId
+                        || targetEpisode <= 0) {
+                    Log.w(TAG, "EPISODE_GATE invalid DJX unlock-start evidence");
+                    return;
+                }
+                pendingDramaId = dramaId;
+                pendingEpisode = targetEpisode;
+            }
+
+            private void clearPendingSdkUnlockScope() {
+                pendingDramaId = 0L;
+                pendingEpisode = 0;
             }
         };
     }
@@ -256,13 +506,14 @@ public class DramaPlayerActivity extends Activity {
     private void verifyExistingEntitlementOrStartAd(int targetEpisode, long generation) {
         nativeApiClient.getEntitlements(new SkitNativeApiClient.Callback<List<Integer>>() {
             @Override
-            public void onSuccess(List<Integer> grantedEpisodes) {
+            public void onSuccess(List<Integer> serverEntitlements) {
                 if (!isActiveUnlock(generation, targetEpisode)) {
                     return;
                 }
-                if (grantedEpisodes != null && grantedEpisodes.contains(targetEpisode)) {
+                updateGrantedEpisodes(serverEntitlements);
+                if (grantedEpisodes.contains(targetEpisode)) {
                     completeWithVerifiedRewardProvenance(
-                            generation, targetEpisode, null, null, grantedEpisodes);
+                            generation, targetEpisode, null, null, serverEntitlements);
                     return;
                 }
                 if (hasLaunchRewardEvidenceFor(targetEpisode)) {
@@ -318,17 +569,24 @@ public class DramaPlayerActivity extends Activity {
                             return;
                         }
                         activeProtocol = result.getProtocol();
+                        activeSessionId = result.getSessionId();
                         activeProviderShowId = null;
                         pollAttempt = 0;
-                        if ("REUSED".equals(result.getOutcome())) {
+                        if ("REUSED".equals(result.getOutcome())
+                                || "VERIFYING".equals(result.getOutcome())) {
                             scheduleNextPoll(
                                     generation, targetEpisode,
-                                    activeProtocol.getSessionId(), null);
+                                    activeSessionId, null);
                             return;
                         }
                         if (!"CREATED".equals(result.getOutcome())) {
                             failActiveUnlock(
                                     generation, targetEpisode, "广告会话状态无效");
+                            return;
+                        }
+                        if (activeProtocol == null) {
+                            failActiveUnlock(
+                                    generation, targetEpisode, "广告会话协议无效");
                             return;
                         }
                         try {
@@ -361,7 +619,7 @@ public class DramaPlayerActivity extends Activity {
     }
 
     private void onTakuTelemetry(TakuTelemetry telemetry) {
-        if (destroyed || activeUnlockCallback == null || activeProtocol == null
+        if (destroyed || !hasActiveUnlock() || activeProtocol == null
                 || !activeProtocol.getSessionId().equals(telemetry.getProtocol().getSessionId())) {
             return;
         }
@@ -589,6 +847,9 @@ public class DramaPlayerActivity extends Activity {
         if (callbackShowSessionId == null) {
             callbackShowSessionId = evidence.getSessionId();
             callbackShowId = evidence.getProviderShowId();
+            if (activeUnlockCallback == null) {
+                return true;
+            }
             try {
                 activeUnlockCallback.onShow(evidence.getProviderShowId());
                 return true;
@@ -626,18 +887,27 @@ public class DramaPlayerActivity extends Activity {
             failActiveUnlock(generation, targetEpisode, "目标剧集尚未获得服务端权益");
             return;
         }
+        updateGrantedEpisodes(grantedEpisodes);
         IDJXDramaUnlockListener.CustomAdCallback callback = activeUnlockCallback;
-        clearActiveUnlock();
-        if (callback == null || destroyed) {
-            return;
-        }
+        boolean pageGateUnlock = activePageGateUnlock;
+        int resumeProgress = activePageGateProgress;
         HashMap<String, Object> rewardPayload = new HashMap<>();
         rewardPayload.put("authority", "signed_reward_provenance");
         rewardPayload.put("dramaId", dramaId);
         rewardPayload.put("episode", targetEpisode);
         rewardPayload.put("sessionId", proof.getSessionId());
         rewardPayload.put("providerShowId", proof.getProviderShowId());
-        callback.onRewardVerify(new DJXRewardAdResult(true, rewardPayload));
+        clearActiveUnlock();
+        if (destroyed) {
+            return;
+        }
+        if (callback != null) {
+            callback.onRewardVerify(new DJXRewardAdResult(true, rewardPayload));
+        }
+        if (pageGateUnlock) {
+            lastAuthorizedEpisode = targetEpisode;
+            initializePlayer(targetEpisode, resumeProgress);
+        }
         Toast.makeText(this, "服务端验奖通过，已解锁", Toast.LENGTH_SHORT).show();
     }
 
@@ -652,10 +922,22 @@ public class DramaPlayerActivity extends Activity {
             return;
         }
         IDJXDramaUnlockListener.CustomAdCallback callback = activeUnlockCallback;
+        boolean pageGateUnlock = activePageGateUnlock;
+        int fallbackEpisode = lastAuthorizedEpisode;
         clearActiveUnlock();
-        if (callback != null && !destroyed) {
+        if (destroyed) {
+            return;
+        }
+        if (callback != null) {
             callback.onError();
-            Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
+        }
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
+        if (pageGateUnlock) {
+            if (fallbackEpisode > 0 && grantedEpisodes.contains(fallbackEpisode)) {
+                initializePlayer(fallbackEpisode, 0);
+            } else {
+                finish();
+            }
         }
     }
 
@@ -666,7 +948,10 @@ public class DramaPlayerActivity extends Activity {
             takuRewardedAdController.cancelActiveSession();
         }
         activeUnlockCallback = null;
+        activePageGateUnlock = false;
+        activePageGateProgress = 0;
         activeProtocol = null;
+        activeSessionId = null;
         activeProviderShowId = null;
         callbackShowSessionId = null;
         callbackShowId = null;
@@ -674,20 +959,25 @@ public class DramaPlayerActivity extends Activity {
         launchEvidencePollAttempt = 0;
         unlockGeneration = 0L;
         activeUnlockEpisode = 0;
+        hideGateOverlay();
     }
 
     private boolean isActiveUnlock(long generation, int targetEpisode) {
         return !destroyed && generation > 0L && generation == unlockGeneration
                 && targetEpisode == activeUnlockEpisode
-                && activeUnlockCallback != null
+                && hasActiveUnlock()
                 && unlockPolicy.isActive(generation, dramaId, targetEpisode);
+    }
+
+    private boolean hasActiveUnlock() {
+        return activeUnlockCallback != null || activePageGateUnlock;
     }
 
     private boolean isActiveAd(long generation, int targetEpisode, String expectedSessionId,
                                String expectedShowId) {
-        return isActiveUnlock(generation, targetEpisode) && activeProtocol != null
+        return isActiveUnlock(generation, targetEpisode) && activeSessionId != null
                 && expectedSessionId != null
-                && expectedSessionId.equals(activeProtocol.getSessionId())
+                && expectedSessionId.equals(activeSessionId)
                 && (expectedShowId == null
                 ? activeProviderShowId == null
                 : expectedShowId.equals(activeProviderShowId));
@@ -708,16 +998,40 @@ public class DramaPlayerActivity extends Activity {
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        fragmentTransactionsAllowed = true;
+        if (pendingResumeEpisode > 0 && !hasActiveUnlock()) {
+            int episode = pendingResumeEpisode;
+            int progress = pendingResumeProgress;
+            initializePlayer(episode, progress);
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        fragmentTransactionsAllowed = false;
+        super.onPause();
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        fragmentTransactionsAllowed = false;
+        super.onSaveInstanceState(outState);
+    }
+
+    @Override
     protected void onDestroy() {
         Log.i(TAG, "destroying protected player activity");
         destroyed = true;
+        fragmentTransactionsAllowed = false;
+        playerCallbackEpoch.invalidate();
         unlockPolicy.cancel(unlockGeneration);
         handler.removeCallbacksAndMessages(null);
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        if (widget != null) {
-            widget.destroy();
-            widget = null;
-        }
+        removePlayerFragment();
+        destroyWidget();
+        hideGateOverlay();
         if (takuRewardedAdController != null) {
             takuRewardedAdController.destroy();
             takuRewardedAdController = null;

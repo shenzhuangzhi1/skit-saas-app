@@ -80,6 +80,8 @@ test('production workflows select a versioned repository profile and a profile-s
     assert.match(workflow, /--github-env\s+"\$GITHUB_ENV"/);
   }
   assert.doesNotMatch(apkBuilder, /production-profile\.json/);
+  assert.match(apkBuilder, /export SKIT_PROFILE_VERSION="\$PROFILE_VERSION"/);
+  assert.match(apkBuilder, /export SKIT_PROFILE_SHA256="\$PROFILE_SHA256"/);
   const profileExports = apkBuilder.indexOf('export SKIT_APPLICATION_ID="$APPLICATION_ID"');
   const whiteLabelRequirements = apkBuilder.indexOf('for required_name in \\\n');
   assert.ok(profileExports >= 0, 'the profile application identity must be exported');

@@ -181,8 +181,6 @@ http.interceptors.response.use(
     return Promise.resolve(response.data);
   },
   (error) => {
-    const userStore = $store('user');
-    const isLogin = userStore.isLogin;
     let errorMessage = '网络请求出错';
     if (error !== undefined) {
       switch (error.statusCode) {
@@ -190,9 +188,12 @@ http.interceptors.response.use(
           errorMessage = '请求错误';
           break;
         case 401:
-          errorMessage = isLogin ? '您的登陆已过期' : '请先登录';
-          // 正常情况下，后端不会返回 401 错误，所以这里不处理 handleAuthorized
-          break;
+          if (!error.config) {
+            errorMessage = '您的登陆已过期';
+            break;
+          }
+          error.config.custom?.showLoading && closeLoading();
+          return refreshToken(error.config);
         case 403:
           errorMessage = '拒绝访问';
           break;
@@ -224,9 +225,9 @@ http.interceptors.response.use(
           errorMessage = 'HTTP 版本不受支持';
           break;
       }
-      if (error.errMsg.includes('timeout')) errorMessage = '请求超时';
+      if (error.errMsg?.includes('timeout')) errorMessage = '请求超时';
       // #ifdef H5
-      if (error.errMsg.includes('Network'))
+      if (error.errMsg?.includes('Network'))
         errorMessage = window.navigator.onLine ? '服务器异常' : '请检查您的网络连接';
       // #endif
     }
