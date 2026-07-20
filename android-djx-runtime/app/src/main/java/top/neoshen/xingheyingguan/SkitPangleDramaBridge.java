@@ -153,8 +153,10 @@ public class SkitPangleDramaBridge {
                         intent.putExtra("playerGrantDramaId", playerGrant.getDramaId());
                         intent.putExtra("playerGrantToken", playerGrant.getGrantToken());
                         intent.putExtra("playerGrantExpiresAt", playerGrant.getExpiresAtEpochMillis());
-                        intent.putExtra("rewardSessionRef", rewardEvidence.sessionRef);
-                        intent.putExtra("rewardShowRef", rewardEvidence.showRef);
+                        if (rewardEvidence.isPresent()) {
+                            intent.putExtra("rewardSessionRef", rewardEvidence.sessionRef);
+                            intent.putExtra("rewardShowRef", rewardEvidence.showRef);
+                        }
                         activity.startActivity(intent);
                         JSONObject result = ok();
                         put(result, "opened", true);
@@ -401,7 +403,7 @@ public class SkitPangleDramaBridge {
             if (required) {
                 throw new IllegalArgumentException("Server reward evidence is required");
             }
-            return new RewardEvidenceRefs("<none>", "<none>");
+            return RewardEvidenceRefs.absent();
         }
         if (value.length() != 4 || !value.has("dramaId") || !value.has("episodeNo")
                 || !value.has("sessionId") || !value.has("providerShowId")) {
@@ -428,6 +430,14 @@ public class SkitPangleDramaBridge {
         private RewardEvidenceRefs(String sessionRef, String showRef) {
             this.sessionRef = sessionRef;
             this.showRef = showRef;
+        }
+
+        private static RewardEvidenceRefs absent() {
+            return new RewardEvidenceRefs(null, null);
+        }
+
+        private boolean isPresent() {
+            return sessionRef != null && showRef != null;
         }
     }
 

@@ -99,3 +99,32 @@ test('reward status and already-entitled outcomes still require exact episode en
   );
   assert.match(player, /unlockPolicy\.consumeIfEntitled/);
 });
+
+test('a no-reward player launch omits reward evidence Intent extras', () => {
+  const bridge = read(
+    'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/SkitPangleDramaBridge.java',
+  );
+
+  assert.match(bridge, /return RewardEvidenceRefs\.absent\(\);/);
+  assert.match(
+    bridge,
+    /if \(rewardEvidence\.isPresent\(\)\) \{[\s\S]*?intent\.putExtra\("rewardSessionRef", rewardEvidence\.sessionRef\);[\s\S]*?intent\.putExtra\("rewardShowRef", rewardEvidence\.showRef\);[\s\S]*?\}/,
+  );
+  assert.doesNotMatch(bridge, /new RewardEvidenceRefs\("<none>", "<none>"\)/);
+});
+
+test('a verified H5 reward never falls through to a second native Taku request', () => {
+  const player = read(
+    'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/DramaPlayerActivity.java',
+  );
+
+  assert.match(player, /hasLaunchRewardEvidenceFor\(targetEpisode\)/);
+  assert.match(
+    player,
+    /if \(hasLaunchRewardEvidenceFor\(targetEpisode\)\) \{[\s\S]*?scheduleLaunchEvidenceEntitlementPoll\(targetEpisode, generation\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?createServerAdSession\(targetEpisode, generation\);/,
+  );
+  assert.match(
+    player,
+    /scheduleLaunchEvidenceEntitlementPoll[\s\S]*?奖励确认中，可稍后返回查看/,
+  );
+});

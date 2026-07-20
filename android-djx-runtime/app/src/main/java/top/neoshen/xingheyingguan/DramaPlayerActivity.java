@@ -43,6 +43,8 @@ import top.neoshen.xingheyingguan.ad.VerifiedRewardEvidence;
 public class DramaPlayerActivity extends Activity {
     private static final String TAG = "SkitDramaPlayer";
     private static final long[] STATUS_POLL_DELAYS_MS = {500L, 1_000L, 2_000L, 3_000L, 3_000L};
+    private static final long[] LAUNCH_EVIDENCE_POLL_DELAYS_MS = {
+            500L, 1_000L, 2_000L, 3_000L, 3_000L};
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private IDJXWidget widget;
@@ -64,12 +66,14 @@ public class DramaPlayerActivity extends Activity {
     private String callbackShowSessionId;
     private String callbackShowId;
     private int pollAttempt;
+    private int launchEvidencePollAttempt;
     private long unlockGeneration;
     private int activeUnlockEpisode;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        Log.i(TAG, "creating protected player activity");
         root = new FrameLayout(this);
         root.setId(View.generateViewId());
         setContentView(root, new FrameLayout.LayoutParams(
@@ -77,6 +81,7 @@ public class DramaPlayerActivity extends Activity {
                 FrameLayout.LayoutParams.MATCH_PARENT));
 
         if (!DJXSdk.isStartSuccess()) {
+            Log.w(TAG, "finishing player activity because DJX is not started");
             finish();
             return;
         }
@@ -84,6 +89,7 @@ public class DramaPlayerActivity extends Activity {
         initialEpisode = getIntent().getIntExtra("episode", 1);
         int progress = getIntent().getIntExtra("progress", 0);
         if (dramaId <= 0L || initialEpisode <= 0) {
+            Log.w(TAG, "finishing player activity because launch scope is invalid");
             finish();
             return;
         }
@@ -99,6 +105,8 @@ public class DramaPlayerActivity extends Activity {
             playerGrant.requireDrama(dramaId);
             nativeApiClient = new SkitNativeApiClient(this, playerGrant);
         } catch (Throwable invalidGrant) {
+            Log.w(TAG, "finishing player activity because launch grant is invalid",
+                    invalidGrant);
             failAndFinish("播放器权限无效，请返回重试");
             return;
         }
@@ -108,6 +116,7 @@ public class DramaPlayerActivity extends Activity {
             @Override
             public void onSuccess(List<Integer> ignoredServerEntitlements) {
                 if (!destroyed) {
+                    Log.i(TAG, "native entitlement check passed; initializing DJX player");
                     initializePlayer(progress);
                 }
             }
@@ -115,6 +124,7 @@ public class DramaPlayerActivity extends Activity {
             @Override
             public void onFailure() {
                 if (!destroyed) {
+                    Log.w(TAG, "native entitlement check failed; returning to H5");
                     failAndFinish("播放器权限已失效，请返回重试");
                 }
             }
@@ -131,6 +141,7 @@ public class DramaPlayerActivity extends Activity {
     }
 
     private void initializePlayer(int progress) {
+        Log.i(TAG, "creating DJX detail widget");
         DJXDramaDetailConfig detailConfig = DJXDramaDetailConfig
                 .obtain(DJXDramaUnlockAdMode.MODE_SPECIFIC,
                         NativeEpisodeUnlockPolicy.FREE_SET,
@@ -142,6 +153,7 @@ public class DramaPlayerActivity extends Activity {
                 .listener(new IDJXDramaListener() {
                     @Override
                     public void onDJXClose() {
+                        Log.i(TAG, "DJX detail widget closed");
                         finish();
                     }
 
@@ -253,14 +265,43 @@ public class DramaPlayerActivity extends Activity {
                             generation, targetEpisode, null, null, grantedEpisodes);
                     return;
                 }
+                if (hasLaunchRewardEvidenceFor(targetEpisode)) {
+                    scheduleLaunchEvidenceEntitlementPoll(targetEpisode, generation);
+                    return;
+                }
                 createServerAdSession(targetEpisode, generation);
             }
 
             @Override
             public void onFailure() {
+                if (hasLaunchRewardEvidenceFor(targetEpisode)) {
+                    scheduleLaunchEvidenceEntitlementPoll(targetEpisode, generation);
+                    return;
+                }
                 failActiveUnlock(generation, targetEpisode, "服务端权益校验失败");
             }
         });
+    }
+
+    /** A verified H5 reward may reach the native player just before the entitlement read catches up. */
+    private boolean hasLaunchRewardEvidenceFor(int targetEpisode) {
+        return targetEpisode == initialEpisode
+                && !"<none>".equals(launchSessionRef)
+                && !"<none>".equals(launchShowRef);
+    }
+
+    /** Never trade a just-earned H5 reward for a second native Taku request. */
+    private void scheduleLaunchEvidenceEntitlementPoll(int targetEpisode, long generation) {
+        if (!isActiveUnlock(generation, targetEpisode)) {
+            return;
+        }
+        if (launchEvidencePollAttempt >= LAUNCH_EVIDENCE_POLL_DELAYS_MS.length) {
+            failActiveUnlock(generation, targetEpisode, "奖励确认中，可稍后返回查看");
+            return;
+        }
+        long delay = LAUNCH_EVIDENCE_POLL_DELAYS_MS[launchEvidencePollAttempt++];
+        handler.postDelayed(
+                () -> verifyExistingEntitlementOrStartAd(targetEpisode, generation), delay);
     }
 
     private void createServerAdSession(int targetEpisode, long generation) {
@@ -630,6 +671,7 @@ public class DramaPlayerActivity extends Activity {
         callbackShowSessionId = null;
         callbackShowId = null;
         pollAttempt = 0;
+        launchEvidencePollAttempt = 0;
         unlockGeneration = 0L;
         activeUnlockEpisode = 0;
     }
@@ -667,6 +709,7 @@ public class DramaPlayerActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        Log.i(TAG, "destroying protected player activity");
         destroyed = true;
         unlockPolicy.cancel(unlockGeneration);
         handler.removeCallbacksAndMessages(null);

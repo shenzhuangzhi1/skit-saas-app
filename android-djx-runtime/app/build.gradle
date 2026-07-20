@@ -53,6 +53,10 @@ def prepareSkitRuntimeAssets = tasks.register('prepareSkitRuntimeAssets', Sync) 
         if (!new File(h5AssetsDir, 'index.html').isFile()) {
             throw new GradleException("SKIT_H5_DIR must contain index.html: ${h5AssetsDir}")
         }
+        if (!pangleSettingSource.isFile()) {
+            throw new GradleException(
+                    "Pangle SDK settings file is required: ${pangleSettingSource}")
+        }
         if (!rootProject.file('djx-runtime.js').isFile()) {
             throw new GradleException('Missing android-djx-runtime/djx-runtime.js')
         }

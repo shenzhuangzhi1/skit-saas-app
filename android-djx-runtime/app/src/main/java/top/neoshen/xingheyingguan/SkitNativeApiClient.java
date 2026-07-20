@@ -1,6 +1,7 @@
 package top.neoshen.xingheyingguan;
 
 import android.app.Activity;
+import android.util.Log;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -29,6 +30,7 @@ import top.neoshen.xingheyingguan.ad.VerifiedRewardEvidence;
 
 /** HTTP client whose only authority is the short-lived player grant. */
 final class SkitNativeApiClient {
+    private static final String TAG = "SkitNativeApi";
     static final String PLAYER_GRANT_HEADER = "X-Skit-Player-Grant";
     static final String NATIVE_VERSION_HEADER = "X-Skit-Native-Version";
     static final String AD_PROTOCOL_VERSION_HEADER = "X-Skit-Ad-Protocol-Version";
@@ -243,10 +245,13 @@ final class SkitNativeApiClient {
                 }
                 try (Response response = httpClient.newCall(request.build()).execute()) {
                     if (!response.isSuccessful()) {
+                        Log.w(TAG, "native API rejected request with HTTP status="
+                                + response.code());
                         throw new IOException("Native API request was rejected");
                     }
                     JSONObject envelope = new JSONObject(readBody(response.body()));
                     if (envelope.optInt("code", -1) != 0) {
+                        Log.w(TAG, "native API rejected request with application error");
                         throw new IOException("Native API request was rejected");
                     }
                     JSONObject data = envelope.optJSONObject("data");
@@ -257,6 +262,8 @@ final class SkitNativeApiClient {
                     activity.runOnUiThread(() -> callback.onSuccess(result));
                 }
             } catch (Throwable failure) {
+                Log.w(TAG, "native API request failed: "
+                        + failure.getClass().getSimpleName());
                 activity.runOnUiThread(callback::onFailure);
             }
         });

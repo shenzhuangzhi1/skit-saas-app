@@ -62,3 +62,39 @@ test('keeps a pending reward verification active without a second tap', () => {
   assert.match(scheduler, /result\.resolution === 'GRANTED'/);
   assert.match(scheduler, /grantedEpisodeNos\.value = result\.entitlements\.grantedEpisodeNos/);
 });
+
+test('watch history begins after a player actually opens', () => {
+  const playStart = playerSource.indexOf('async function playCurrentEpisode(');
+  const playEnd = playerSource.indexOf('\n  function chooseEpisode', playStart);
+  assert.notEqual(playStart, -1, 'protected player launch must exist');
+  assert.notEqual(playEnd, -1, 'protected player launch must have a closing boundary');
+  const playFlow = playerSource.slice(playStart, playEnd);
+
+  assert.match(
+    playFlow,
+    /if \(targetEpisode > drama\.value\.freeEpisodes\)/,
+  );
+  assert.match(
+    playFlow,
+    /const opened = await openPangleDramaPlayer\([\s\S]*?if \(opened\?\.opened\) \{[\s\S]*?saveHistory\(drama\.value\.id, targetEpisode\)/,
+  );
+
+  const onLoadStart = playerSource.indexOf('onLoad((options) =>');
+  const onLoadEnd = playerSource.indexOf('\n  onShow(', onLoadStart);
+  assert.notEqual(onLoadStart, -1, 'page load flow must exist');
+  assert.notEqual(onLoadEnd, -1, 'page load flow must have a closing boundary');
+  const onLoadFlow = playerSource.slice(onLoadStart, onLoadEnd);
+
+  assert.doesNotMatch(onLoadFlow, /saveHistory\(/);
+});
+
+test('retries automatic playback after login identity hydration', () => {
+  const watcherStart = playerSource.indexOf('watch(\n    () => [userStore.userInfo?.tenantId');
+  assert.notEqual(watcherStart, -1, 'identity watcher must exist');
+  const watcher = playerSource.slice(watcherStart, playerSource.indexOf('\n  );', watcherStart) + 5);
+
+  assert.match(
+    watcher,
+    /syncServerState\(\)\s*\.then\(\(\) => playCurrentEpisode\('identity_ready'\)\)/,
+  );
+});

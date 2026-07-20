@@ -412,13 +412,17 @@
         return;
       }
 
-      return await openPangleDramaPlayer({
+      const opened = await openPangleDramaPlayer({
         drama: drama.value,
         episode: targetEpisode,
         source,
         playerGrant,
         rewardEvidence,
       });
+      if (opened?.opened) {
+        saveHistory(drama.value.id, targetEpisode);
+      }
+      return opened;
     } catch (error) {
       console.warn('[drama] protected player open failed:', error?.message || error);
       if (source === 'manual_open' || source === 'episode_select') {
@@ -434,7 +438,6 @@
 
   function chooseEpisode(episode) {
     currentEpisode.value = episode;
-    saveHistory(drama.value.id, episode);
     showEpisodePanel.value = false;
     if (!isUnlocked(episode)) {
       uni.showToast({
@@ -459,7 +462,6 @@
       });
       return;
     }
-
     const unlockEpisode = currentEpisode.value;
     unlocking.value = true;
     try {
@@ -556,7 +558,6 @@
   onLoad((options) => {
     drama.value = getDramaById(options.id);
     currentEpisode.value = Math.max(1, Math.min(Number(options.episode) || 1, drama.value.total));
-    saveHistory(drama.value.id, currentEpisode.value);
     refresh();
     setTimeout(() => {
       syncServerState()
@@ -580,9 +581,11 @@
       if (nextIdentity[0] === previousIdentity?.[0] && nextIdentity[1] === previousIdentity?.[1]) {
         return;
       }
-      syncServerState().catch((error) => {
-        console.warn('[entitlement] identity refresh unavailable', error?.message || error);
-      });
+      syncServerState()
+        .then(() => playCurrentEpisode('identity_ready'))
+        .catch((error) => {
+          console.warn('[entitlement] identity refresh unavailable', error?.message || error);
+        });
     },
   );
 </script>
