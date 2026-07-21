@@ -9,7 +9,7 @@ import static org.junit.Assert.assertEquals;
 public class NativeSdkUnlockResumePolicyTest {
 
     @Test
-    public void resumesTheExactEpisodeOnlyAfterAConfirmedSdkUnlockEnd() throws Exception {
+    public void resumesTheExactEpisodeOnlyFromServerEntitlement() throws Exception {
         Class<?> type;
         try {
             type = Class.forName(
@@ -22,7 +22,8 @@ public class NativeSdkUnlockResumePolicyTest {
         Object policy = type.getConstructor().newInstance();
         Method arm = type.getMethod("arm", long.class, long.class, int.class);
         Method complete = type.getMethod(
-                "complete", long.class, long.class, int.class, boolean.class);
+                "completeWithServerEntitlement",
+                long.class, long.class, int.class, boolean.class);
 
         long callbackEpoch = 7L;
         long dramaId = 1346L;

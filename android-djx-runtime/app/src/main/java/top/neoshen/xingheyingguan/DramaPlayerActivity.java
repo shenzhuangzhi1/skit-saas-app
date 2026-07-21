@@ -464,8 +464,11 @@ public class DramaPlayerActivity extends Activity {
                 }
                 long completedDramaId = drama == null ? 0L : drama.id;
                 int completedEpisode = episodeFromEvidence(extra);
-                int resumeEpisode = sdkUnlockResumePolicy.complete(
-                        callbackEpoch, completedDramaId, completedEpisode, status == null);
+                int resumeEpisode = sdkUnlockResumePolicy.completeWithServerEntitlement(
+                        callbackEpoch,
+                        completedDramaId,
+                        completedEpisode,
+                        grantedEpisodes.contains(completedEpisode));
                 clearPendingSdkUnlockScope();
                 Log.i(TAG, "server-gated unlock flow ended status=" + status);
                 if (resumeEpisode > 0) {

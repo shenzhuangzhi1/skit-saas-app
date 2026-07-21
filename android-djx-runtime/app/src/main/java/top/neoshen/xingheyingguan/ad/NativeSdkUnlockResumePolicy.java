@@ -17,9 +17,14 @@ public final class NativeSdkUnlockResumePolicy {
         this.episode = episode;
     }
 
-    /** Returns the exact episode to resume, or zero when the completion cannot be trusted. */
-    public int complete(long callbackEpoch, long dramaId, int episode, boolean successful) {
-        int resumeEpisode = successful
+    /**
+     * Returns the exact episode to resume only when the server entitlement is present.
+     * DJX's custom-ad completion status is advisory and may report an ad error after the
+     * signed reward has already granted the episode.
+     */
+    public int completeWithServerEntitlement(long callbackEpoch, long dramaId, int episode,
+                                             boolean serverEntitled) {
+        int resumeEpisode = serverEntitled
                 && this.callbackEpoch == callbackEpoch
                 && this.dramaId == dramaId
                 && this.episode == episode
