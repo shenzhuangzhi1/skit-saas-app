@@ -191,6 +191,21 @@ test('DJX unlock callbacks are bound to the current widget epoch and preserve SD
     /Decision\.WAIT[\s\S]*?activeUnlockCallback != null[\s\S]*?showGateOverlay\(\)[\s\S]*?return false/,
     'the page callback must not destroy the widget that owns an active SDK custom-ad callback',
   );
+  assert.match(
+    player,
+    /completeFromServerEntitlement[\s\S]*?sdkUnlockResumePolicy\.arm\([\s\S]*?callback\.onRewardVerify/,
+    'the exact server-authorized episode must remain armed until DJX finishes its async unlock',
+  );
+  assert.match(
+    player,
+    /unlockFlowEnd[\s\S]*?sdkUnlockResumePolicy\.complete\([\s\S]*?status == null[\s\S]*?resumeAfterSdkUnlock/,
+    'a successful DJX unlock end must resume the exact target episode',
+  );
+  assert.match(
+    player,
+    /resumeAfterSdkUnlock[\s\S]*?playerCallbackEpoch\.isCurrent\(callbackEpoch\)[\s\S]*?grantedEpisodes\.contains\(episode\)[\s\S]*?initializePlayer\(episode, 0\)/,
+    'resume must reject stale widgets and episodes without server entitlement',
+  );
 });
 
 test('DJX never receives reward verification without signed provider-show provenance', () => {

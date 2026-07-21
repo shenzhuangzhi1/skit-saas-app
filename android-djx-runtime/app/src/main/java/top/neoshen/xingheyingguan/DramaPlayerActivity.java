@@ -39,6 +39,7 @@ import top.neoshen.xingheyingguan.ad.NativeEpisodeUnlockPolicy;
 import top.neoshen.xingheyingguan.ad.NativePlayerCallbackEpoch;
 import top.neoshen.xingheyingguan.ad.NativePlayerGrant;
 import top.neoshen.xingheyingguan.ad.NativeRewardGate;
+import top.neoshen.xingheyingguan.ad.NativeSdkUnlockResumePolicy;
 import top.neoshen.xingheyingguan.ad.PlaybackEvidenceScope;
 import top.neoshen.xingheyingguan.ad.TakuFailureReason;
 import top.neoshen.xingheyingguan.ad.TakuNativeState;
@@ -74,7 +75,10 @@ public class DramaPlayerActivity extends Activity {
             new NativeAdSessionRecoveryPolicy();
     private final NativePlayerCallbackEpoch playerCallbackEpoch =
             new NativePlayerCallbackEpoch();
+    private final NativeSdkUnlockResumePolicy sdkUnlockResumePolicy =
+            new NativeSdkUnlockResumePolicy();
     private IDJXDramaUnlockListener.CustomAdCallback activeUnlockCallback;
+    private long activeUnlockCallbackEpoch;
     private AdSessionProtocol activeProtocol;
     private String activeSessionId;
     private String activeProviderShowId;
@@ -92,6 +96,7 @@ public class DramaPlayerActivity extends Activity {
     private boolean fragmentTransactionsAllowed;
     private int pendingResumeEpisode;
     private int pendingResumeProgress;
+    private int lastPlayingEpisode;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -217,9 +222,18 @@ public class DramaPlayerActivity extends Activity {
 
                     @Override
                     public void onDJXVideoPlay(Map<String, Object> extra) {
-                        if (!playerCallbackEpoch.isCurrent(callbackEpoch)
-                                || !enforceEpisodeAccess(extra, 0)) {
+                        if (!playerCallbackEpoch.isCurrent(callbackEpoch)) {
                             return;
+                        }
+                        int playingEpisode = episodeFromEvidence(extra);
+                        if (playingEpisode <= 0
+                                || !enforceEpisodeAccess(playingEpisode, 0)) {
+                            return;
+                        }
+                        if (lastPlayingEpisode != playingEpisode) {
+                            lastPlayingEpisode = playingEpisode;
+                            Log.i(TAG, "PLAYER_EPISODE_PLAYING dramaId=" + dramaId
+                                    + " episode=" + playingEpisode);
                         }
                         if (!targetPlaybackLogged
                                 && playbackEvidenceScope.matchesTargetVideo(extra)) {
@@ -448,8 +462,15 @@ public class DramaPlayerActivity extends Activity {
                 if (!playerCallbackEpoch.isCurrent(callbackEpoch)) {
                     return;
                 }
+                long completedDramaId = drama == null ? 0L : drama.id;
+                int completedEpisode = episodeFromEvidence(extra);
+                int resumeEpisode = sdkUnlockResumePolicy.complete(
+                        callbackEpoch, completedDramaId, completedEpisode, status == null);
                 clearPendingSdkUnlockScope();
                 Log.i(TAG, "server-gated unlock flow ended status=" + status);
+                if (resumeEpisode > 0) {
+                    handler.post(() -> resumeAfterSdkUnlock(callbackEpoch, resumeEpisode));
+                }
             }
 
             @Override
@@ -484,6 +505,7 @@ public class DramaPlayerActivity extends Activity {
                 }
                 activeUnlockEpisode = targetEpisode;
                 activeUnlockCallback = callback;
+                activeUnlockCallbackEpoch = callbackEpoch;
                 activePageGateUnlock = false;
                 activePageGateProgress = 0;
                 showGateOverlay();
@@ -937,6 +959,7 @@ public class DramaPlayerActivity extends Activity {
         }
         updateGrantedEpisodes(grantedEpisodes);
         IDJXDramaUnlockListener.CustomAdCallback callback = activeUnlockCallback;
+        long callbackEpoch = activeUnlockCallbackEpoch;
         boolean pageGateUnlock = activePageGateUnlock;
         int resumeProgress = activePageGateProgress;
         HashMap<String, Object> rewardPayload = new HashMap<>();
@@ -950,6 +973,7 @@ public class DramaPlayerActivity extends Activity {
             return;
         }
         if (callback != null) {
+            sdkUnlockResumePolicy.arm(callbackEpoch, dramaId, targetEpisode);
             callback.onRewardVerify(new DJXRewardAdResult(true, rewardPayload));
         }
         if (pageGateUnlock) {
@@ -972,6 +996,7 @@ public class DramaPlayerActivity extends Activity {
         IDJXDramaUnlockListener.CustomAdCallback callback = activeUnlockCallback;
         boolean pageGateUnlock = activePageGateUnlock;
         int fallbackEpisode = lastAuthorizedEpisode;
+        sdkUnlockResumePolicy.cancel();
         clearActiveUnlock();
         if (destroyed) {
             return;
@@ -997,6 +1022,7 @@ public class DramaPlayerActivity extends Activity {
             takuRewardedAdController.cancelActiveSession();
         }
         activeUnlockCallback = null;
+        activeUnlockCallbackEpoch = 0L;
         activePageGateUnlock = false;
         activePageGateProgress = 0;
         activeProtocol = null;
@@ -1010,6 +1036,16 @@ public class DramaPlayerActivity extends Activity {
         unlockGeneration = 0L;
         activeUnlockEpisode = 0;
         hideGateOverlay();
+    }
+
+    private void resumeAfterSdkUnlock(long callbackEpoch, int episode) {
+        if (destroyed || !playerCallbackEpoch.isCurrent(callbackEpoch)
+                || hasActiveUnlock() || !grantedEpisodes.contains(episode)) {
+            return;
+        }
+        lastAuthorizedEpisode = episode;
+        Log.i(TAG, "DJX_UNLOCK_RESUME dramaId=" + dramaId + " episode=" + episode);
+        initializePlayer(episode, 0);
     }
 
     private boolean isActiveUnlock(long generation, int targetEpisode) {
@@ -1076,6 +1112,7 @@ public class DramaPlayerActivity extends Activity {
         destroyed = true;
         fragmentTransactionsAllowed = false;
         playerCallbackEpoch.invalidate();
+        sdkUnlockResumePolicy.cancel();
         adSessionRecoveryPolicy.cancel(unlockGeneration);
         unlockPolicy.cancel(unlockGeneration);
         handler.removeCallbacksAndMessages(null);
