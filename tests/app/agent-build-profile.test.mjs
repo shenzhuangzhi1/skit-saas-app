@@ -72,6 +72,7 @@ test('production workflows select a versioned repository profile and a profile-s
   const apkBuilder = readFileSync(resolve(root, 'android-djx-runtime/build-djx-apk.sh'), 'utf8');
   const verifier = readFileSync(resolve(root, 'android-djx-runtime/verify-production-apk.sh'), 'utf8');
   const sdkCheck = readFileSync(resolve(root, 'android-djx-runtime/check-sdk-config.sh'), 'utf8');
+  const gitignore = readFileSync(resolve(root, '.gitignore'), 'utf8');
 
   for (const workflow of [apkWorkflow, hotWorkflow]) {
     assert.match(workflow, /environment:\s*android-production-\$\{\{\s*inputs\.profile_code\s*\}\}/);
@@ -83,6 +84,8 @@ test('production workflows select a versioned repository profile and a profile-s
   const dependencyInstall = apkWorkflow.indexOf('npm ci');
   const productionBuild = apkWorkflow.indexOf('./android-djx-runtime/build-djx-apk.sh');
   assert.ok(dependencyInstall >= 0, 'production Android packaging must install locked H5 dependencies');
+  assert.ok(existsSync(resolve(root, 'package-lock.json')), 'the npm lockfile must be committed');
+  assert.doesNotMatch(gitignore, /^package-lock\.json$/m, 'the npm lockfile must not be ignored');
   assert.ok(
     dependencyInstall < productionBuild,
     'locked H5 dependencies must be installed before the production APK build',

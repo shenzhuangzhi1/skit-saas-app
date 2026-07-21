@@ -6,7 +6,6 @@ deploy.sh
 .vscode/
 **/.DS_Store
 yarn.lock
-package-lock.json
 *.keystore
 pnpm-lock.yaml
 android-preview-webview/build/
