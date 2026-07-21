@@ -18,6 +18,7 @@ import java.util.Map;
 
 import top.neoshen.xingheyingguan.ad.AdSessionProtocol;
 import top.neoshen.xingheyingguan.ad.SafeEvidenceReference;
+import top.neoshen.xingheyingguan.ad.TakuPresentationLease;
 import top.neoshen.xingheyingguan.ad.TakuSessionStateMachine;
 import top.neoshen.xingheyingguan.ad.TakuTelemetry;
 
@@ -31,6 +32,10 @@ final class TakuRewardedAdController {
 
     interface EventListener {
         void onTelemetry(TakuTelemetry telemetry);
+    }
+
+    interface ShowAuthorization {
+        boolean canPresent();
     }
 
     private final Activity activity;
@@ -67,11 +72,17 @@ final class TakuRewardedAdController {
     }
 
     void start(AdSessionProtocol protocol, EventListener listener) {
+        start(protocol, listener, () -> true);
+    }
+
+    void start(AdSessionProtocol protocol, EventListener listener,
+               ShowAuthorization showAuthorization) {
         if (destroyed) {
             throw new IllegalStateException("Taku controller is destroyed");
         }
-        if (protocol == null || listener == null) {
-            throw new IllegalArgumentException("Protocol and listener are required");
+        if (protocol == null || listener == null || showAuthorization == null) {
+            throw new IllegalArgumentException(
+                    "Protocol, listener and show authorization are required");
         }
         if (activeSession != null || activeAd != null) {
             throw new IllegalStateException("Another Taku session is active");
@@ -80,7 +91,8 @@ final class TakuRewardedAdController {
         initialize(activity);
         String sdkRequestId = "native-" + protocol.getSessionId();
         ActiveSession session = new ActiveSession(
-                protocol, listener, new TakuSessionStateMachine(protocol, sdkRequestId));
+                protocol, listener, showAuthorization,
+                new TakuSessionStateMachine(protocol, sdkRequestId));
         session.machine.initializing();
         ATRewardVideoAd ad = new ATRewardVideoAd(activity, protocol.getPlacementId());
         activeSession = session;
@@ -96,17 +108,35 @@ final class TakuRewardedAdController {
             ad.load(activity);
         } catch (Throwable error) {
             logInternalFailure("load-start", error);
-            fail(session, ad, null);
+            fail(session, ad);
         }
     }
 
     void destroy() {
+        if (destroyed) {
+            return;
+        }
+        ActiveSession session = activeSession;
+        ATRewardVideoAd ad = activeAd;
+        if (isActive(session, ad)) {
+            fail(session, ad);
+        }
         destroyed = true;
         releaseActive();
     }
 
     void cancelActiveSession() {
         releaseActive();
+    }
+
+    boolean cancelPendingSession() {
+        ActiveSession session = activeSession;
+        ATRewardVideoAd ad = activeAd;
+        if (!isActive(session, ad) || !session.presentationLease.cancelBeforeShow()) {
+            return false;
+        }
+        fail(session, ad);
+        return true;
     }
 
     private ATRewardVideoListener listenerFor(ActiveSession session, ATRewardVideoAd ad) {
@@ -118,6 +148,11 @@ final class TakuRewardedAdController {
                 }
                 try {
                     emit(session, session.machine.loaded());
+                    if (!canPresent(session)
+                            || !session.presentationLease.requestShow()) {
+                        cancelPendingSession();
+                        return;
+                    }
                     AdSessionProtocol protocol = session.protocol;
                     ATShowConfig showConfig = new ATShowConfig.Builder()
                             .showCustomExt(protocol.getSessionId())
@@ -125,14 +160,14 @@ final class TakuRewardedAdController {
                     ad.show(activity, showConfig);
                 } catch (Throwable error) {
                     logInternalFailure("show-start", error);
-                    fail(session, ad, null);
+                    fail(session, ad);
                 }
             }
 
             @Override
             public void onRewardedVideoAdFailed(AdError error) {
                 logAdError("load", error);
-                fail(session, ad, null);
+                fail(session, ad);
             }
 
             @Override
@@ -145,7 +180,7 @@ final class TakuRewardedAdController {
                             showId(adInfo), networkFirmId(adInfo), adsourceId(adInfo)));
                 } catch (Throwable invalidCallback) {
                     logInternalFailure("play-start-identity", invalidCallback);
-                    fail(session, ad, adInfo);
+                    fail(session, ad);
                 }
             }
 
@@ -157,7 +192,7 @@ final class TakuRewardedAdController {
             @Override
             public void onRewardedVideoAdPlayFailed(AdError error, ATAdInfo adInfo) {
                 logAdError("play", error);
-                fail(session, ad, adInfo);
+                fail(session, ad);
             }
 
             @Override
@@ -171,7 +206,7 @@ final class TakuRewardedAdController {
                     emit(session, telemetry);
                 } catch (Throwable invalidCallback) {
                     logInternalFailure("close-identity", invalidCallback);
-                    fail(session, ad, adInfo);
+                    fail(session, ad);
                     return;
                 }
                 release(session, ad);
@@ -192,7 +227,7 @@ final class TakuRewardedAdController {
                             showId(adInfo), networkFirmId(adInfo), adsourceId(adInfo)));
                 } catch (Throwable invalidCallback) {
                     logInternalFailure("reward-identity", invalidCallback);
-                    fail(session, ad, adInfo);
+                    fail(session, ad);
                 }
             }
         };
@@ -210,7 +245,7 @@ final class TakuRewardedAdController {
             }
         } catch (Throwable invalidCallback) {
             logInternalFailure(callback + "-identity", invalidCallback);
-            fail(session, ad, adInfo);
+            fail(session, ad);
         }
     }
 
@@ -232,18 +267,12 @@ final class TakuRewardedAdController {
         session.listener.onTelemetry(telemetry);
     }
 
-    private void fail(ActiveSession session, ATRewardVideoAd ad, ATAdInfo adInfo) {
+    private void fail(ActiveSession session, ATRewardVideoAd ad) {
         if (!isActive(session, ad)) {
             return;
         }
         try {
-            TakuTelemetry failure;
-            if (adInfo == null || session.showId == null) {
-                failure = session.machine.failed(null, null, null);
-            } else {
-                failure = session.machine.failed(
-                        showId(adInfo), networkFirmId(adInfo), adsourceId(adInfo));
-            }
+            TakuTelemetry failure = session.machine.failed(null, null, null);
             emit(session, failure);
         } catch (Throwable ignored) {
             logInternalFailure("terminal-callback", ignored);
@@ -253,10 +282,17 @@ final class TakuRewardedAdController {
     }
 
     private boolean isActive(ActiveSession session, ATRewardVideoAd ad) {
-        return !destroyed && activeSession == session && activeAd == ad;
+        return session != null && ad != null && !destroyed
+                && activeSession == session && activeAd == ad;
+    }
+
+    private boolean canPresent(ActiveSession session) {
+        return !activity.isFinishing() && !activity.isDestroyed()
+                && activity.hasWindowFocus() && session.showAuthorization.canPresent();
     }
 
     private void release(ActiveSession session, ATRewardVideoAd ad) {
+        session.presentationLease.terminate();
         if (activeSession == session) {
             activeSession = null;
         }
@@ -330,13 +366,17 @@ final class TakuRewardedAdController {
     private static final class ActiveSession {
         private final AdSessionProtocol protocol;
         private final EventListener listener;
+        private final ShowAuthorization showAuthorization;
         private final TakuSessionStateMachine machine;
+        private final TakuPresentationLease presentationLease = new TakuPresentationLease();
         private String showId;
 
         private ActiveSession(AdSessionProtocol protocol, EventListener listener,
+                              ShowAuthorization showAuthorization,
                               TakuSessionStateMachine machine) {
             this.protocol = protocol;
             this.listener = listener;
+            this.showAuthorization = showAuthorization;
             this.machine = machine;
         }
     }

@@ -15,12 +15,32 @@ export const adSessionOrchestrator = createAdSessionOrchestrator({
 
 const recoveryCoordinator = createAdSessionRecoveryCoordinator();
 
-export function acquireAdSessionOwnership(identity) {
-  return recoveryCoordinator.acquire(identity);
+export function acquireAdSessionOwnership(scope) {
+  return recoveryCoordinator.acquire(scope);
 }
 
-export function recoverPendingAdSessions(identity) {
-  return recoveryCoordinator.runRecovery(identity, () =>
-    adSessionOrchestrator.recoverPendingSessions(identity),
+export function recoverPendingAdSessions(identity, options = {}) {
+  const sessions = adSessionOrchestrator.getPendingSessions(identity);
+  const onResult = typeof options.onResult === 'function' ? options.onResult : null;
+  return Promise.all(
+    sessions.map((session) => {
+      const scope = {
+        ...identity,
+        dramaId: session.dramaId,
+        episodeNo: session.episodeNo,
+      };
+      return recoveryCoordinator
+        .runRecovery(scope, session.sessionId, async () => {
+          try {
+            return await adSessionOrchestrator.pollSession(identity, session.sessionId);
+          } catch (error) {
+            return { resolution: 'UNAVAILABLE', sessionId: session.sessionId, error };
+          }
+        })
+        .then(async (result) => {
+          await onResult?.(result, session);
+          return result;
+        });
+    }),
   );
 }

@@ -74,4 +74,21 @@ public class TakuSessionStateMachineTest {
         assertEquals(Integer.valueOf(66), failure.getNetworkFirmId());
         assertEquals("source-1", failure.getAdsourceId());
     }
+
+    @Test
+    public void closeBeforeRewardIsAnExplicitUnrewardedTerminalEvent() {
+        TakuSessionStateMachine machine = new TakuSessionStateMachine(PROTOCOL, "request-1");
+        machine.initializing();
+        machine.loading();
+        machine.loaded();
+        machine.showing("show-1", 66, "source-1");
+
+        TakuTelemetry closed = machine.closed("show-1", 66, "source-1");
+
+        assertEquals(TakuNativeState.CLOSED, closed.getState());
+        assertFalse(closed.isClientRewardObserved());
+        assertTrue(closed.isClosed());
+        assertThrows(IllegalStateException.class,
+                () -> machine.rewardObserved("show-1", 66, "source-1"));
+    }
 }

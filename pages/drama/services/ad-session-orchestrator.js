@@ -201,7 +201,9 @@ export function createAdSessionOrchestrator(options = {}) {
         item.memberId === normalized.memberId &&
         SESSION_PATTERN.test(String(item.sessionId || '')) &&
         Number.isSafeInteger(item.dramaId) &&
-        item.dramaId > 0,
+        item.dramaId > 0 &&
+        Number.isSafeInteger(item.episodeNo) &&
+        item.episodeNo > 0,
     );
   }
 
@@ -294,6 +296,26 @@ export function createAdSessionOrchestrator(options = {}) {
     if (data.outcome === 'ALREADY_ENTITLED') {
       return { outcome: data.outcome, nativeProtocol: null };
     }
+    if (data.outcome === 'VERIFYING') {
+      const sessionId = String(data.sessionId || '');
+      if (!SESSION_PATTERN.test(sessionId)) {
+        throw new Error('待验证广告会话编号格式错误');
+      }
+      persistPending(normalized, {
+        sessionId,
+        dramaId,
+        episodeNo,
+        rewardAcceptUntil: data.rewardAcceptUntil,
+      });
+      return {
+        outcome: data.outcome,
+        sessionId,
+        nativeProtocol: null,
+        requiresVerificationPoll: true,
+        loadExpiresAt: data.loadExpiresAt || null,
+        rewardAcceptUntil: data.rewardAcceptUntil || null,
+      };
+    }
     if (data.outcome !== 'CREATED' && data.outcome !== 'REUSED') {
       throw new Error('服务端广告会话结果不受支持');
     }
@@ -306,6 +328,7 @@ export function createAdSessionOrchestrator(options = {}) {
     });
     return {
       outcome: data.outcome,
+      sessionId: nativeProtocol.sessionId,
       nativeProtocol,
       requiresVerificationPoll: data.outcome === 'REUSED',
       loadExpiresAt: data.loadExpiresAt,
@@ -416,15 +439,15 @@ export function createAdSessionOrchestrator(options = {}) {
   async function recoverPendingSessions(identity) {
     const normalized = requireIdentity(identity);
     const sessions = getPendingSessions(normalized);
-    const results = [];
-    for (const session of sessions) {
-      try {
-        results.push(await pollSession(normalized, session.sessionId));
-      } catch (error) {
-        results.push({ resolution: 'UNAVAILABLE', sessionId: session.sessionId, error });
-      }
-    }
-    return results;
+    return Promise.all(
+      sessions.map(async (session) => {
+        try {
+          return await pollSession(normalized, session.sessionId);
+        } catch (error) {
+          return { resolution: 'UNAVAILABLE', sessionId: session.sessionId, error };
+        }
+      }),
+    );
   }
 
   return Object.freeze({

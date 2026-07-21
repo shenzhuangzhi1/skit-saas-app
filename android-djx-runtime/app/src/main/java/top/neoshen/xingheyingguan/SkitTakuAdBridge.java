@@ -60,7 +60,12 @@ public class SkitTakuAdBridge {
                 throw new IllegalArgumentException("Invalid native callback ID");
             }
             callbackId = id;
-            if (!"showRewardedVideo".equals(message.optString("method", ""))) {
+            String method = message.optString("method", "");
+            if ("cancelRewardedVideo".equals(method)) {
+                cancelRewardedVideo(id);
+                return;
+            }
+            if (!"showRewardedVideo".equals(method)) {
                 throw new IllegalArgumentException("Unknown Taku native method");
             }
             JSONObject payload = message.optJSONObject("payload");
@@ -74,19 +79,34 @@ public class SkitTakuAdBridge {
         }
     }
 
+    private void cancelRewardedVideo(String id) {
+        boolean cancelled = rewardedAdController.cancelPendingSession();
+        JSONObject result = new JSONObject();
+        put(result, "success", true);
+        put(result, "cancelled", cancelled);
+        emit(id, result, true);
+    }
+
     private void showRewardedVideo(String id, AdSessionProtocol protocol) {
         if (pendingCallbackId != null) {
             throw new IllegalStateException("A Taku session is already active");
         }
         pendingCallbackId = id;
+        String presentationUrl = webView.getUrl();
         try {
             rewardedAdController.start(protocol, telemetry -> {
                 boolean terminal = telemetry.getState() == TakuNativeState.CLOSED
                         || telemetry.getState() == TakuNativeState.ERROR;
-                emit(id, telemetryJson(telemetry), terminal);
-                if (terminal && id.equals(pendingCallbackId)) {
-                    pendingCallbackId = null;
+                try {
+                    emit(id, telemetryJson(telemetry), terminal);
+                } finally {
+                    if (terminal && id.equals(pendingCallbackId)) {
+                        pendingCallbackId = null;
+                    }
                 }
+            }, () -> {
+                originGuard.requireTrustedTopLevel();
+                return presentationUrl != null && presentationUrl.equals(webView.getUrl());
             });
         } catch (Throwable error) {
             rewardedAdController.cancelActiveSession();

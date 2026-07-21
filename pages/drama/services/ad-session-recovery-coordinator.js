@@ -1,18 +1,47 @@
-function identityKey(identity) {
-  const tenantId = String(identity?.tenantId ?? '').trim();
-  const memberId = String(identity?.memberId ?? '').trim();
+function requireScope(scope) {
+  const tenantId = String(scope?.tenantId ?? '').trim();
+  const memberId = String(scope?.memberId ?? '').trim();
+  const dramaId = Number(scope?.dramaId);
+  const episodeNo = Number(scope?.episodeNo);
   if (!tenantId || !memberId) {
     throw new Error('待验证广告会话缺少当前租户或会员 identity');
   }
-  return JSON.stringify([tenantId, memberId]);
+  if (!Number.isSafeInteger(dramaId) || dramaId <= 0) {
+    throw new Error('待验证广告会话缺少有效短剧编号');
+  }
+  if (!Number.isSafeInteger(episodeNo) || episodeNo <= 0) {
+    throw new Error('待验证广告会话缺少有效剧集编号');
+  }
+  return Object.freeze({ tenantId, memberId, dramaId, episodeNo });
+}
+
+function scopeKey(scope) {
+  const normalized = requireScope(scope);
+  return JSON.stringify([
+    normalized.tenantId,
+    normalized.memberId,
+    normalized.dramaId,
+    normalized.episodeNo,
+  ]);
+}
+
+function recoveryKey(scope, sessionIdInput) {
+  const sessionId = String(sessionIdInput ?? '').trim();
+  if (!sessionId) {
+    throw new Error('待验证广告恢复缺少 session');
+  }
+  return JSON.stringify([scopeKey(scope), sessionId]);
 }
 
 export function createAdSessionRecoveryCoordinator() {
   const recoveryPromises = new Map();
   const activeOwners = new Set();
   const queuedRecoveries = new Map();
+  const scopeRecoveries = new Map();
 
-  function startRecovery(key, recover) {
+  function startRecovery(scope, sessionId, recover) {
+    const ownerKey = scopeKey(scope);
+    const key = recoveryKey(scope, sessionId);
     let tracked;
     tracked = Promise.resolve()
       .then(recover)
@@ -20,19 +49,23 @@ export function createAdSessionRecoveryCoordinator() {
         if (recoveryPromises.get(key) === tracked) {
           recoveryPromises.delete(key);
         }
+        const running = scopeRecoveries.get(ownerKey);
+        running?.delete(tracked);
+        if (running?.size === 0) {
+          scopeRecoveries.delete(ownerKey);
+        }
       });
     recoveryPromises.set(key, tracked);
+    const running = scopeRecoveries.get(ownerKey) || new Set();
+    running.add(tracked);
+    scopeRecoveries.set(ownerKey, running);
     return tracked;
   }
 
-  async function acquire(identity) {
-    const key = identityKey(identity);
-    while (recoveryPromises.has(key)) {
-      try {
-        await recoveryPromises.get(key);
-      } catch (error) {
-        // A failed foreground recovery must settle before a user-owned unlock retries the API.
-      }
+  async function acquire(scope) {
+    const key = scopeKey(scope);
+    while (scopeRecoveries.has(key)) {
+      await Promise.allSettled([...scopeRecoveries.get(key)]);
     }
     if (activeOwners.has(key)) {
       return null;
@@ -45,16 +78,22 @@ export function createAdSessionRecoveryCoordinator() {
       }
       released = true;
       activeOwners.delete(key);
-      const queued = queuedRecoveries.get(key);
-      if (queued) {
-        queuedRecoveries.delete(key);
-        startRecovery(key, queued.recover).then(queued.resolve, queued.reject);
+      for (const [queuedKey, queued] of queuedRecoveries) {
+        if (queued.scopeKey !== key) {
+          continue;
+        }
+        queuedRecoveries.delete(queuedKey);
+        startRecovery(queued.scope, queued.sessionId, queued.recover).then(
+          queued.resolve,
+          queued.reject,
+        );
       }
     };
   }
 
-  function runRecovery(identity, recover) {
-    const key = identityKey(identity);
+  function runRecovery(scope, sessionId, recover) {
+    const ownerKey = scopeKey(scope);
+    const key = recoveryKey(scope, sessionId);
     const existing = recoveryPromises.get(key);
     if (existing) {
       return existing;
@@ -62,7 +101,7 @@ export function createAdSessionRecoveryCoordinator() {
     if (typeof recover !== 'function') {
       return Promise.reject(new Error('待验证广告恢复方法不可用'));
     }
-    if (activeOwners.has(key)) {
+    if (activeOwners.has(ownerKey)) {
       const queued = queuedRecoveries.get(key);
       if (queued) {
         return queued.promise;
@@ -73,10 +112,18 @@ export function createAdSessionRecoveryCoordinator() {
         resolve = resolvePromise;
         reject = rejectPromise;
       });
-      queuedRecoveries.set(key, { recover, promise, resolve, reject });
+      queuedRecoveries.set(key, {
+        scope: requireScope(scope),
+        scopeKey: ownerKey,
+        sessionId: String(sessionId),
+        recover,
+        promise,
+        resolve,
+        reject,
+      });
       return promise;
     }
-    return startRecovery(key, recover);
+    return startRecovery(scope, sessionId, recover);
   }
 
   return Object.freeze({ acquire, runRecovery });

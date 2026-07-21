@@ -34,9 +34,7 @@
             {{ pangleReady ? '播放器已就绪' : '当前剧集暂不可播放' }}
           </view>
           <view class="placeholder-desc">
-            {{
-              pangleReady ? '正在打开剧集' : '请稍后再试'
-            }}
+            {{ pangleReady ? '正在打开剧集' : '请稍后再试' }}
           </view>
         </view>
         <view class="episode-badge">第{{ currentEpisode }}集</view>
@@ -136,7 +134,7 @@
 
 <script setup>
   import { computed, ref, watch } from 'vue';
-  import { onLoad, onShow } from '@dcloudio/uni-app';
+  import { onHide, onLoad, onShow, onUnload } from '@dcloudio/uni-app';
   import sheep from '@/sheep';
   import {
     getDramaById,
@@ -155,7 +153,11 @@
     adSessionOrchestrator,
     recoverPendingAdSessions,
   } from '@/pages/drama/services/ad-session-runtime';
-  import { showDramaRewardedVideoAd } from '@/pages/drama/services/reward-ad';
+  import { createDramaPageAsyncGuard } from '@/pages/drama/services/drama-page-async-guard';
+  import {
+    cancelPendingDramaRewardedVideoAd,
+    showDramaRewardedVideoAd,
+  } from '@/pages/drama/services/reward-ad';
 
   const drama = ref(getDramaById());
   const currentEpisode = ref(1);
@@ -169,6 +171,12 @@
   const pangleReady = ref(false);
   const pendingVerificationSessions = new Set();
   const userStore = sheep.$store('user');
+  const pageAsyncGuard = createDramaPageAsyncGuard();
+  const STALE_PAGE_CONTEXT = 'STALE_PAGE_CONTEXT';
+  let pageHasShown = false;
+  let foregroundSyncPending = false;
+  let pendingRawPlaybackEpisode = null;
+  let pageInstance = null;
 
   const locked = computed(() => {
     return !isEpisodeUnlocked(drama.value, currentEpisode.value, grantedEpisodeNos.value);
@@ -237,54 +245,206 @@
     return { tenantId, memberId };
   }
 
-  function identitySignature(identity) {
-    return `${String(identity.tenantId)}:${String(identity.memberId)}`;
+  function authorizationScope(identity = currentIdentity(), dramaId = resolveServerDramaId()) {
+    return {
+      tenantId: String(identity.tenantId).trim(),
+      memberId: String(identity.memberId).trim(),
+      dramaId: Number(dramaId),
+    };
+  }
+
+  function authorizationSignature(scope) {
+    return JSON.stringify([scope.tenantId, scope.memberId, scope.dramaId]);
+  }
+
+  function sameAuthorizationScope(left, right) {
+    return (
+      !!left &&
+      !!right &&
+      left.tenantId === right.tenantId &&
+      left.memberId === right.memberId &&
+      left.dramaId === right.dramaId
+    );
+  }
+
+  function currentAuthorizationScope() {
+    if (!userStore.isLogin) {
+      return null;
+    }
+    try {
+      return authorizationScope();
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function stalePageContextError(cause) {
+    const error = new Error('页面授权上下文已经失效');
+    error.code = STALE_PAGE_CONTEXT;
+    error.cause = cause;
+    return error;
+  }
+
+  function isStalePageContextError(error) {
+    return error?.code === STALE_PAGE_CONTEXT;
+  }
+
+  function beginPageRequest(
+    channel,
+    identity = currentIdentity(),
+    dramaId = resolveServerDramaId(),
+  ) {
+    const expectedScope = authorizationScope(identity, dramaId);
+    if (!sameAuthorizationScope(expectedScope, currentAuthorizationScope())) {
+      throw stalePageContextError();
+    }
+    try {
+      return pageAsyncGuard.begin(channel, expectedScope);
+    } catch (error) {
+      throw stalePageContextError(error);
+    }
+  }
+
+  function isPageRequestCurrent(request) {
+    const scope = currentAuthorizationScope();
+    return !!scope && pageAsyncGuard.isCurrent(request, scope);
+  }
+
+  function isPageUiRequestCurrent(request) {
+    const scope = currentAuthorizationScope();
+    return !!scope && pageAsyncGuard.isUiCurrent(request, scope);
+  }
+
+  function isPageVisibleRequestCurrent(request) {
+    return pageAsyncGuard.isVisible() && isPageRequestCurrent(request);
+  }
+
+  function assertPageRequestCurrent(request) {
+    if (!isPageRequestCurrent(request)) {
+      throw stalePageContextError();
+    }
+  }
+
+  function assertPageVisibleRequestCurrent(request) {
+    if (!isPageVisibleRequestCurrent(request)) {
+      throw stalePageContextError();
+    }
+  }
+
+  async function waitForPageUiRequestCurrent(request) {
+    const scope = currentAuthorizationScope();
+    if (!scope) {
+      throw stalePageContextError();
+    }
+    try {
+      await pageAsyncGuard.waitForUi(request, scope);
+    } catch (error) {
+      throw stalePageContextError(error);
+    }
+    assertPageVisibleRequestCurrent(request);
+  }
+
+  async function runNativeActivityPresentation(operation) {
+    let finishPresentation;
+    try {
+      finishPresentation = pageAsyncGuard.beginPresentation();
+      return await operation();
+    } finally {
+      finishPresentation?.();
+      if (foregroundSyncPending && pageAsyncGuard.isVisible() && !pageAsyncGuard.isPresenting()) {
+        foregroundSyncPending = false;
+        syncServerState().catch((error) => {
+          if (!isStalePageContextError(error)) {
+            console.warn('[entitlement] foreground refresh unavailable', error?.message || error);
+          }
+        });
+      }
+    }
+  }
+
+  function isPageInstanceOnTop() {
+    try {
+      const pages = getCurrentPages();
+      return !pageInstance || pages[pages.length - 1] === pageInstance;
+    } catch (error) {
+      return true;
+    }
   }
 
   async function refreshAuthoritativeEntitlements(identity = currentIdentity()) {
-    const signature = identitySignature(identity);
+    const dramaId = resolveServerDramaId();
+    const scope = authorizationScope(identity, dramaId);
+    const entitlementRequest = beginPageRequest('entitlements', identity, dramaId);
+    const signature = authorizationSignature(scope);
     if (authoritativeIdentity.value !== signature) {
       authoritativeIdentity.value = signature;
       grantedEpisodeNos.value = [];
       activePlaybackEpisode.value = null;
     }
-    const dramaId = resolveServerDramaId();
     grantedEpisodeNos.value = [];
     const snapshot = await adSessionOrchestrator.refreshEntitlements(identity, dramaId);
+    assertPageRequestCurrent(entitlementRequest);
     grantedEpisodeNos.value = snapshot.grantedEpisodeNos;
     return snapshot;
   }
 
   async function recoverPendingSessions(identity) {
-    const results = await recoverPendingAdSessions(identity);
-    if (results.some((result) => result.resolution === 'GRANTED')) {
-      await refreshAuthoritativeEntitlements(identity);
+    const dramaId = resolveServerDramaId();
+    const recoveryRequest = beginPageRequest('foreground-recovery', identity, dramaId);
+    let currentDramaGranted = false;
+    const results = await recoverPendingAdSessions(identity, {
+      onResult(result, session) {
+        if (result.resolution === 'GRANTED' && Number(session.dramaId) === dramaId) {
+          currentDramaGranted = true;
+        }
+      },
+    });
+    assertPageRequestCurrent(recoveryRequest);
+    if (!currentDramaGranted) {
+      return results;
+    }
+    await refreshAuthoritativeEntitlements(identity);
+    assertPageRequestCurrent(recoveryRequest);
+    if (isPageUiRequestCurrent(recoveryRequest)) {
       uni.showToast({ title: '广告奖励已通过服务端验证', icon: 'none' });
     }
     return results;
   }
 
-  function schedulePendingRewardVerification(identity, episodeNo, sessionId, releaseOwnership) {
+  function schedulePendingRewardVerification(
+    identity,
+    dramaId,
+    episodeNo,
+    sessionId,
+    releaseOwnership,
+  ) {
     if (pendingVerificationSessions.has(sessionId)) {
       return false;
     }
     if (typeof releaseOwnership !== 'function') {
       throw new Error('待验奖会话缺少 owner');
     }
+    const pendingRequest = beginPageRequest(`pending:${sessionId}`, identity, dramaId);
     pendingVerificationSessions.add(sessionId);
     adSessionOrchestrator
       .watchPendingSession(identity, sessionId)
       .then(async (result) => {
         if (result.resolution === 'GRANTED') {
+          if (!isPageRequestCurrent(pendingRequest)) {
+            return;
+          }
           if (!result.entitlements.grantedEpisodeNos.includes(episodeNo)) {
             throw new Error('目标剧集尚未获得服务端权益');
           }
+          if (!isPageUiRequestCurrent(pendingRequest)) {
+            return;
+          }
+          pageAsyncGuard.invalidateChannel('entitlements');
           grantedEpisodeNos.value = result.entitlements.grantedEpisodeNos;
           uni.showToast({ title: `已解锁第${episodeNo}集`, icon: 'none' });
           if (currentEpisode.value !== episodeNo) {
             return;
           }
-          const dramaId = resolveServerDramaId();
           await playCurrentEpisode(
             'server_verified_reward',
             {
@@ -295,10 +455,17 @@
             },
             episodeNo,
           );
+          assertPageRequestCurrent(pendingRequest);
         }
       })
       .catch((error) => {
-        console.warn('[ad-session] pending reward verification unavailable', error?.message || error);
+        if (isStalePageContextError(error) || !isPageRequestCurrent(pendingRequest)) {
+          return;
+        }
+        console.warn(
+          '[ad-session] pending reward verification unavailable',
+          error?.message || error,
+        );
       })
       .finally(() => {
         pendingVerificationSessions.delete(sessionId);
@@ -310,22 +477,63 @@
   async function syncServerState() {
     refresh();
     if (!userStore.isLogin) {
+      pageAsyncGuard.invalidateRequests();
       authoritativeIdentity.value = '';
       grantedEpisodeNos.value = [];
+      pendingRawPlaybackEpisode = null;
       activePlaybackEpisode.value = null;
-      return;
+      return { skipped: true, reason: 'signed-out' };
     }
+    let syncRequest;
     try {
       const identity = currentIdentity();
+      const dramaId = resolveServerDramaId();
+      syncRequest = beginPageRequest('sync', identity, dramaId);
       await refreshAuthoritativeEntitlements(identity);
+      assertPageRequestCurrent(syncRequest);
       recoverPendingSessions(identity).catch((error) => {
+        if (isStalePageContextError(error)) {
+          return;
+        }
         console.warn('[ad-session] pending recovery unavailable', error?.message || error);
       });
+      return { synchronized: true, request: syncRequest };
     } catch (error) {
+      if (isStalePageContextError(error)) {
+        return { skipped: true, reason: 'stale-page-context' };
+      }
+      if (syncRequest && !isPageRequestCurrent(syncRequest)) {
+        return { skipped: true, reason: 'stale-page-context' };
+      }
       grantedEpisodeNos.value = [];
       activePlaybackEpisode.value = null;
       console.warn('[entitlement] server refresh unavailable', error?.message || error);
+      return { skipped: true, reason: 'server-refresh-unavailable' };
     }
+  }
+
+  async function playAfterServerSync(source) {
+    const syncResult = await syncServerState();
+    if (!syncResult?.request || !isPageRequestCurrent(syncResult.request)) {
+      return syncResult;
+    }
+    const playback = await playCurrentEpisode(source);
+    assertPageRequestCurrent(syncResult.request);
+    return playback;
+  }
+
+  async function syncAndResumePendingRawPlayback() {
+    const syncResult = await syncServerState();
+    if (
+      !pageAsyncGuard.isVisible() ||
+      pendingRawPlaybackEpisode === null ||
+      pendingRawPlaybackEpisode !== currentEpisode.value ||
+      !rawCurrentVideoUrl.value ||
+      locked.value
+    ) {
+      return syncResult;
+    }
+    return await playCurrentEpisode('foreground_resume');
   }
 
   function goBack() {
@@ -374,10 +582,19 @@
 
   function rewardErrorTitle(error) {
     const message = String(error?.message || '').trim();
-    if (message.includes('CLIENT_RUNTIME_HEADERS_INVALID') || message.includes('CLIENT_VERSION_REVOKED')) {
+    if (
+      message.includes('CLIENT_RUNTIME_HEADERS_INVALID') ||
+      message.includes('CLIENT_VERSION_REVOKED')
+    ) {
       return '请更新到最新版本后重试';
     }
-    return '广告奖励暂不可用，请稍后重试';
+    if (error?.code === 'TELEMETRY_DELIVERY_FAILED') {
+      return '广告状态同步失败，请稍后重试';
+    }
+    if (error?.code === 'REWARD_REJECTED' || error?.code === 'REWARD_VERIFY_TIMEOUT') {
+      return '本次奖励未到账，请重新观看广告';
+    }
+    return '广告暂不可用，请稍后重试';
   }
 
   async function playCurrentEpisode(
@@ -385,6 +602,7 @@
     rewardEvidence = null,
     targetEpisode = currentEpisode.value,
   ) {
+    let playerRequest;
     try {
       if (!Number.isSafeInteger(targetEpisode) || targetEpisode <= 0) {
         throw new Error('目标剧集无效');
@@ -399,8 +617,19 @@
       }
       const identity = currentIdentity();
       const dramaId = resolveServerDramaId();
+      playerRequest = beginPageRequest('player', identity, dramaId);
+      function assertPlayerLaunchCurrent() {
+        assertPageVisibleRequestCurrent(playerRequest);
+        if (currentEpisode.value !== targetEpisode) {
+          throw stalePageContextError();
+        }
+      }
       if (targetEpisode > drama.value.freeEpisodes) {
         const snapshot = await refreshAuthoritativeEntitlements(identity);
+        assertPageRequestCurrent(playerRequest);
+        if (currentEpisode.value !== targetEpisode) {
+          return { skipped: true, reason: 'episode-changed' };
+        }
         if (!snapshot.grantedEpisodeNos.includes(targetEpisode)) {
           activePlaybackEpisode.value = null;
           if (source === 'manual_open' || source === 'episode_select') {
@@ -412,11 +641,17 @@
           return { skipped: true, reason: 'not-entitled' };
         }
       }
+      if (rawCurrentVideoUrl.value) {
+        pendingRawPlaybackEpisode = targetEpisode;
+      }
       const playerGrant = await adSessionOrchestrator.issuePlayerGrant(identity, dramaId);
+      assertPageRequestCurrent(playerRequest);
       if (currentEpisode.value !== targetEpisode) {
         return { skipped: true, reason: 'episode-changed' };
       }
       if (rawCurrentVideoUrl.value) {
+        assertPlayerLaunchCurrent();
+        pendingRawPlaybackEpisode = null;
         activePlaybackEpisode.value = targetEpisode;
         return;
       }
@@ -424,18 +659,32 @@
         return;
       }
 
-      const opened = await openPangleDramaPlayer({
-        drama: drama.value,
-        episode: targetEpisode,
-        source,
-        playerGrant,
-        rewardEvidence,
-      });
+      assertPageRequestCurrent(playerRequest);
+      const opened = await runNativeActivityPresentation(() =>
+        openPangleDramaPlayer({
+          drama: drama.value,
+          episode: targetEpisode,
+          source,
+          playerGrant,
+          rewardEvidence,
+          assertCurrent: assertPlayerLaunchCurrent,
+        }),
+      );
+      assertPageRequestCurrent(playerRequest);
       if (opened?.opened) {
         saveHistory(drama.value.id, targetEpisode);
       }
       return opened;
     } catch (error) {
+      if (
+        isStalePageContextError(error) ||
+        (playerRequest && !isPageVisibleRequestCurrent(playerRequest))
+      ) {
+        return { skipped: true, reason: 'stale-page-context' };
+      }
+      if (pendingRawPlaybackEpisode === targetEpisode) {
+        pendingRawPlaybackEpisode = null;
+      }
       console.warn('[drama] protected player open failed:', error?.message || error);
       if (source === 'manual_open' || source === 'episode_select') {
         uni.showToast({
@@ -474,21 +723,30 @@
     const unlockEpisode = currentEpisode.value;
     unlocking.value = true;
     let releaseUnlockOwnership;
+    let unlockRequest;
     try {
       const identity = currentIdentity();
-      releaseUnlockOwnership = await acquireAdSessionOwnership(identity);
+      const dramaId = resolveServerDramaId();
+      unlockRequest = beginPageRequest('unlock', identity, dramaId);
+      releaseUnlockOwnership = await acquireAdSessionOwnership({
+        ...identity,
+        dramaId,
+        episodeNo: unlockEpisode,
+      });
+      assertPageRequestCurrent(unlockRequest);
       if (!releaseUnlockOwnership) {
-        uni.showToast({ title: '广告奖励确认中，请稍后查看', icon: 'none' });
+        uni.showToast({ title: '本集广告奖励确认中，请稍后查看', icon: 'none' });
         return;
       }
-      const dramaId = resolveServerDramaId();
       if (isUnlocked(unlockEpisode)) {
         const snapshot = await refreshAuthoritativeEntitlements(identity);
+        assertPageRequestCurrent(unlockRequest);
         if (snapshot.grantedEpisodeNos.includes(unlockEpisode)) {
           if (currentEpisode.value !== unlockEpisode) {
             return;
           }
           await playCurrentEpisode('server_entitled', null, unlockEpisode);
+          assertPageRequestCurrent(unlockRequest);
           return;
         }
       }
@@ -497,12 +755,14 @@
         dramaId,
         episodeNo: unlockEpisode,
       });
+      assertPageRequestCurrent(unlockRequest);
       if (prepared.kind === 'RECOVERED') {
         result = prepared.result;
       } else {
         const created = prepared.created;
         if (created.outcome === 'ALREADY_ENTITLED') {
           const snapshot = await refreshAuthoritativeEntitlements(identity);
+          assertPageRequestCurrent(unlockRequest);
           if (!snapshot.grantedEpisodeNos.includes(unlockEpisode)) {
             throw new Error('服务端权益尚未同步，请稍后重试');
           }
@@ -510,43 +770,75 @@
             return;
           }
           await playCurrentEpisode('server_entitled', null, unlockEpisode);
+          assertPageRequestCurrent(unlockRequest);
           return;
         }
-        if (!created.requiresVerificationPoll) {
-          await showDramaRewardedVideoAd({
-            protocol: created.nativeProtocol,
-            onClientEvent: (clientEvent) =>
-              adSessionOrchestrator.recordClientEvent(
-                identity,
-                created.nativeProtocol,
-                clientEvent,
-              ),
-          });
+        if (created.outcome === 'VERIFYING') {
+          if (created.nativeProtocol) {
+            throw new Error('待确认记录不得携带原生播放协议');
+          }
+          result = await adSessionOrchestrator.pollSession(identity, created.sessionId);
+          assertPageRequestCurrent(unlockRequest);
+        } else if (!created.requiresVerificationPoll) {
+          if (!created.nativeProtocol) {
+            throw new Error('新请求缺少原生播放协议');
+          }
+          const adPlayback = await runNativeActivityPresentation(() =>
+            showDramaRewardedVideoAd({
+              protocol: created.nativeProtocol,
+              onClientEvent: (clientEvent) =>
+                adSessionOrchestrator.recordClientEvent(
+                  identity,
+                  created.nativeProtocol,
+                  clientEvent,
+                ),
+            }),
+          );
+          assertPageRequestCurrent(unlockRequest);
+          result = await adSessionOrchestrator.pollSession(identity, created.sessionId);
+          assertPageRequestCurrent(unlockRequest);
+          if (adPlayback.outcome === 'INCOMPLETE' && result.resolution !== 'GRANTED') {
+            if (isPageUiRequestCurrent(unlockRequest)) {
+              uni.showToast({ title: '广告未完整观看，请重新观看', icon: 'none' });
+            }
+            return;
+          }
+        } else {
+          result = await adSessionOrchestrator.pollSession(identity, created.sessionId);
+          assertPageRequestCurrent(unlockRequest);
         }
-        result = await adSessionOrchestrator.pollSession(
-          identity,
-          created.nativeProtocol.sessionId,
-        );
       }
 
       if (result.resolution === 'GRANTED') {
+        assertPageRequestCurrent(unlockRequest);
         if (!result.entitlements.grantedEpisodeNos.includes(unlockEpisode)) {
           throw new Error('目标剧集尚未获得服务端权益');
         }
+        pageAsyncGuard.invalidateChannel('entitlements');
+        releaseUnlockOwnership?.();
+        releaseUnlockOwnership = null;
+        await waitForPageUiRequestCurrent(unlockRequest);
+        assertPageRequestCurrent(unlockRequest);
         grantedEpisodeNos.value = result.entitlements.grantedEpisodeNos;
         uni.showToast({ title: `已解锁第${unlockEpisode}集`, icon: 'none' });
         if (currentEpisode.value !== unlockEpisode) {
           return;
         }
-        await playCurrentEpisode('server_verified_reward', {
-          dramaId,
-          episodeNo: unlockEpisode,
-          sessionId: result.status.sessionId,
-          providerShowId: result.status.providerShowId,
-        }, unlockEpisode);
+        await playCurrentEpisode(
+          'server_verified_reward',
+          {
+            dramaId,
+            episodeNo: unlockEpisode,
+            sessionId: result.status.sessionId,
+            providerShowId: result.status.providerShowId,
+          },
+          unlockEpisode,
+        );
+        assertPageRequestCurrent(unlockRequest);
       } else if (result.resolution === 'VERIFYING') {
         const ownershipTransferred = schedulePendingRewardVerification(
           identity,
+          dramaId,
           unlockEpisode,
           result.status.sessionId,
           releaseUnlockOwnership,
@@ -554,11 +846,22 @@
         if (ownershipTransferred) {
           releaseUnlockOwnership = null;
         }
-        uni.showToast({ title: '奖励确认中，可稍后返回查看', icon: 'none' });
+        if (isPageUiRequestCurrent(unlockRequest)) {
+          uni.showToast({ title: '奖励确认中，可稍后返回查看', icon: 'none' });
+        }
       } else {
-        throw new Error('广告奖励未确认');
+        const error = new Error('广告奖励未确认');
+        error.code =
+          result.resolution === 'VERIFY_TIMEOUT' ? 'REWARD_VERIFY_TIMEOUT' : 'REWARD_REJECTED';
+        throw error;
       }
     } catch (error) {
+      if (
+        isStalePageContextError(error) ||
+        (unlockRequest && !isPageVisibleRequestCurrent(unlockRequest))
+      ) {
+        return;
+      }
       uni.showToast({
         title: rewardErrorTitle(error),
         icon: 'none',
@@ -592,20 +895,67 @@
   onLoad((options) => {
     drama.value = getDramaById(options.id);
     currentEpisode.value = Math.max(1, Math.min(Number(options.episode) || 1, drama.value.total));
+    const pages = getCurrentPages();
+    pageInstance = pages[pages.length - 1] || null;
+    pageAsyncGuard.activate();
+    pageAsyncGuard.setVisible(true);
     refresh();
     setTimeout(() => {
-      syncServerState()
-        .then(() => playCurrentEpisode('page_load'))
-        .catch((error) =>
-          console.warn('[drama] page authorization unavailable', error?.message || error),
-        );
+      playAfterServerSync('page_load').catch((error) => {
+        if (!isStalePageContextError(error)) {
+          console.warn('[drama] page authorization unavailable', error?.message || error);
+        }
+      });
     }, 0);
   });
 
-  onShow(syncServerState);
+  onShow(() => {
+    pageAsyncGuard.activate();
+    pageAsyncGuard.setVisible(true);
+    if (!pageHasShown) {
+      pageHasShown = true;
+      return;
+    }
+    if (pageAsyncGuard.isPresenting()) {
+      foregroundSyncPending = true;
+      return;
+    }
+    foregroundSyncPending = false;
+    syncAndResumePendingRawPlayback().catch((error) => {
+      if (!isStalePageContextError(error)) {
+        console.warn('[drama] foreground playback resume unavailable', error?.message || error);
+      }
+    });
+  });
+
+  onHide(() => {
+    cancelPendingDramaRewardedVideoAd();
+    pageAsyncGuard.setVisible(false);
+    if (pageAsyncGuard.isPresenting()) {
+      setTimeout(() => {
+        if (!pageAsyncGuard.isVisible() && !isPageInstanceOnTop()) {
+          pageAsyncGuard.deactivate();
+        }
+      }, 0);
+      return;
+    }
+    pageAsyncGuard.deactivate();
+  });
+
+  onUnload(() => {
+    cancelPendingDramaRewardedVideoAd();
+    foregroundSyncPending = false;
+    pendingRawPlaybackEpisode = null;
+    pageAsyncGuard.setVisible(false);
+    pageAsyncGuard.deactivate();
+  });
 
   watch(currentEpisode, () => {
+    cancelPendingDramaRewardedVideoAd();
+    pageAsyncGuard.invalidateChannel('player');
+    pageAsyncGuard.invalidateChannel('unlock');
     videoErrored.value = false;
+    pendingRawPlaybackEpisode = null;
     activePlaybackEpisode.value = null;
   });
 
@@ -615,11 +965,20 @@
       if (nextIdentity[0] === previousIdentity?.[0] && nextIdentity[1] === previousIdentity?.[1]) {
         return;
       }
-      syncServerState()
-        .then(() => playCurrentEpisode('identity_ready'))
-        .catch((error) => {
+      cancelPendingDramaRewardedVideoAd();
+      pageAsyncGuard.invalidateRequests();
+      authoritativeIdentity.value = '';
+      grantedEpisodeNos.value = [];
+      pendingRawPlaybackEpisode = null;
+      activePlaybackEpisode.value = null;
+      if (!pageAsyncGuard.isVisible()) {
+        return;
+      }
+      playAfterServerSync('identity_ready').catch((error) => {
+        if (!isStalePageContextError(error)) {
           console.warn('[entitlement] identity refresh unavailable', error?.message || error);
-        });
+        }
+      });
     },
   );
 </script>

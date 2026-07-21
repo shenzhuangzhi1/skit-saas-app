@@ -24,15 +24,19 @@
     if (!userStore.isLogin || profile.tenantId === undefined || memberId === undefined) {
       return;
     }
-    recoverPendingAdSessions({ tenantId: profile.tenantId, memberId })
-      .then((results) => {
-        if (results.some((result) => result.resolution === 'GRANTED')) {
+    recoverPendingAdSessions(
+      { tenantId: profile.tenantId, memberId },
+      {
+        onResult(result) {
+          if (result.resolution !== 'GRANTED') {
+            return;
+          }
           safeUni.showToast({ title: '广告奖励已通过服务端验证', icon: 'none' });
-        }
-      })
-      .catch((error) => {
-        console.warn('[ad-session] foreground recovery unavailable', error?.message || error);
-      });
+        },
+      },
+    ).catch((error) => {
+      console.warn('[ad-session] foreground recovery unavailable', error?.message || error);
+    });
   }
 
   onLaunch(() => {

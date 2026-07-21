@@ -56,12 +56,50 @@ test('H5 cannot send malicious freeSet or lockSet policy to the native player', 
       grantToken: 'abcdefghijklmnopqrstuvwxyzABCDEFGH123456789',
       expiresAt: '2099-01-01T00:00:00Z',
     },
+    assertCurrent() {},
   });
 
   assert.ok(openPayload, 'native openPlayer payload must be emitted');
   assert.equal(Object.hasOwn(openPayload, 'freeSet'), false);
   assert.equal(Object.hasOwn(openPayload, 'lockSet'), false);
   assert.equal(openPayload.playerGrant.expiresAt, Date.parse('2099-01-01T00:00:00Z'));
+});
+
+test('a stale launch is rejected after SDK startup and before native openPlayer side effects', async () => {
+  let resolveStart;
+  let openCalls = 0;
+  let current = true;
+  const content = await importPangleContent({
+    start: () =>
+      new Promise((resolvePromise) => {
+        resolveStart = resolvePromise;
+      }),
+    openPlayer: async () => {
+      openCalls += 1;
+      return { success: true, opened: true };
+    },
+  });
+
+  const launch = content.openPangleDramaPlayer({
+    drama: { id: '901', pangleDramaId: 901 },
+    episode: 7,
+    playerGrant: {
+      grantId: 17,
+      dramaId: 901,
+      grantToken: 'abcdefghijklmnopqrstuvwxyzABCDEFGH123456789',
+      expiresAt: '2099-01-01T00:00:00Z',
+    },
+    assertCurrent() {
+      if (!current) {
+        throw new Error('stale-player-launch');
+      }
+    },
+  });
+  current = false;
+  resolveStart({ success: true });
+
+  await assert.rejects(launch, /stale-player-launch/);
+  assert.equal(openCalls, 0);
 });
 
 test('H5 rejects every native openPlayer result that did not actually open an Activity', async () => {
@@ -85,6 +123,7 @@ test('H5 rejects every native openPlayer result that did not actually open an Ac
         drama: { id: '901', pangleDramaId: 901 },
         episode: 7,
         playerGrant: grant,
+        assertCurrent() {},
       }),
       /原生播放器未启动|native failed/,
     );
@@ -142,10 +181,7 @@ test('DJX unlock callbacks are bound to the current widget epoch and preserve SD
     player,
     /createUnlockListener\(long fallbackDramaId,\s*long callbackEpoch\)[\s\S]*?unlockFlowStart[\s\S]*?playerCallbackEpoch\.isCurrent\(callbackEpoch\)/,
   );
-  assert.match(
-    player,
-    /unlockFlowEnd[\s\S]*?playerCallbackEpoch\.isCurrent\(callbackEpoch\)/,
-  );
+  assert.match(player, /unlockFlowEnd[\s\S]*?playerCallbackEpoch\.isCurrent\(callbackEpoch\)/);
   assert.match(
     player,
     /showCustomAd[\s\S]*?playerCallbackEpoch\.isCurrent\(callbackEpoch\)[\s\S]*?callback\.onError\(\)/,
@@ -210,8 +246,5 @@ test('a verified H5 reward never falls through to a second native Taku request',
     player,
     /if \(hasLaunchRewardEvidenceFor\(targetEpisode\)\) \{[\s\S]*?scheduleLaunchEvidenceEntitlementPoll\(targetEpisode, generation\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?createServerAdSession\(targetEpisode, generation\);/,
   );
-  assert.match(
-    player,
-    /scheduleLaunchEvidenceEntitlementPoll[\s\S]*?奖励确认中，可稍后返回查看/,
-  );
+  assert.match(player, /scheduleLaunchEvidenceEntitlementPoll[\s\S]*?奖励确认中，可稍后返回查看/);
 });

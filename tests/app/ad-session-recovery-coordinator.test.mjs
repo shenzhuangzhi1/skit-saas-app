@@ -4,6 +4,10 @@ import test from 'node:test';
 import { createAdSessionRecoveryCoordinator } from '../../pages/drama/services/ad-session-recovery-coordinator.js';
 
 const identity = Object.freeze({ tenantId: 'tenant-a', memberId: 'member-a' });
+const scopeA = Object.freeze({ ...identity, dramaId: 901, episodeNo: 7 });
+const scopeB = Object.freeze({ ...identity, dramaId: 902, episodeNo: 1 });
+const sessionA = 'session_0123456789ABCD';
+const sessionB = 'session_9876543210WXYZ';
 
 function deferred() {
   let resolve;
@@ -15,12 +19,12 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-test('a live unlock owner queues foreground recovery until the owner releases', async () => {
+test('a live unlock owner queues only the same scope recovery until the owner releases', async () => {
   const coordinator = createAdSessionRecoveryCoordinator();
-  const release = await coordinator.acquire(identity);
+  const release = await coordinator.acquire(scopeA);
   let recoveryCalls = 0;
 
-  const recovery = coordinator.runRecovery(identity, async () => {
+  const recovery = coordinator.runRecovery(scopeA, sessionA, async () => {
     recoveryCalls += 1;
     return ['recovered-after-unlock'];
   });
@@ -31,11 +35,11 @@ test('a live unlock owner queues foreground recovery until the owner releases', 
   assert.equal(recoveryCalls, 1);
 });
 
-test('unlock acquisition waits for an older foreground recovery and then owns later recovery', async () => {
+test('unlock acquisition waits for an older recovery of the same scope', async () => {
   const coordinator = createAdSessionRecoveryCoordinator();
   const recoveryStarted = deferred();
   const allowRecoveryToFinish = deferred();
-  const recovery = coordinator.runRecovery(identity, async () => {
+  const recovery = coordinator.runRecovery(scopeA, sessionA, async () => {
     recoveryStarted.resolve();
     await allowRecoveryToFinish.promise;
     return ['recovered-before-unlock'];
@@ -43,7 +47,7 @@ test('unlock acquisition waits for an older foreground recovery and then owns la
   await recoveryStarted.promise;
 
   let ownerAcquired = false;
-  const owner = coordinator.acquire(identity).then((release) => {
+  const owner = coordinator.acquire(scopeA).then((release) => {
     ownerAcquired = true;
     return release;
   });
@@ -55,9 +59,9 @@ test('unlock acquisition waits for an older foreground recovery and then owns la
   const release = await owner;
   assert.equal(ownerAcquired, true);
 
-  assert.equal(await coordinator.acquire(identity), null);
+  assert.equal(await coordinator.acquire(scopeA), null);
   let overlappingRecoveryCalls = 0;
-  const queuedRecovery = coordinator.runRecovery(identity, async () => {
+  const queuedRecovery = coordinator.runRecovery(scopeA, sessionA, async () => {
     overlappingRecoveryCalls += 1;
     return ['recovered-after-owner'];
   });
@@ -68,15 +72,15 @@ test('unlock acquisition waits for an older foreground recovery and then owns la
   assert.equal(overlappingRecoveryCalls, 1);
 });
 
-test('App and page share one queued recovery while an unlock owns the identity', async () => {
+test('App and page share one queued recovery for the same session', async () => {
   const coordinator = createAdSessionRecoveryCoordinator();
-  const release = await coordinator.acquire(identity);
+  const release = await coordinator.acquire(scopeA);
   let recoveryCalls = 0;
-  const first = coordinator.runRecovery(identity, async () => {
+  const first = coordinator.runRecovery(scopeA, sessionA, async () => {
     recoveryCalls += 1;
     return ['recovered-once'];
   });
-  const second = coordinator.runRecovery(identity, async () => {
+  const second = coordinator.runRecovery(scopeA, sessionA, async () => {
     recoveryCalls += 1;
     return ['unexpected-second-recovery'];
   });
@@ -88,7 +92,39 @@ test('App and page share one queued recovery while an unlock owns the identity',
   assert.deepEqual(await first, ['recovered-once']);
   assert.deepEqual(await second, ['recovered-once']);
   assert.equal(recoveryCalls, 1);
-  const nextRelease = await coordinator.acquire(identity);
+  const nextRelease = await coordinator.acquire(scopeA);
   assert.equal(typeof nextRelease, 'function');
   nextRelease();
+});
+
+test('a pending session never blocks a different drama or episode for the same member', async () => {
+  const coordinator = createAdSessionRecoveryCoordinator();
+  const releaseA = await coordinator.acquire(scopeA);
+  assert.equal(typeof releaseA, 'function');
+
+  const releaseB = await coordinator.acquire(scopeB);
+  assert.equal(typeof releaseB, 'function');
+
+  let sameScopeRecoveryCalls = 0;
+  const sameScopeRecovery = coordinator.runRecovery(scopeA, sessionA, async () => {
+    sameScopeRecoveryCalls += 1;
+    return ['scope-a'];
+  });
+  let otherScopeRecoveryCalls = 0;
+  const otherScopeRecovery = coordinator.runRecovery(scopeB, sessionB, async () => {
+    otherScopeRecoveryCalls += 1;
+    return ['scope-b'];
+  });
+  await Promise.resolve();
+  assert.equal(sameScopeRecoveryCalls, 0);
+  assert.equal(otherScopeRecoveryCalls, 0);
+
+  releaseB();
+  assert.deepEqual(await otherScopeRecovery, ['scope-b']);
+  assert.equal(otherScopeRecoveryCalls, 1);
+  assert.equal(sameScopeRecoveryCalls, 0);
+
+  releaseA();
+  assert.deepEqual(await sameScopeRecovery, ['scope-a']);
+  assert.equal(sameScopeRecoveryCalls, 1);
 });

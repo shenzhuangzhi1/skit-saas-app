@@ -636,6 +636,8 @@ public class DramaPlayerActivity extends Activity {
         if (!isActiveUnlock(generation, targetEpisode)) {
             return;
         }
+        boolean unrewardedClose = telemetry.getState() == TakuNativeState.CLOSED
+                && !telemetry.isClientRewardObserved();
         if (telemetry.getProviderShowId() != null) {
             if (activeProviderShowId == null) {
                 activeProviderShowId = telemetry.getProviderShowId();
@@ -666,6 +668,10 @@ public class DramaPlayerActivity extends Activity {
                         afterTelemetryRecorded(telemetry, generation, targetEpisode);
                     }
                 });
+        if (unrewardedClose) {
+            handler.post(() -> failActiveUnlock(
+                    generation, targetEpisode, "广告未完整观看，请重新观看"));
+        }
     }
 
     private void afterTelemetryRecorded(TakuTelemetry telemetry, long generation,
@@ -677,7 +683,8 @@ public class DramaPlayerActivity extends Activity {
         }
         if (telemetry.getState() == TakuNativeState.ERROR) {
             failActiveUnlock(generation, targetEpisode, "广告播放失败");
-        } else if (telemetry.getState() == TakuNativeState.CLOSED) {
+        } else if (telemetry.getState() == TakuNativeState.CLOSED
+                && telemetry.isClientRewardObserved()) {
             scheduleNextPoll(
                     generation, targetEpisode, activeProtocol.getSessionId(), activeProviderShowId);
         }

@@ -85,10 +85,7 @@ test('native player replaces a terminal orphaned poll-only session once in the s
     player,
     /"REUSED"\.equals\(result\.getOutcome\(\)\)[\s\S]*?activeSessionPollOnly = true/,
   );
-  assert.match(
-    pollFlow,
-    /serverShowId == null[\s\S]*?retryExpiredPollOnlySession\([\s\S]*?return/,
-  );
+  assert.match(pollFlow, /serverShowId == null[\s\S]*?retryExpiredPollOnlySession\([\s\S]*?return/);
   assert.match(
     player,
     /private boolean retryExpiredPollOnlySession[\s\S]*?consumeIfRecoverable\([\s\S]*?status\.getClientLifecycleStatus\(\)[\s\S]*?status\.getRewardVerificationStatus\(\)[\s\S]*?status\.getProviderShowId\(\)[\s\S]*?activeSessionId = null[\s\S]*?createServerAdSession\(targetEpisode, generation\)[\s\S]*?return true/,
@@ -116,13 +113,230 @@ test('native Taku bridge terminates callbacks on protocol or startup errors', ()
     messageFlow,
     /catch \(Throwable error\)[\s\S]*?emitTerminalError\(callbackId, protocol\)/,
   );
-  assert.match(
-    showFlow,
-    /catch \(Throwable error\)[\s\S]*?emitTerminalError\(id, protocol\)/,
-  );
+  assert.match(showFlow, /catch \(Throwable error\)[\s\S]*?emitTerminalError\(id, protocol\)/);
   assert.match(
     bridge,
     /private void emitTerminalError[\s\S]*?TakuNativeState\.ERROR[\s\S]*?emit\(id, result, true\)/,
+  );
+});
+
+test('native player ends an unrewarded close without entering reward verification polling', () => {
+  const player = read(
+    'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/DramaPlayerActivity.java',
+  );
+  const telemetryFlow = between(
+    player,
+    'private void onTakuTelemetry',
+    'private void afterTelemetryRecorded',
+  );
+  const terminalFlow = between(
+    player,
+    'private void afterTelemetryRecorded',
+    'private void scheduleNextPoll',
+  );
+
+  const unrewardedDecision = telemetryFlow.indexOf(
+    'telemetry.getState() == TakuNativeState.CLOSED\n                && !telemetry.isClientRewardObserved()',
+  );
+  const telemetryRecord = telemetryFlow.indexOf('nativeApiClient.recordTelemetry(telemetry');
+  const releaseBranch = telemetryFlow.indexOf('if (unrewardedClose)', telemetryRecord);
+  const deferredRelease = telemetryFlow.indexOf('handler.post(', releaseBranch);
+  const failUnlock = telemetryFlow.indexOf('failActiveUnlock(', deferredRelease);
+  const rewardedClosedBranch = terminalFlow.indexOf(
+    'telemetry.getState() == TakuNativeState.CLOSED\n                && telemetry.isClientRewardObserved()',
+  );
+  const verificationPoll = terminalFlow.indexOf('scheduleNextPoll(', rewardedClosedBranch);
+
+  assert.notEqual(
+    unrewardedDecision,
+    -1,
+    'CLOSED telemetry must distinguish a close before the reward callback',
+  );
+  assert.notEqual(telemetryRecord, -1, 'the cancellation event must still be queued for telemetry');
+  assert.notEqual(releaseBranch, -1, 'the cancellation decision must run after queuing telemetry');
+  assert.notEqual(deferredRelease, -1, 'unlock release must run after the SDK callback unwinds');
+  assert.notEqual(failUnlock, -1, 'an unrewarded close must release the active unlock');
+  assert.match(
+    telemetryFlow,
+    /"广告未完整观看，请重新观看"/,
+    'an unrewarded close must use the stable device-verification message',
+  );
+  assert.notEqual(
+    rewardedClosedBranch,
+    -1,
+    'only a close with an observed reward may enter signed verification',
+  );
+  assert.notEqual(verificationPoll, -1, 'a rewarded close must retain signed-server polling');
+  assert.ok(
+    unrewardedDecision < telemetryRecord &&
+      telemetryRecord < releaseBranch &&
+      releaseBranch < deferredRelease &&
+      deferredRelease < failUnlock,
+    'the unrewarded close must be recorded and then released without waiting for HTTP',
+  );
+  assert.match(
+    player,
+    /NativeRewardGate\.Decision decision[\s\S]*?Decision\.GRANT[\s\S]*?verifyAuthoritativeEpisodeEntitlement/,
+    'the cancellation fix must not weaken signed-server authorization',
+  );
+});
+
+test('native Taku terminal fallback uses cached show identity instead of reparsing bad adInfo', () => {
+  const controller = read(
+    'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/TakuRewardedAdController.java',
+  );
+  const failureFlow = between(controller, 'private void fail', 'private boolean isActive');
+
+  assert.doesNotMatch(
+    failureFlow,
+    /ATAdInfo|showId\(adInfo\)|networkFirmId\(adInfo\)|adsourceId\(adInfo\)/,
+    'terminal fallback must not parse the same invalid SDK callback twice',
+  );
+  assert.match(
+    failureFlow,
+    /session\.machine\.failed\(null, null, null\)/,
+    'the state machine must recover the already-bound show identity',
+  );
+  assert.equal(
+    (failureFlow.match(/session\.machine\.failed/g) || []).length,
+    1,
+    'one native failure must create exactly one terminal telemetry event',
+  );
+  assert.equal(
+    (failureFlow.match(/emit\(session, failure\)/g) || []).length,
+    1,
+    'one native failure must emit exactly one terminal telemetry event',
+  );
+});
+
+test('native Taku bridge clears its pending callback even if terminal delivery throws', () => {
+  const bridge = read(
+    'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/SkitTakuAdBridge.java',
+  );
+  const showFlow = between(
+    bridge,
+    'private void showRewardedVideo',
+    'private void emitTerminalError',
+  );
+
+  assert.match(
+    showFlow,
+    /try\s*\{\s*emit\(id, telemetryJson\(telemetry\), terminal\);\s*\}\s*finally\s*\{[\s\S]*?terminal[\s\S]*?pendingCallbackId = null;/,
+    'terminal callback ownership must be released in a finally block',
+  );
+});
+
+test('native API shutdown drains queued terminal telemetry instead of cancelling it', () => {
+  const api = read(
+    'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/SkitNativeApiClient.java',
+  );
+  const closeFlow = between(api, 'void close()', 'private <T> void execute');
+  const executeFlow = between(api, 'private <T> void execute', 'private HttpUrl url');
+
+  assert.match(
+    closeFlow,
+    /serialExecutor\.execute\([\s\S]*?connectionPool\(\)\.evictAll\(\)[\s\S]*?serialExecutor\.shutdown\(\)/,
+    'close must enqueue cleanup behind already queued telemetry and then stop new work',
+  );
+  assert.doesNotMatch(
+    closeFlow,
+    /shutdownNow\(|cancelAll\(/,
+    'Activity teardown must not interrupt a queued CLOSED event',
+  );
+  assert.match(
+    executeFlow,
+    /if \(!submitted\)[\s\S]*?callback::onFailure/,
+    'requests arriving after graceful shutdown must fail without throwing on the UI thread',
+  );
+  assert.match(
+    executeFlow,
+    /catch \(RejectedExecutionException rejected\)[\s\S]*?if \(!submitted\)[\s\S]*?callback::onFailure/,
+    'the execute/close race must fail safely instead of crashing the Activity',
+  );
+});
+
+test('native terminal telemetry retries transient failures and close admission stays atomic', () => {
+  const api = read(
+    'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/SkitNativeApiClient.java',
+  );
+  const telemetryFlow = between(api, 'void recordTelemetry', 'void getSession');
+  const closeFlow = between(api, 'void close()', 'private <T> void execute');
+  const executeFlow = between(api, 'private <T> void execute', 'private HttpUrl url');
+
+  assert.match(
+    api,
+    /TELEMETRY_MAX_ATTEMPTS\s*=\s*3/,
+    'terminal telemetry must have a bounded retry budget',
+  );
+  assert.match(
+    telemetryFlow,
+    /execute\([\s\S]*?TELEMETRY_MAX_ATTEMPTS\)/,
+    'client-event delivery must opt into the bounded retry path',
+  );
+  assert.match(
+    executeFlow,
+    /for \(int attempt = 1; attempt <= maxAttempts; attempt\+\+\)[\s\S]*?attempt < maxAttempts[\s\S]*?telemetryRetryDelayMillis/,
+    'HTTP, application-envelope and parser failures must retry before final failure',
+  );
+  assert.match(
+    executeFlow,
+    /synchronized \(this\) \{[\s\S]*?if \(!closed\)[\s\S]*?serialExecutor\.execute/,
+    'closed admission and executor submission must share one monitor',
+  );
+  assert.match(
+    closeFlow,
+    /synchronized \(this\) \{[\s\S]*?closed = true[\s\S]*?serialExecutor\.execute[\s\S]*?serialExecutor\.shutdown\(\)/,
+    'close must enqueue cleanup and shutdown under the same admission monitor',
+  );
+  assert.match(
+    executeFlow,
+    /if \(!submitted\) \{\s*activity\.runOnUiThread\(callback::onFailure\);\s*\}/,
+    'rejection callbacks must run after leaving the admission monitor',
+  );
+});
+
+test('native pending-ad cancellation wins before show and emits one terminal event', () => {
+  const controller = read(
+    'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/TakuRewardedAdController.java',
+  );
+  const bridge = read(
+    'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/SkitTakuAdBridge.java',
+  );
+  const runtime = read('android-djx-runtime/djx-runtime.js');
+  const loadedFlow = between(
+    controller,
+    'public void onRewardedVideoAdLoaded()',
+    'public void onRewardedVideoAdFailed',
+  );
+  const destroyFlow = between(controller, 'void destroy()', 'void cancelActiveSession()');
+
+  assert.match(controller, /boolean cancelPendingSession\(\)/);
+  assert.match(
+    controller,
+    /presentationLease\.cancelBeforeShow\(\)[\s\S]*?fail\(session, ad\)/,
+    'a pending load cancellation must emit the normal ERROR terminal telemetry',
+  );
+  assert.match(
+    loadedFlow,
+    /canPresent\(session\)[\s\S]*?presentationLease\.requestShow\(\)[\s\S]*?ad\.show\(/,
+    'the SDK callback must acquire the presentation lease before showing',
+  );
+  assert.match(
+    controller,
+    /activity\.hasWindowFocus\(\)/,
+    'a background or covered host must not present a newly loaded ad',
+  );
+  assert.match(bridge, /"cancelRewardedVideo"\.equals\(method\)/);
+  assert.match(
+    bridge,
+    /String presentationUrl = webView\.getUrl\(\)[\s\S]*?presentationUrl\.equals\(webView\.getUrl\(\)\)/,
+    'a load started by an old H5 route must not show over a new route',
+  );
+  assert.match(runtime, /cancelRewardedVideo:\s*function/);
+  assert.match(
+    destroyFlow,
+    /activeSession[\s\S]*?activeAd[\s\S]*?fail\(session, ad\)[\s\S]*?destroyed = true/,
+    'Activity destruction must queue terminal failure before disabling callbacks',
   );
 });
 
@@ -169,7 +383,10 @@ test('reward-chain verifier delegates to structured evidence correlation', () =>
   assert.match(verifier, /let rewardEvidenceDeadline = 0/);
   assert.match(verifier, /rewardClickPerformed = true/);
   assert.match(verifier, /rewardEvidenceDeadline = Date\.now\(\) \+ 240000/);
-  assert.match(verifier, /await waitFor\([\s\S]*?assertFreshRewardChainEvidence\([\s\S]*?rewardEvidenceDeadline - Date\.now\(\)/);
+  assert.match(
+    verifier,
+    /await waitFor\([\s\S]*?assertFreshRewardChainEvidence\([\s\S]*?rewardEvidenceDeadline - Date\.now\(\)/,
+  );
   assert.match(verifier, /Target player request failed[\s\S]*?'FAILED'/);
   assert.doesNotMatch(verifier, /Promise\.allSettled\(\[\.\.\.responseReads\]\)/);
   assert.match(verifier, /assertFreshRewardChainEvidence\(/);
@@ -177,7 +394,10 @@ test('reward-chain verifier delegates to structured evidence correlation', () =>
   assert.match(verifier, /memberExchanges/);
   assert.match(controller, /TAKU_TELEMETRY state=/);
   assert.match(controller, /sessionRef=/);
-  assert.match(controller, /SafeEvidenceReference\.of\(telemetry\.getProtocol\(\)\.getSessionId\(\)\)/);
+  assert.match(
+    controller,
+    /SafeEvidenceReference\.of\(telemetry\.getProtocol\(\)\.getSessionId\(\)\)/,
+  );
   assert.match(controller, /showRef=/);
   assert.match(controller, /SafeEvidenceReference\.of\(telemetry\.getProviderShowId\(\)\)/);
   assert.match(player, /onDJXVideoPlay\(Map<String, Object> extra\)/);
@@ -223,8 +443,8 @@ test('DJX skips its duplicate confirmation but only completes with signed server
   assert.match(player, /activeUnlockCallback\.onShow\(evidence\.getProviderShowId\(\)\)/);
   assert.match(player, /callback\.onRewardVerify\(new DJXRewardAdResult\(true, rewardPayload\)\)/);
   assert.ok(
-    player.indexOf('activeUnlockCallback.onShow(evidence.getProviderShowId())')
-      < player.indexOf('callback.onRewardVerify(new DJXRewardAdResult(true, rewardPayload))'),
+    player.indexOf('activeUnlockCallback.onShow(evidence.getProviderShowId())') <
+      player.indexOf('callback.onRewardVerify(new DJXRewardAdResult(true, rewardPayload))'),
     'the real show identity must be reported before DJX reward verification',
   );
   assert.doesNotMatch(player, /onShow\(launchShowRef\)/);

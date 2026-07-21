@@ -177,8 +177,13 @@ export async function openPangleDramaPlayer(options = {}) {
   if (!plugin || typeof plugin.openPlayer !== 'function') {
     throw new Error('原生播放器未启动：bridge unavailable');
   }
+  if (typeof options.assertCurrent !== 'function') {
+    throw new Error('原生播放器启动缺少页面授权守卫');
+  }
 
+  options.assertCurrent();
   await startPangleContentSdk(options);
+  options.assertCurrent();
   const drama = options.drama || {};
   const dramaId = getPositiveDramaId(drama);
   if (!dramaId) {
@@ -187,6 +192,7 @@ export async function openPangleDramaPlayer(options = {}) {
   const playerGrant = normalizePlayerGrant(options.playerGrant, dramaId);
   const episode = getPositiveInteger(options.episode) || 1;
   const rewardEvidence = normalizeRewardEvidence(options.rewardEvidence, dramaId, episode);
+  options.assertCurrent();
   const result = await callNativeMethod(
     plugin,
     'openPlayer',

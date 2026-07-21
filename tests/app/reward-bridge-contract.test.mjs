@@ -307,29 +307,167 @@ test('Taku bridge forwards only the server protocol and streams backend client e
   }
 });
 
-test('Taku bridge fails immediately when backend telemetry delivery fails', async () => {
+test('Taku bridge reports an early close as incomplete instead of reward verification', async () => {
   const originalUni = globalThis.uni;
+  const callbacks = [
+    event(),
+    event({ callbackSequence: 1, nativeState: 'LOADED' }),
+    event({
+      callbackSequence: 2,
+      nativeState: 'SHOWING',
+      providerShowId: 'show-1',
+      networkFirmId: 66,
+      adsourceId: 'source-1',
+    }),
+    event({
+      callbackSequence: 3,
+      nativeState: 'CLOSED',
+      providerShowId: 'show-1',
+      networkFirmId: 66,
+      adsourceId: 'source-1',
+      closed: true,
+    }),
+  ];
   globalThis.uni = {
     requireNativePlugin() {
       return {
         showRewardedVideo(_payload, callback) {
-          queueMicrotask(() => callback(event()));
+          queueMicrotask(() => callbacks.forEach(callback));
         },
       };
     },
   };
   try {
     const taku = await importTakuSource();
+    const result = await taku.showRewardedVideoAd(serverProtocol, {
+      onClientEvent: async () => {},
+      timeoutMs: 100,
+    });
+    assert.equal(result.outcome, 'INCOMPLETE');
+    assert.equal(result.rewardObserved, false);
+    assert.equal(result.terminalTelemetry.nativeState, 'CLOSED');
+  } finally {
+    globalThis.uni = originalUni;
+  }
+});
+
+test('Taku bridge retries one failed telemetry POST in order and still completes reward playback', async () => {
+  const originalUni = globalThis.uni;
+  const callbacks = [
+    event(),
+    event({ callbackSequence: 1, nativeState: 'LOADED' }),
+    event({
+      callbackSequence: 2,
+      nativeState: 'SHOWING',
+      providerShowId: 'show-1',
+      networkFirmId: 66,
+      adsourceId: 'source-1',
+    }),
+    event({
+      callbackSequence: 3,
+      nativeState: 'SHOWING',
+      providerShowId: 'show-1',
+      networkFirmId: 66,
+      adsourceId: 'source-1',
+      clientRewardObserved: true,
+    }),
+    event({
+      callbackSequence: 4,
+      nativeState: 'CLOSED',
+      providerShowId: 'show-1',
+      networkFirmId: 66,
+      adsourceId: 'source-1',
+      clientRewardObserved: true,
+      closed: true,
+    }),
+  ];
+  globalThis.uni = {
+    requireNativePlugin() {
+      return {
+        showRewardedVideo(_payload, callback) {
+          queueMicrotask(() => callbacks.forEach(callback));
+        },
+      };
+    },
+  };
+  try {
+    const taku = await importTakuSource();
+    const attempts = [];
+    let loadAttempts = 0;
+    const result = await taku.showRewardedVideoAd(serverProtocol, {
+      onClientEvent: async (clientEvent) => {
+        attempts.push(clientEvent.eventType);
+        if (clientEvent.eventType === 'LOAD_STARTED' && loadAttempts++ === 0) {
+          throw new Error('first POST failed');
+        }
+      },
+      telemetryRetryDelaysMs: [0, 0],
+      timeoutMs: 100,
+    });
+    assert.equal(result.outcome, 'REWARD_OBSERVED');
+    assert.deepEqual(attempts, [
+      'LOAD_STARTED',
+      'LOAD_STARTED',
+      'SHOWN',
+      'REWARD_OBSERVED',
+      'CLOSED',
+    ]);
+  } finally {
+    globalThis.uni = originalUni;
+  }
+});
+
+test('Taku bridge returns a structured delivery error when telemetry cannot reach the backend', async () => {
+  const originalUni = globalThis.uni;
+  const callbacks = [
+    event(),
+    event({ callbackSequence: 1, nativeState: 'LOADED' }),
+    event({
+      callbackSequence: 2,
+      nativeState: 'SHOWING',
+      providerShowId: 'show-1',
+      networkFirmId: 66,
+      adsourceId: 'source-1',
+    }),
+    event({
+      callbackSequence: 3,
+      nativeState: 'CLOSED',
+      providerShowId: 'show-1',
+      networkFirmId: 66,
+      adsourceId: 'source-1',
+      closed: true,
+    }),
+  ];
+  globalThis.uni = {
+    requireNativePlugin() {
+      return {
+        showRewardedVideo(_payload, callback) {
+          queueMicrotask(() => callbacks.forEach(callback));
+        },
+      };
+    },
+  };
+  try {
+    const taku = await importTakuSource();
+    const attempts = [];
     await assert.rejects(
       () =>
         taku.showRewardedVideoAd(serverProtocol, {
-          onClientEvent: async () => {
-            throw new Error('telemetry failed');
+          onClientEvent: async (clientEvent) => {
+            attempts.push(clientEvent.eventType);
+            if (clientEvent.eventType === 'LOAD_STARTED') {
+              throw new taku.AdFlowError('UPSTREAM_EVENT_POST_FAILED', 'telemetry failed');
+            }
           },
+          telemetryRetryDelaysMs: [0, 0],
           timeoutMs: 100,
         }),
-      /telemetry failed/,
+      (error) =>
+        error?.code === 'TELEMETRY_DELIVERY_FAILED' &&
+        error?.terminalTelemetry?.nativeState === 'CLOSED' &&
+        /telemetry failed/.test(error.message),
     );
+    assert.deepEqual(attempts, ['LOAD_STARTED', 'LOAD_STARTED', 'LOAD_STARTED', 'SHOWN', 'CLOSED']);
   } finally {
     globalThis.uni = originalUni;
   }
@@ -340,7 +478,10 @@ test('Taku bridge has no success path when the native plugin is absent', async (
   globalThis.uni = { requireNativePlugin: () => null };
   try {
     const taku = await importTakuSource();
-    await assert.rejects(() => taku.showRewardedVideoAd(serverProtocol), /激励视频暂不可用/);
+    await assert.rejects(
+      () => taku.showRewardedVideoAd(serverProtocol),
+      (error) => error?.code === 'NATIVE_AD_UNAVAILABLE' && /激励视频暂不可用/.test(error.message),
+    );
   } finally {
     globalThis.uni = originalUni;
   }
@@ -424,7 +565,7 @@ test('authenticated ad-session and entitlement API modules expose every approved
   assert.match(entitlementSource, /auth:\s*true/);
 });
 
-test('App foreground resumes the identity-scoped pending verification queue', () => {
+test('App foreground resumes pending verification through scope and session singleflight', () => {
   const appSource = readFileSync(resolve(root, 'App.vue'), 'utf8');
   const playSource = readFileSync(resolve(root, 'pages/drama/play.vue'), 'utf8');
   const runtimePath = resolve(root, 'pages/drama/services/ad-session-runtime.js');
@@ -435,5 +576,12 @@ test('App foreground resumes the identity-scoped pending verification queue', ()
   assert.match(playSource, /watch\(\s*\(\) => \[\s*userStore\.userInfo\?\.tenantId/);
   assert.match(runtimeSource, /createAdSessionRecoveryCoordinator/);
   assert.match(runtimeSource, /export function acquireAdSessionOwnership/);
-  assert.match(runtimeSource, /recoveryCoordinator\.runRecovery/);
+  assert.match(runtimeSource, /adSessionOrchestrator\.getPendingSessions/);
+  assert.match(
+    runtimeSource,
+    /recoveryCoordinator[\s\S]*?\.runRecovery\([\s\S]*?session\.sessionId/,
+  );
+  assert.match(runtimeSource, /options\.onResult/);
+  assert.match(appSource, /onResult/);
+  assert.match(playSource, /onResult/);
 });

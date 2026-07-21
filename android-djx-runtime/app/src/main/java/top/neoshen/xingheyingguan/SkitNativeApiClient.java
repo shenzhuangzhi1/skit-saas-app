@@ -13,6 +13,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
@@ -37,6 +38,8 @@ final class SkitNativeApiClient {
     static final String AD_PROTOCOL_VERSION_HEADER = "X-Skit-Ad-Protocol-Version";
     static final String NATIVE_API_PATH = "/skit/member/native";
     private static final int MAX_RESPONSE_CHARS = 1024 * 1024;
+    private static final int TELEMETRY_MAX_ATTEMPTS = 3;
+    private static final long[] TELEMETRY_RETRY_DELAYS_MILLIS = {150L, 400L};
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
     private static final Pattern SESSION_ID = Pattern.compile("[A-Za-z0-9_-]{22}");
     private static final Pattern SAFE_PROTOCOL_TEXT =
@@ -117,6 +120,7 @@ final class SkitNativeApiClient {
     private final OkHttpClient httpClient;
     private final ExecutorService serialExecutor;
     private final HttpUrl apiRoot;
+    private volatile boolean closed;
 
     SkitNativeApiClient(Activity activity, NativePlayerGrant playerGrant) {
         this.activity = activity;
@@ -257,7 +261,8 @@ final class SkitNativeApiClient {
         put(request, "events", events);
         String path = NATIVE_API_PATH + "/ad-sessions/"
                 + telemetry.getProtocol().getSessionId() + "/client-events";
-        execute("POST", path, request, SkitNativeApiClient::parseSessionStatus, callback);
+        execute("POST", path, request, SkitNativeApiClient::parseSessionStatus, callback,
+                TELEMETRY_MAX_ATTEMPTS);
     }
 
     void getSession(String sessionId, Callback<SessionStatus> callback) {
@@ -270,50 +275,112 @@ final class SkitNativeApiClient {
     }
 
     void close() {
-        serialExecutor.shutdownNow();
-        httpClient.dispatcher().cancelAll();
+        boolean cleanupSubmitted = false;
+        synchronized (this) {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            try {
+                serialExecutor.execute(() -> httpClient.connectionPool().evictAll());
+                cleanupSubmitted = true;
+            } catch (RejectedExecutionException rejected) {
+                // The executor was already stopped unexpectedly; clean up below, outside the lock.
+            }
+            serialExecutor.shutdown();
+        }
+        if (!cleanupSubmitted) {
+            httpClient.connectionPool().evictAll();
+        }
     }
 
     private <T> void execute(String method, String path, JSONObject body,
                              Parser<T> parser, Callback<T> callback) {
-        serialExecutor.execute(() -> {
-            try {
-                Request.Builder request = new Request.Builder()
-                        .url(url(path))
-                        .header("Accept", "application/json")
-                        .header(PLAYER_GRANT_HEADER, playerGrant.getGrantToken())
-                        .header(NATIVE_VERSION_HEADER, BuildConfig.VERSION_NAME)
-                        .header(AD_PROTOCOL_VERSION_HEADER,
-                                String.valueOf(AdSessionProtocol.SUPPORTED_VERSION));
-                if ("POST".equals(method)) {
-                    request.post(RequestBody.create(body == null ? "{}" : body.toString(), JSON));
-                } else {
-                    request.get();
+        execute(method, path, body, parser, callback, 1);
+    }
+
+    private <T> void execute(String method, String path, JSONObject body,
+                             Parser<T> parser, Callback<T> callback, int maxAttempts) {
+        boolean submitted = false;
+        synchronized (this) {
+            if (!closed) {
+                try {
+                    serialExecutor.execute(() -> executeWithRetry(
+                            method, path, body, parser, callback, maxAttempts));
+                    submitted = true;
+                } catch (RejectedExecutionException rejected) {
+                    // close() won the admission race; report failure below, outside the lock.
                 }
-                try (Response response = httpClient.newCall(request.build()).execute()) {
-                    if (!response.isSuccessful()) {
-                        Log.w(TAG, "native API rejected request with HTTP status="
-                                + response.code());
-                        throw new IOException("Native API request was rejected");
-                    }
-                    JSONObject envelope = new JSONObject(readBody(response.body()));
-                    if (envelope.optInt("code", -1) != 0) {
-                        Log.w(TAG, "native API rejected request with application error");
-                        throw new IOException("Native API request was rejected");
-                    }
-                    JSONObject data = envelope.optJSONObject("data");
-                    if (data == null) {
-                        throw new IOException("Native API response data is missing");
-                    }
-                    T result = parser.parse(data);
-                    activity.runOnUiThread(() -> callback.onSuccess(result));
-                }
-            } catch (Throwable failure) {
-                Log.w(TAG, "native API request failed: "
-                        + failure.getClass().getSimpleName());
-                activity.runOnUiThread(callback::onFailure);
             }
-        });
+        }
+        if (!submitted) {
+            activity.runOnUiThread(callback::onFailure);
+        }
+    }
+
+    private <T> void executeWithRetry(String method, String path, JSONObject body,
+                                      Parser<T> parser, Callback<T> callback,
+                                      int maxAttempts) {
+        Exception finalFailure = null;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                T result = executeOnce(method, path, body, parser);
+                activity.runOnUiThread(() -> callback.onSuccess(result));
+                return;
+            } catch (Exception failure) {
+                finalFailure = failure;
+                if (attempt < maxAttempts) {
+                    try {
+                        Thread.sleep(telemetryRetryDelayMillis(attempt));
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        finalFailure = interrupted;
+                        break;
+                    }
+                }
+            }
+        }
+        Log.w(TAG, "native API request failed after retries: "
+                + (finalFailure == null ? "unknown" : finalFailure.getClass().getSimpleName()));
+        activity.runOnUiThread(callback::onFailure);
+    }
+
+    private <T> T executeOnce(String method, String path, JSONObject body,
+                              Parser<T> parser) throws Exception {
+        Request.Builder request = new Request.Builder()
+                .url(url(path))
+                .header("Accept", "application/json")
+                .header(PLAYER_GRANT_HEADER, playerGrant.getGrantToken())
+                .header(NATIVE_VERSION_HEADER, BuildConfig.VERSION_NAME)
+                .header(AD_PROTOCOL_VERSION_HEADER,
+                        String.valueOf(AdSessionProtocol.SUPPORTED_VERSION));
+        if ("POST".equals(method)) {
+            request.post(RequestBody.create(body == null ? "{}" : body.toString(), JSON));
+        } else {
+            request.get();
+        }
+        try (Response response = httpClient.newCall(request.build()).execute()) {
+            if (!response.isSuccessful()) {
+                Log.w(TAG, "native API rejected request with HTTP status=" + response.code());
+                throw new IOException("Native API request was rejected");
+            }
+            JSONObject envelope = new JSONObject(readBody(response.body()));
+            if (envelope.optInt("code", -1) != 0) {
+                Log.w(TAG, "native API rejected request with application error");
+                throw new IOException("Native API request was rejected");
+            }
+            JSONObject data = envelope.optJSONObject("data");
+            if (data == null) {
+                throw new IOException("Native API response data is missing");
+            }
+            return parser.parse(data);
+        }
+    }
+
+    private static long telemetryRetryDelayMillis(int attempt) {
+        int index = Math.max(0, Math.min(attempt - 1,
+                TELEMETRY_RETRY_DELAYS_MILLIS.length - 1));
+        return TELEMETRY_RETRY_DELAYS_MILLIS[index];
     }
 
     private HttpUrl url(String path) {

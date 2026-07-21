@@ -34,12 +34,14 @@
       }
       var id = 'djx_' + Date.now() + '_' + sequence++;
       callbacks[id] = typeof callback === 'function' ? callback : function () {};
-      window.SkitNativeBridge.postMessage(JSON.stringify({
-        bridge: bridge,
-        id: id,
-        method: method,
-        payload: payload || {},
-      }));
+      window.SkitNativeBridge.postMessage(
+        JSON.stringify({
+          bridge: bridge,
+          id: id,
+          method: method,
+          payload: payload || {},
+        }),
+      );
     }
 
     function callPangle(method, payload, callback) {
@@ -58,26 +60,53 @@
     window.uni.requireNativePlugin = function (name) {
       if (name === 'SkitPangleDrama') {
         return {
-          start: function (payload, callback) { callPangle('start', payload, callback); },
-          list: function (payload, callback) { callPangle('list', payload, callback); },
-          recommend: function (payload, callback) { callPangle('recommend', payload, callback); },
-          history: function (payload, callback) { callPangle('history', payload, callback); },
-          categoryList: function (payload, callback) { callPangle('categoryList', payload, callback); },
-          listWithCategory: function (payload, callback) { callPangle('listWithCategory', payload, callback); },
-          search: function (payload, callback) { callPangle('search', payload, callback); },
-          listWithIds: function (payload, callback) { callPangle('listWithIds', payload, callback); },
-          openPlayer: function (payload, callback) { callPangle('openPlayer', payload, callback); },
+          start: function (payload, callback) {
+            callPangle('start', payload, callback);
+          },
+          list: function (payload, callback) {
+            callPangle('list', payload, callback);
+          },
+          recommend: function (payload, callback) {
+            callPangle('recommend', payload, callback);
+          },
+          history: function (payload, callback) {
+            callPangle('history', payload, callback);
+          },
+          categoryList: function (payload, callback) {
+            callPangle('categoryList', payload, callback);
+          },
+          listWithCategory: function (payload, callback) {
+            callPangle('listWithCategory', payload, callback);
+          },
+          search: function (payload, callback) {
+            callPangle('search', payload, callback);
+          },
+          listWithIds: function (payload, callback) {
+            callPangle('listWithIds', payload, callback);
+          },
+          openPlayer: function (payload, callback) {
+            callPangle('openPlayer', payload, callback);
+          },
         };
       }
       if (name === 'SkitTakuAd') {
         return {
-          showRewardedVideo: function (payload, callback) { callTaku('showRewardedVideo', payload, callback); },
+          showRewardedVideo: function (payload, callback) {
+            callTaku('showRewardedVideo', payload, callback);
+          },
+          cancelRewardedVideo: function (payload, callback) {
+            callTaku('cancelRewardedVideo', payload, callback);
+          },
         };
       }
       if (name === 'SkitRuntimeUpdate') {
         return {
-          getInfo: function (payload, callback) { callRuntimeUpdate('getInfo', payload, callback); },
-          installWebBundle: function (payload, callback) { callRuntimeUpdate('installWebBundle', payload, callback); },
+          getInfo: function (payload, callback) {
+            callRuntimeUpdate('getInfo', payload, callback);
+          },
+          installWebBundle: function (payload, callback) {
+            callRuntimeUpdate('installWebBundle', payload, callback);
+          },
         };
       }
       return typeof originalRequire === 'function' ? originalRequire(name) : null;

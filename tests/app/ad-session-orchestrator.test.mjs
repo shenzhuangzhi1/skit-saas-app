@@ -200,6 +200,32 @@ test('marks a reused active scope for polling instead of replaying another ad', 
   assert.equal(reused.requiresVerificationPoll, true);
 });
 
+test('accepts a VERIFYING create outcome without a native protocol and polls it only', async () => {
+  const { createAdSessionOrchestrator } = requireSubject();
+  const orchestrator = createAdSessionOrchestrator({
+    api: makeApi({
+      createAdSession: async () =>
+        ok({
+          outcome: 'VERIFYING',
+          sessionId: protocol.sessionId,
+          rewardAcceptUntil: protocol.rewardAcceptUntil,
+        }),
+    }),
+    storage: memoryStorage(),
+  });
+
+  const created = await orchestrator.createSession(identityA, { dramaId: 901, episodeNo: 7 });
+  assert.deepEqual(created, {
+    outcome: 'VERIFYING',
+    sessionId: protocol.sessionId,
+    nativeProtocol: null,
+    requiresVerificationPoll: true,
+    loadExpiresAt: null,
+    rewardAcceptUntil: protocol.rewardAcceptUntil,
+  });
+  assert.equal(orchestrator.getPendingSessions(identityA).length, 1);
+});
+
 test('replaces a terminal pending session in the same unlock preparation', async () => {
   const { createAdSessionOrchestrator } = requireSubject();
   const replacement = {
@@ -331,6 +357,60 @@ test('recovers a pending session after interruption and refreshes server entitle
   assert.equal(entitlementCalls, 1);
   assert.equal(resumed.getPendingSessions(identityA).length, 0);
   assert.deepEqual(resumed.getCachedEntitlementsForUi(identityA, 901).grantedEpisodeNos, [7, 8]);
+});
+
+test('foreground recovery starts independent pending scopes without head-of-line blocking', async () => {
+  const { createAdSessionOrchestrator } = requireSubject();
+  const secondProtocol = {
+    ...protocol,
+    sessionId: 'session_9876543210WXYZ',
+    customData: 'token_9876543210WXYZAB',
+  };
+  let createCalls = 0;
+  let releaseFirst;
+  const firstGate = new Promise((resolve) => {
+    releaseFirst = resolve;
+  });
+  let firstStarted = false;
+  let secondStarted = false;
+  const orchestrator = createAdSessionOrchestrator({
+    api: makeApi({
+      createAdSession: async () => ok(createCalls++ === 0 ? protocol : secondProtocol),
+      getAdSession: async (sessionId) => {
+        if (sessionId === protocol.sessionId) {
+          firstStarted = true;
+          await firstGate;
+        } else {
+          secondStarted = true;
+        }
+        return ok({
+          sessionId,
+          clientLifecycleStatus: 'CLOSED',
+          rewardVerificationStatus: 'REJECTED',
+          entitlementStatus: 'NONE',
+          revenueStatus: 'NONE',
+        });
+      },
+    }),
+    storage: memoryStorage(),
+    sleep: async () => {},
+  });
+  await orchestrator.createSession(identityA, { dramaId: 901, episodeNo: 7 });
+  await orchestrator.createSession(identityA, { dramaId: 902, episodeNo: 1 });
+
+  const recovery = orchestrator.recoverPendingSessions(identityA);
+  for (let attempt = 0; attempt < 10 && !firstStarted; attempt += 1) {
+    await Promise.resolve();
+  }
+  const secondStartedBeforeFirstSettled = secondStarted;
+  releaseFirst();
+  const results = await recovery;
+
+  assert.equal(secondStartedBeforeFirstSettled, true);
+  assert.deepEqual(
+    results.map((result) => result.resolution),
+    ['REJECTED', 'REJECTED'],
+  );
 });
 
 test('rejects a session status returned for another session', async () => {
