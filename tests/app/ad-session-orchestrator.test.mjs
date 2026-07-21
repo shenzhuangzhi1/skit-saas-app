@@ -125,6 +125,26 @@ test('validates the exact server protocol before native handoff', () => {
   }
 });
 
+test('preserves backend business codes when session creation is rejected', async () => {
+  const { createAdSessionOrchestrator } = requireSubject();
+  const orchestrator = createAdSessionOrchestrator({
+    api: makeApi({
+      createAdSession: async () => ({
+        code: 1030007008,
+        msg: '当前剧目同步失败，请稍后重试',
+        data: null,
+      }),
+    }),
+    storage: memoryStorage(),
+  });
+
+  await assert.rejects(
+    () => orchestrator.createSession(identityA, { dramaId: 1631, episodeNo: 1 }),
+    (error) =>
+      error?.code === 1030007008 && error?.message === '当前剧目同步失败，请稍后重试',
+  );
+});
+
 test('keys entitlement UI cache by both tenant and member', async () => {
   const { createAdSessionOrchestrator } = requireSubject();
   const storage = memoryStorage();

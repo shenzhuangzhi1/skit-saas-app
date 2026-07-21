@@ -588,6 +588,12 @@
     ) {
       return '请更新到最新版本后重试';
     }
+    if (
+      Number(error?.code) === 1030007007 ||
+      Number(error?.code) === 1030007008
+    ) {
+      return '当前剧目正在准备，请稍后重试';
+    }
     if (error?.code === 'TELEMETRY_DELIVERY_FAILED') {
       return '广告状态同步失败，请稍后重试';
     }

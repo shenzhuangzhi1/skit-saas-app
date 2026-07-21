@@ -77,7 +77,11 @@ function requireSafeText(value, label) {
 
 function unwrap(result, operation) {
   if (!result || result.code !== 0) {
-    throw new Error(result?.msg || `${operation}失败`);
+    const error = new Error(result?.msg || `${operation}失败`);
+    if (result?.code !== undefined && result?.code !== null) {
+      error.code = result.code;
+    }
+    throw error;
   }
   if (result.data === undefined || result.data === null) {
     throw new Error(`${operation}没有返回数据`);
