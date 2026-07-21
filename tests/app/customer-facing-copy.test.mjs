@@ -25,6 +25,7 @@ test('customer-facing drama and ad copy does not expose supplier names', () => {
   assert.match(player, /看广告解锁/);
   assert.match(player, /当前广告库存不足，请稍后再试/);
   assert.match(player, /Number\(error\?\.code\) === 1030007008/);
+  assert.match(player, /Number\(error\?\.code\) === 1030007009/);
   assert.match(player, /当前剧目正在准备，请稍后重试/);
   assert.doesNotMatch(
     player,

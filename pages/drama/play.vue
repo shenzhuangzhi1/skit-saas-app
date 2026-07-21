@@ -590,7 +590,8 @@
     }
     if (
       Number(error?.code) === 1030007007 ||
-      Number(error?.code) === 1030007008
+      Number(error?.code) === 1030007008 ||
+      Number(error?.code) === 1030007009
     ) {
       return '当前剧目正在准备，请稍后重试';
     }
