@@ -595,6 +595,15 @@
     ) {
       return '当前剧目正在准备，请稍后重试';
     }
+    if (Number(error?.code) === 1030007010) {
+      return '当前代理商内容授权未配置，请联系代理商';
+    }
+    if (Number(error?.code) === 1030007011) {
+      return '当前剧目不在本代理商内容库，请选择其他剧目';
+    }
+    if (Number(error?.code) === 1030007012) {
+      return '当前代理商内容授权失效，请联系代理商';
+    }
     if (error?.code === 'TELEMETRY_DELIVERY_FAILED') {
       return '广告状态同步失败，请稍后重试';
     }

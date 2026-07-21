@@ -27,6 +27,12 @@ test('customer-facing drama and ad copy does not expose supplier names', () => {
   assert.match(player, /Number\(error\?\.code\) === 1030007008/);
   assert.match(player, /Number\(error\?\.code\) === 1030007009/);
   assert.match(player, /当前剧目正在准备，请稍后重试/);
+  assert.match(player, /Number\(error\?\.code\) === 1030007010/);
+  assert.match(player, /当前代理商内容授权未配置，请联系代理商/);
+  assert.match(player, /Number\(error\?\.code\) === 1030007011/);
+  assert.match(player, /当前剧目不在本代理商内容库，请选择其他剧目/);
+  assert.match(player, /Number\(error\?\.code\) === 1030007012/);
+  assert.match(player, /当前代理商内容授权失效，请联系代理商/);
   assert.doesNotMatch(
     player,
     /当前租户|测试名单|广告能力|APK 版本|服务端验奖|奖励验证|广告会话|权益同步/,
