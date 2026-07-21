@@ -29,6 +29,7 @@ const NATIVE_FIELDS = new Set([
   'closed',
 ]);
 const NATIVE_STATES = new Set(['LOADING', 'LOADED', 'SHOWING', 'CLOSED', 'ERROR']);
+const ERROR_FAILURE_REASONS = new Set(['NO_FILL', 'SDK_FAILURE']);
 
 function requireSafeText(value, label) {
   const text = String(value ?? '');
@@ -99,6 +100,25 @@ function normalizeNativeTelemetry(value, protocol) {
   if (!NATIVE_STATES.has(value.nativeState)) {
     throw new Error('原生 nativeState 不受支持');
   }
+  const failureDescriptor = Object.getOwnPropertyDescriptor(value, 'failureReason');
+  if (
+    failureDescriptor &&
+    (failureDescriptor.enumerable ||
+      failureDescriptor.configurable ||
+      failureDescriptor.writable ||
+      !Object.prototype.hasOwnProperty.call(failureDescriptor, 'value'))
+  ) {
+    throw new Error('原生失败原因与 nativeState 不一致');
+  }
+  const hintedFailureReason = failureDescriptor?.value;
+  if (value.nativeState !== 'ERROR' && failureDescriptor) {
+    throw new Error('原生失败原因与 nativeState 不一致');
+  }
+  const failureReason =
+    value.nativeState === 'ERROR' ? hintedFailureReason || 'SDK_FAILURE' : 'NONE';
+  if (value.nativeState === 'ERROR' && !ERROR_FAILURE_REASONS.has(failureReason)) {
+    throw new Error('原生失败原因不受支持');
+  }
   if (typeof value.clientRewardObserved !== 'boolean' || typeof value.closed !== 'boolean') {
     throw new Error('原生奖励和关闭标记必须是布尔值');
   }
@@ -142,6 +162,7 @@ function normalizeNativeTelemetry(value, protocol) {
     adsourceId,
     callbackSequence: value.callbackSequence,
     nativeState: value.nativeState,
+    failureReason,
     clientRewardObserved: value.clientRewardObserved,
     closed: value.closed,
   });

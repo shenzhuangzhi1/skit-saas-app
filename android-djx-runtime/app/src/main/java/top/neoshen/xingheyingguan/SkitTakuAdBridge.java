@@ -11,6 +11,7 @@ import java.util.HashSet;
 import java.util.Set;
 
 import top.neoshen.xingheyingguan.ad.AdSessionProtocol;
+import top.neoshen.xingheyingguan.ad.TakuFailureReason;
 import top.neoshen.xingheyingguan.ad.TakuNativeState;
 import top.neoshen.xingheyingguan.ad.TakuSessionStateMachine;
 import top.neoshen.xingheyingguan.ad.TakuTelemetry;
@@ -98,7 +99,7 @@ public class SkitTakuAdBridge {
                 boolean terminal = telemetry.getState() == TakuNativeState.CLOSED
                         || telemetry.getState() == TakuNativeState.ERROR;
                 try {
-                    emit(id, telemetryJson(telemetry), terminal);
+                    emit(id, telemetryJson(telemetry), terminal, telemetry.getFailureReason());
                 } finally {
                     if (terminal && id.equals(pendingCallbackId)) {
                         pendingCallbackId = null;
@@ -133,7 +134,7 @@ public class SkitTakuAdBridge {
             put(result, "nativeState", TakuNativeState.ERROR.name());
             put(result, "success", false);
         }
-        emit(id, result, true);
+        emit(id, result, true, TakuFailureReason.SDK_FAILURE);
     }
 
     private AdSessionProtocol parseProtocol(JSONObject payload) {
@@ -173,7 +174,20 @@ public class SkitTakuAdBridge {
     }
 
     private void emit(String id, JSONObject result, boolean terminal) {
-        String script = "window.__SkitNativeBridgeEmit && window.__SkitNativeBridgeEmit("
+        emit(id, result, terminal, TakuFailureReason.NONE);
+    }
+
+    private void emit(String id, JSONObject result, boolean terminal,
+                      TakuFailureReason failureReason) {
+        String failureHint = "";
+        if (terminal && failureReason != null && failureReason != TakuFailureReason.NONE) {
+            failureHint = "window.__SkitNativeBridgeFailureHint && "
+                    + "window.__SkitNativeBridgeFailureHint("
+                    + JSONObject.quote(id) + ","
+                    + JSONObject.quote(failureReason.name()) + ");";
+        }
+        String script = failureHint
+                + "window.__SkitNativeBridgeEmit && window.__SkitNativeBridgeEmit("
                 + JSONObject.quote(id) + "," + JSONObject.quote(result.toString()) + ","
                 + terminal + ");";
         activity.runOnUiThread(() -> {

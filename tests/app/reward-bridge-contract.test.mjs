@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { runInNewContext } from 'node:vm';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -50,6 +51,17 @@ function event(overrides = {}) {
     closed: false,
     ...overrides,
   };
+}
+
+function eventWithFailureReason(overrides, failureReason) {
+  const value = event(overrides);
+  Object.defineProperty(value, 'failureReason', {
+    value: failureReason,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+  return value;
 }
 
 function sourceUrl(source) {
@@ -250,6 +262,126 @@ test('emits a backend-valid failure event even after a reward observation', () =
   );
   assert.equal(nativeTelemetryToClientEvent(failure).eventType, 'FAILED');
   assert.equal(nativeTelemetryToClientEvent(failure).clientRewardObserved, false);
+});
+
+test('maps safe no-fill telemetry to a UI-only reason without widening backend events', () => {
+  const { createNativeTelemetryValidator, nativeTelemetryToClientEvent } = requireBridge();
+  const validator = createNativeTelemetryValidator(serverProtocol);
+  validator.accept(event());
+  const noFill = validator.accept(
+    eventWithFailureReason({ callbackSequence: 1, nativeState: 'ERROR' }, 'NO_FILL'),
+  );
+  assert.equal(noFill.failureReason, 'NO_FILL');
+  const clientEvent = nativeTelemetryToClientEvent(noFill);
+  assert.equal(clientEvent.eventType, 'FAILED');
+  assert.equal(Object.hasOwn(clientEvent, 'failureReason'), false);
+
+  assert.throws(
+    () =>
+      createNativeTelemetryValidator(serverProtocol).accept(
+        eventWithFailureReason({ nativeState: 'ERROR' }, 'Return Ad is empty.'),
+      ),
+    /failure|失败|原因/i,
+  );
+  assert.throws(
+    () =>
+      createNativeTelemetryValidator(serverProtocol).accept(
+        eventWithFailureReason({ nativeState: 'LOADING' }, 'NO_FILL'),
+      ),
+    /failure|失败|原因/i,
+  );
+});
+
+test('Taku bridge exposes no-fill as a structured error after recording FAILED', async () => {
+  const originalUni = globalThis.uni;
+  globalThis.uni = {
+    requireNativePlugin() {
+      return {
+        showRewardedVideo(_payload, callback) {
+          queueMicrotask(() => {
+            callback(event());
+            callback(
+              eventWithFailureReason({ callbackSequence: 1, nativeState: 'ERROR' }, 'NO_FILL'),
+            );
+          });
+        },
+      };
+    },
+  };
+  try {
+    const taku = await importTakuSource();
+    const clientEvents = [];
+    await assert.rejects(
+      () =>
+        taku.showRewardedVideoAd(serverProtocol, {
+          onClientEvent: async (clientEvent) => clientEvents.push(clientEvent),
+          timeoutMs: 100,
+        }),
+      (error) => error?.code === 'NATIVE_AD_NO_FILL' && !!error?.terminalTelemetry,
+    );
+    assert.deepEqual(
+      clientEvents.map((clientEvent) => clientEvent.eventType),
+      ['LOAD_STARTED', 'FAILED'],
+    );
+    assert.equal(
+      clientEvents.some((clientEvent) => 'failureReason' in clientEvent),
+      false,
+    );
+  } finally {
+    globalThis.uni = originalUni;
+  }
+});
+
+test('runtime failure hints remain non-enumerable and callback-scoped', () => {
+  const runtime = readFileSync(resolve(root, 'android-djx-runtime/djx-runtime.js'), 'utf8');
+  assert.match(runtime, /__SkitNativeBridgeFailureHint/);
+  assert.match(runtime, /Object\.defineProperty\(result,\s*['"]failureReason['"]/);
+  assert.match(runtime, /enumerable:\s*false/);
+  assert.match(runtime, /delete failureHints\[id\]/);
+});
+
+test('runtime behavior keeps the 11-field callback compatible and never leaks hints across calls', () => {
+  const posts = [];
+  const runtimeWindow = {
+    uni: { requireNativePlugin: () => null },
+    SkitNativeBridge: {
+      postMessage(rawMessage) {
+        posts.push(JSON.parse(rawMessage));
+      },
+    },
+  };
+  const runtimeSource = readFileSync(resolve(root, 'android-djx-runtime/djx-runtime.js'), 'utf8');
+  runInNewContext(runtimeSource, {
+    window: runtimeWindow,
+    document: { readyState: 'complete', addEventListener() {} },
+    setInterval() {
+      return 1;
+    },
+    console: { log() {} },
+  });
+  const plugin = runtimeWindow.uni.requireNativePlugin('SkitTakuAd');
+  let firstResult;
+  plugin.showRewardedVideo({}, (result) => {
+    firstResult = result;
+  });
+  const firstId = posts[0].id;
+  runtimeWindow.__SkitNativeBridgeFailureHint(firstId, 'NO_FILL');
+  const rawError = event({ nativeState: 'ERROR' });
+  runtimeWindow.__SkitNativeBridgeEmit(firstId, JSON.stringify(rawError), true);
+
+  assert.deepEqual(Object.keys(firstResult), Object.keys(rawError));
+  assert.equal(firstResult.failureReason, 'NO_FILL');
+  assert.equal(Object.getOwnPropertyDescriptor(firstResult, 'failureReason')?.enumerable, false);
+
+  runtimeWindow.__SkitNativeBridgeFailureHint(firstId, 'NO_FILL');
+  let secondResult;
+  plugin.showRewardedVideo({}, (result) => {
+    secondResult = result;
+  });
+  const secondId = posts[1].id;
+  runtimeWindow.__SkitNativeBridgeFailureHint(secondId, 'Return Ad is empty.');
+  runtimeWindow.__SkitNativeBridgeEmit(secondId, JSON.stringify(rawError), true);
+  assert.equal(Object.prototype.hasOwnProperty.call(secondResult, 'failureReason'), false);
 });
 
 test('Taku bridge forwards only the server protocol and streams backend client events', async () => {

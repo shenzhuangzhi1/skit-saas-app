@@ -9,12 +9,19 @@ public final class TakuTelemetry {
     private final String adsourceId;
     private final int callbackSequence;
     private final TakuNativeState state;
+    private final TakuFailureReason failureReason;
     private final boolean clientRewardObserved;
     private final boolean closed;
 
     TakuTelemetry(AdSessionProtocol protocol, String sdkRequestId, String providerShowId,
                   Integer networkFirmId, String adsourceId, int callbackSequence,
-                  TakuNativeState state, boolean clientRewardObserved, boolean closed) {
+                  TakuNativeState state, TakuFailureReason failureReason,
+                  boolean clientRewardObserved, boolean closed) {
+        if (failureReason == null
+                || ((state == TakuNativeState.ERROR)
+                != (failureReason != TakuFailureReason.NONE))) {
+            throw new IllegalArgumentException("Failure reason does not match native state");
+        }
         this.protocol = protocol;
         this.sdkRequestId = sdkRequestId;
         this.providerShowId = providerShowId;
@@ -22,6 +29,7 @@ public final class TakuTelemetry {
         this.adsourceId = adsourceId;
         this.callbackSequence = callbackSequence;
         this.state = state;
+        this.failureReason = failureReason;
         this.clientRewardObserved = clientRewardObserved;
         this.closed = closed;
     }
@@ -52,6 +60,10 @@ public final class TakuTelemetry {
 
     public TakuNativeState getState() {
         return state;
+    }
+
+    public TakuFailureReason getFailureReason() {
+        return failureReason;
     }
 
     public boolean isClientRewardObserved() {

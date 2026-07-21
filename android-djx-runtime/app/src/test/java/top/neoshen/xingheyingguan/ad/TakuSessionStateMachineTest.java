@@ -57,6 +57,21 @@ public class TakuSessionStateMachineTest {
         machine.loading();
         TakuTelemetry failure = machine.failed(null, null, null);
         assertEquals(TakuNativeState.ERROR, failure.getState());
+        assertEquals(TakuFailureReason.SDK_FAILURE, failure.getFailureReason());
+        assertFalse(failure.isClientRewardObserved());
+        assertFalse(failure.isClosed());
+    }
+
+    @Test
+    public void noFillIsAnExplicitTerminalReasonOnlyOnFailure() {
+        TakuSessionStateMachine machine = new TakuSessionStateMachine(PROTOCOL, "request-1");
+        machine.loading();
+
+        TakuTelemetry failure = machine.failed(
+                null, null, null, TakuFailureReason.NO_FILL);
+
+        assertEquals(TakuNativeState.ERROR, failure.getState());
+        assertEquals(TakuFailureReason.NO_FILL, failure.getFailureReason());
         assertFalse(failure.isClientRewardObserved());
         assertFalse(failure.isClosed());
     }

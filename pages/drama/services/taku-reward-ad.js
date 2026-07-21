@@ -143,7 +143,15 @@ export function showRewardedVideoAd(serverProtocol, options = {}) {
           return;
         }
         if (telemetry.nativeState === 'ERROR') {
-          finishWithError(flowError('NATIVE_AD_FAILED', '激励视频播放失败', undefined, telemetry));
+          const noFill = telemetry.failureReason === 'NO_FILL';
+          finishWithError(
+            flowError(
+              noFill ? 'NATIVE_AD_NO_FILL' : 'NATIVE_AD_FAILED',
+              noFill ? '当前广告库存不足' : '激励视频播放失败',
+              undefined,
+              telemetry,
+            ),
+          );
           return;
         }
         settled = true;

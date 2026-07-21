@@ -116,7 +116,7 @@ test('native Taku bridge terminates callbacks on protocol or startup errors', ()
   assert.match(showFlow, /catch \(Throwable error\)[\s\S]*?emitTerminalError\(id, protocol\)/);
   assert.match(
     bridge,
-    /private void emitTerminalError[\s\S]*?TakuNativeState\.ERROR[\s\S]*?emit\(id, result, true\)/,
+    /private void emitTerminalError[\s\S]*?TakuNativeState\.ERROR[\s\S]*?emit\(id, result, true, TakuFailureReason\.SDK_FAILURE\)/,
   );
 });
 
@@ -194,7 +194,7 @@ test('native Taku terminal fallback uses cached show identity instead of reparsi
   );
   assert.match(
     failureFlow,
-    /session\.machine\.failed\(null, null, null\)/,
+    /session\.machine\.failed\(\s*null, null, null, failureReason\)/,
     'the state machine must recover the already-bound show identity',
   );
   assert.equal(
@@ -221,7 +221,7 @@ test('native Taku bridge clears its pending callback even if terminal delivery t
 
   assert.match(
     showFlow,
-    /try\s*\{\s*emit\(id, telemetryJson\(telemetry\), terminal\);\s*\}\s*finally\s*\{[\s\S]*?terminal[\s\S]*?pendingCallbackId = null;/,
+    /try\s*\{\s*emit\(id, telemetryJson\(telemetry\), terminal, telemetry\.getFailureReason\(\)\);\s*\}\s*finally\s*\{[\s\S]*?terminal[\s\S]*?pendingCallbackId = null;/,
     'terminal callback ownership must be released in a finally block',
   );
 });
@@ -357,6 +357,16 @@ test('native player records a synchronous Taku startup failure before releasing 
   assert.match(
     player,
     /private void recordSynchronousTakuStartFailure[\s\S]*?TakuSessionStateMachine[\s\S]*?machine\.failed\(null, null, null\)[\s\S]*?onTakuTelemetry/,
+  );
+});
+
+test('native player distinguishes safe no-fill without exposing provider error text', () => {
+  const player = read(
+    'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/DramaPlayerActivity.java',
+  );
+  assert.match(
+    player,
+    /telemetry\.getFailureReason\(\) == TakuFailureReason\.NO_FILL[\s\S]*?当前广告库存不足，请稍后再试/,
   );
 });
 

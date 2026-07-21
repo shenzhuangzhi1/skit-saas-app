@@ -3,7 +3,14 @@
     if (!window.uni || window.uni.__skitDjxBridgeInstalled) return;
 
     var callbacks = {};
+    var failureHints = {};
     var sequence = 1;
+
+    window.__SkitNativeBridgeFailureHint = function (id, reason) {
+      if (!callbacks[id]) return;
+      if (reason !== 'NO_FILL' && reason !== 'SDK_FAILURE') return;
+      failureHints[id] = reason;
+    };
 
     window.__SkitNativeBridgeEmit = function (id, rawResult, terminal) {
       var callback = callbacks[id];
@@ -14,10 +21,27 @@
       } catch (error) {
         result = { success: false, message: String(error || 'Native result parse failed') };
       }
+      var failureHint = failureHints[id];
+      if (terminal === true) delete failureHints[id];
+      if (
+        terminal === true &&
+        result.nativeState === 'ERROR' &&
+        (failureHint === 'NO_FILL' || failureHint === 'SDK_FAILURE')
+      ) {
+        Object.defineProperty(result, 'failureReason', {
+          value: failureHint,
+          enumerable: false,
+          configurable: false,
+          writable: false,
+        });
+      }
       try {
         callback(result);
       } finally {
-        if (terminal === true) delete callbacks[id];
+        if (terminal === true) {
+          delete callbacks[id];
+          delete failureHints[id];
+        }
       }
     };
 
@@ -33,6 +57,7 @@
         return;
       }
       var id = 'djx_' + Date.now() + '_' + sequence++;
+      delete failureHints[id];
       callbacks[id] = typeof callback === 'function' ? callback : function () {};
       window.SkitNativeBridge.postMessage(
         JSON.stringify({

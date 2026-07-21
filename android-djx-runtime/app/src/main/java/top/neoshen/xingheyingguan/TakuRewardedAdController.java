@@ -18,6 +18,7 @@ import java.util.Map;
 
 import top.neoshen.xingheyingguan.ad.AdSessionProtocol;
 import top.neoshen.xingheyingguan.ad.SafeEvidenceReference;
+import top.neoshen.xingheyingguan.ad.TakuFailureReason;
 import top.neoshen.xingheyingguan.ad.TakuPresentationLease;
 import top.neoshen.xingheyingguan.ad.TakuSessionStateMachine;
 import top.neoshen.xingheyingguan.ad.TakuTelemetry;
@@ -167,7 +168,8 @@ final class TakuRewardedAdController {
             @Override
             public void onRewardedVideoAdFailed(AdError error) {
                 logAdError("load", error);
-                fail(session, ad);
+                fail(session, ad, TakuFailureReason.fromSdkCode(
+                        error == null ? null : error.getCode()));
             }
 
             @Override
@@ -192,7 +194,8 @@ final class TakuRewardedAdController {
             @Override
             public void onRewardedVideoAdPlayFailed(AdError error, ATAdInfo adInfo) {
                 logAdError("play", error);
-                fail(session, ad);
+                fail(session, ad, TakuFailureReason.fromSdkCode(
+                        error == null ? null : error.getCode()));
             }
 
             @Override
@@ -268,11 +271,17 @@ final class TakuRewardedAdController {
     }
 
     private void fail(ActiveSession session, ATRewardVideoAd ad) {
+        fail(session, ad, TakuFailureReason.SDK_FAILURE);
+    }
+
+    private void fail(ActiveSession session, ATRewardVideoAd ad,
+                      TakuFailureReason failureReason) {
         if (!isActive(session, ad)) {
             return;
         }
         try {
-            TakuTelemetry failure = session.machine.failed(null, null, null);
+            TakuTelemetry failure = session.machine.failed(
+                    null, null, null, failureReason);
             emit(session, failure);
         } catch (Throwable ignored) {
             logInternalFailure("terminal-callback", ignored);

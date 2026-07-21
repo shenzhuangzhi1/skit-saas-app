@@ -62,6 +62,7 @@ test('Taku SDK failures expose codes but never provider descriptions in producti
   assert.match(source, /error\.getPlatformCode\(\)/);
   assert.doesNotMatch(source, /error\.getDesc\(\)/);
   assert.doesNotMatch(source, /error\.getPlatformMSG\(\)/);
+  assert.doesNotMatch(source, /error\.getFullErrorInfo\(\)/);
   const throwableSink = /Log\.w\([^;]+,\s*(?:error|invalidCallback|ignored|invalidFailure)\s*\);/;
   assert.doesNotMatch(source, throwableSink);
   assert.doesNotMatch(bridge, throwableSink);
@@ -112,11 +113,20 @@ test('native sources contain no local reward success or sentinel fallback', () =
   roots.forEach(visit);
   for (const file of files) {
     const source = read(file);
-    if (file === 'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/DramaPlayerActivity.java') {
+    if (
+      file ===
+      'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/DramaPlayerActivity.java'
+    ) {
       assert.match(source, /getVerifiedRewardProvenance\s*\(/);
       assert.match(source, /if\s*\(\s*!reportCustomAdShown\s*\(\s*proof\s*,/);
-      assert.match(source, /rewardPayload\.put\(\s*"authority"\s*,\s*"signed_reward_provenance"\s*\)/);
-      assert.match(source, /onRewardVerify\s*\(\s*new DJXRewardAdResult\s*\(\s*true\s*,\s*rewardPayload\s*\)\s*\)/);
+      assert.match(
+        source,
+        /rewardPayload\.put\(\s*"authority"\s*,\s*"signed_reward_provenance"\s*\)/,
+      );
+      assert.match(
+        source,
+        /onRewardVerify\s*\(\s*new DJXRewardAdResult\s*\(\s*true\s*,\s*rewardPayload\s*\)\s*\)/,
+      );
       assert.doesNotMatch(source, /DJXRewardAdResult\s*\(\s*true\s*\)/);
     } else {
       assert.doesNotMatch(source, /DJXRewardAdResult\s*\(\s*true\b/);
@@ -166,7 +176,10 @@ test('native capabilities use a main-frame origin-aware message channel and exte
   assert.match(runtimeJs, /window\.SkitNativeBridge/);
   assert.doesNotMatch(runtimeJs, /window\.Skit(?:PangleDrama|TakuAd|RuntimeUpdate)Native/);
   assert.doesNotMatch(read('sheep/router/index.js'), /pages\/public\/webview/);
-  assert.doesNotMatch(read('sheep/components/s-search-block/s-search-block.vue'), /pages\/public\/webview/);
+  assert.doesNotMatch(
+    read('sheep/components/s-search-block/s-search-block.vue'),
+    /pages\/public\/webview/,
+  );
 });
 
 test('hot updates require signed scoped manifests and monotonic release state', () => {

@@ -591,6 +591,9 @@
     if (error?.code === 'TELEMETRY_DELIVERY_FAILED') {
       return '广告状态同步失败，请稍后重试';
     }
+    if (error?.code === 'NATIVE_AD_NO_FILL') {
+      return '当前广告库存不足，请稍后再试';
+    }
     if (error?.code === 'REWARD_REJECTED' || error?.code === 'REWARD_VERIFY_TIMEOUT') {
       return '本次奖励未到账，请重新观看广告';
     }

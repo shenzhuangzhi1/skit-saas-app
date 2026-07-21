@@ -76,8 +76,16 @@ public final class TakuSessionStateMachine {
     }
 
     public TakuTelemetry failed(String showId, Integer networkFirmId, String adsourceId) {
+        return failed(showId, networkFirmId, adsourceId, TakuFailureReason.SDK_FAILURE);
+    }
+
+    public TakuTelemetry failed(String showId, Integer networkFirmId, String adsourceId,
+                                TakuFailureReason failureReason) {
         if (terminal || state == TakuNativeState.ERROR || state == TakuNativeState.CLOSED) {
             throw new IllegalStateException("Ad session is already terminal");
+        }
+        if (failureReason == null || failureReason == TakuFailureReason.NONE) {
+            throw new IllegalArgumentException("A terminal failure reason is required");
         }
         if (showId != null) {
             if (state != TakuNativeState.SHOWING) {
@@ -91,13 +99,20 @@ public final class TakuSessionStateMachine {
         }
         terminal = true;
         state = TakuNativeState.ERROR;
-        return event(showId, networkFirmId, adsourceId, false, false);
+        return event(showId, networkFirmId, adsourceId, failureReason, false, false);
     }
 
     private TakuTelemetry event(String showId, Integer networkFirmId, String adsourceId,
                                 boolean clientRewardObserved, boolean closed) {
+        return event(showId, networkFirmId, adsourceId, TakuFailureReason.NONE,
+                clientRewardObserved, closed);
+    }
+
+    private TakuTelemetry event(String showId, Integer networkFirmId, String adsourceId,
+                                TakuFailureReason failureReason,
+                                boolean clientRewardObserved, boolean closed) {
         return new TakuTelemetry(protocol, sdkRequestId, showId, networkFirmId, adsourceId,
-                nextSequence++, state, clientRewardObserved, closed);
+                nextSequence++, state, failureReason, clientRewardObserved, closed);
     }
 
     private void bindShow(String showId, Integer networkFirmId, String adsourceId) {

@@ -40,6 +40,7 @@ import top.neoshen.xingheyingguan.ad.NativePlayerCallbackEpoch;
 import top.neoshen.xingheyingguan.ad.NativePlayerGrant;
 import top.neoshen.xingheyingguan.ad.NativeRewardGate;
 import top.neoshen.xingheyingguan.ad.PlaybackEvidenceScope;
+import top.neoshen.xingheyingguan.ad.TakuFailureReason;
 import top.neoshen.xingheyingguan.ad.TakuNativeState;
 import top.neoshen.xingheyingguan.ad.TakuSessionStateMachine;
 import top.neoshen.xingheyingguan.ad.TakuTelemetry;
@@ -682,7 +683,12 @@ public class DramaPlayerActivity extends Activity {
             return;
         }
         if (telemetry.getState() == TakuNativeState.ERROR) {
-            failActiveUnlock(generation, targetEpisode, "广告播放失败");
+            failActiveUnlock(
+                    generation,
+                    targetEpisode,
+                    telemetry.getFailureReason() == TakuFailureReason.NO_FILL
+                            ? "当前广告库存不足，请稍后再试"
+                            : "广告播放失败");
         } else if (telemetry.getState() == TakuNativeState.CLOSED
                 && telemetry.isClientRewardObserved()) {
             scheduleNextPoll(
