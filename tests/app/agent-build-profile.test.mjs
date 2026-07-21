@@ -80,6 +80,13 @@ test('production workflows select a versioned repository profile and a profile-s
     assert.match(workflow, /--github-env\s+"\$GITHUB_ENV"/);
   }
   assert.doesNotMatch(apkBuilder, /production-profile\.json/);
+  const dependencyInstall = apkWorkflow.indexOf('npm ci');
+  const productionBuild = apkWorkflow.indexOf('./android-djx-runtime/build-djx-apk.sh');
+  assert.ok(dependencyInstall >= 0, 'production Android packaging must install locked H5 dependencies');
+  assert.ok(
+    dependencyInstall < productionBuild,
+    'locked H5 dependencies must be installed before the production APK build',
+  );
   assert.match(apkBuilder, /export SKIT_PROFILE_VERSION="\$PROFILE_VERSION"/);
   assert.match(apkBuilder, /export SKIT_PROFILE_SHA256="\$PROFILE_SHA256"/);
   const profileExports = apkBuilder.indexOf('export SKIT_APPLICATION_ID="$APPLICATION_ID"');

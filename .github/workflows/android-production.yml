@@ -66,6 +66,9 @@ jobs:
             > "$RUNNER_TEMP/skit-production/release.keystore"
           chmod 600 "$RUNNER_TEMP/skit-production/"*
 
+      - name: Install locked H5 dependencies
+        run: npm ci
+
       - name: Build and verify production APK
         env:
           SKIT_BUILD_TYPE: release
