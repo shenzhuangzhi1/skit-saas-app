@@ -24,6 +24,8 @@ const selectedProfileFile = readdirSync(profileDirectory)
 const selectedProfileRaw = readFileSync(join(profileDirectory, selectedProfileFile), 'utf8');
 const selectedProfile = JSON.parse(selectedProfileRaw);
 const selectedProfileSha256 = createHash('sha256').update(selectedProfileRaw).digest('hex');
+const selectedSourceRevision = 'a'.repeat(40);
+const realGit = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
 
 function runH5Build(t, profileEnvironment = {}) {
   const controlledBuildRoot = resolve(root, 'unpackage/dist/build');
@@ -32,8 +34,11 @@ function runH5Build(t, profileEnvironment = {}) {
   t.after(() => rmSync(temporaryRoot, { recursive: true, force: true }));
   const hbuilderDir = join(temporaryRoot, 'hbuilderx');
   const uniCli = join(hbuilderDir, 'node_modules/.bin/uni');
+  const fakeBin = join(temporaryRoot, 'bin');
+  const fakeGit = join(fakeBin, 'git');
   const outputDir = join(temporaryRoot, 'output');
   mkdirSync(dirname(uniCli), { recursive: true });
+  mkdirSync(fakeBin, { recursive: true });
   writeFileSync(
     uniCli,
     [
@@ -45,6 +50,20 @@ function runH5Build(t, profileEnvironment = {}) {
     ].join('\n'),
   );
   chmodSync(uniCli, 0o755);
+  writeFileSync(
+    fakeGit,
+    [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      'case "$*" in',
+      '  *"rev-parse --is-inside-work-tree"*) printf "true\\n" ;;',
+      '  *"rev-parse --verify HEAD"*) printf "%s\\n" "$SKIT_FAKE_GIT_REVISION" ;;',
+      '  *"status --porcelain --untracked-files=normal"*) printf "%s" "${SKIT_FAKE_GIT_STATUS:-}" ;;',
+      '  *) exec "$SKIT_REAL_GIT" "$@" ;;',
+      'esac',
+    ].join('\n'),
+  );
+  chmodSync(fakeGit, 0o755);
   const result = spawnSync('bash', [resolve(root, 'android-djx-runtime/build-h5.sh')], {
     encoding: 'utf8',
     env: {
@@ -56,6 +75,10 @@ function runH5Build(t, profileEnvironment = {}) {
       SKIT_PROFILE_VERSION: String(selectedProfile.profileVersion),
       SKIT_PROFILE_SHA256: selectedProfileSha256,
       SKIT_API_BASE_URL: 'https://alpha.example.test',
+      SKIT_BUILD_TYPE: 'release',
+      PATH: `${fakeBin}:${process.env.PATH}`,
+      SKIT_REAL_GIT: realGit,
+      SKIT_FAKE_GIT_REVISION: selectedSourceRevision,
       ...profileEnvironment,
     },
   });
@@ -79,20 +102,19 @@ test('Android H5 packaging binds the generated fallback to the selected dynamic 
   const { outputDir, result } = runH5Build(t);
 
   assert.equal(result.status, 0, result.stderr);
-  const marker = JSON.parse(
-    readFileSync(join(outputDir, '.skit-h5-build-profile.json'), 'utf8'),
-  );
+  const marker = JSON.parse(readFileSync(join(outputDir, '.skit-h5-build-profile.json'), 'utf8'));
   assert.deepEqual(marker, {
     agentCode: selectedProfile.profileCode,
     profileVersion: selectedProfile.profileVersion,
     profileSha256: selectedProfileSha256,
-    apiBaseUrlSha256: createHash('sha256')
-      .update('https://alpha.example.test')
-      .digest('hex'),
+    apiBaseUrlSha256: createHash('sha256').update('https://alpha.example.test').digest('hex'),
+    sourceRevision: selectedSourceRevision,
   });
   assert.match(h5Builder, /SKIT_AGENT_CODE is required for Android H5 builds/);
   assert.match(h5Builder, /SKIT_PROFILE_VERSION/);
   assert.match(h5Builder, /SKIT_PROFILE_SHA256/);
+  assert.match(h5Builder, /SOURCE_REVISION/);
+  assert.match(h5Builder, /status --porcelain --untracked-files=normal/);
   assert.match(apkBuilder, /export SKIT_PROFILE_VERSION="\$PROFILE_VERSION"/);
   assert.match(apkBuilder, /export SKIT_PROFILE_SHA256="\$PROFILE_SHA256"/);
   assert.match(
@@ -153,9 +175,7 @@ test('Android H5 packaging derives canonical metadata for shared hot-update buil
   });
 
   assert.equal(result.status, 0, result.stderr);
-  const marker = JSON.parse(
-    readFileSync(join(outputDir, '.skit-h5-build-profile.json'), 'utf8'),
-  );
+  const marker = JSON.parse(readFileSync(join(outputDir, '.skit-h5-build-profile.json'), 'utf8'));
   assert.equal(marker.profileVersion, selectedProfile.profileVersion);
   assert.equal(marker.profileSha256, selectedProfileSha256);
 });
@@ -165,6 +185,24 @@ test('Android H5 packaging rejects conflicting dynamic profile metadata', (t) =>
 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /SKIT_PROFILE_SHA256.*conflicts/);
+});
+
+test('Android H5 packaging rejects an uncommitted non-ignored source change', (t) => {
+  const { result } = runH5Build(t, {
+    SKIT_FAKE_GIT_STATUS: ' M pages/drama/services/ad-session-orchestrator.js',
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /clean Git worktree/);
+});
+
+test('Android H5 debug builds remain available from a dirty development worktree', (t) => {
+  const { result } = runH5Build(t, {
+    SKIT_BUILD_TYPE: 'debug',
+    SKIT_FAKE_GIT_STATUS: ' M pages/drama/play.vue',
+  });
+
+  assert.equal(result.status, 0, result.stderr);
 });
 
 test('Android packages for a non-local API reject an empty Taku AppKey', () => {

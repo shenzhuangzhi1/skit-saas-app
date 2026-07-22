@@ -16,6 +16,42 @@ def sha256Hex = { String value ->
             .encodeHex()
             .toString()
 }
+def sha256FileHex = { File source ->
+    return java.security.MessageDigest.getInstance('SHA-256')
+            .digest(source.bytes)
+            .encodeHex()
+            .toString()
+}
+def runGit = { List<String> arguments ->
+    def command = ['git', '-C', rootProject.projectDir.parentFile.absolutePath]
+    command.addAll(arguments)
+    def process
+    try {
+        process = new ProcessBuilder(command)
+                .redirectErrorStream(true)
+                .start()
+    } catch (Exception unavailable) {
+        throw new GradleException('Release build requires Git source verification', unavailable)
+    }
+    def output = process.inputStream.getText('UTF-8').trim()
+    if (process.waitFor() != 0) {
+        throw new GradleException('Release build could not verify the Git source worktree')
+    }
+    return output
+}
+def resolveCleanGitSourceRevision = {
+    if (runGit(['rev-parse', '--is-inside-work-tree']) != 'true') {
+        throw new GradleException('Release build requires a Git worktree')
+    }
+    def sourceRevision = runGit(['rev-parse', '--verify', 'HEAD'])
+    if (!sourceRevision.matches('[a-f0-9]{40}')) {
+        throw new GradleException('Release build requires a canonical Git source revision')
+    }
+    if (!runGit(['status', '--porcelain', '--untracked-files=normal']).isEmpty()) {
+        throw new GradleException('Release build requires a clean Git worktree')
+    }
+    return sourceRevision
+}
 
 def skitApplicationId = configValue('SKIT_APPLICATION_ID', 'top.neoshen.xingheyingguan')
 def skitAppName = configValue('SKIT_APP_NAME', '短剧 SaaS')
@@ -23,11 +59,11 @@ def skitAgentCode = configValue('SKIT_AGENT_CODE', '')
 def skitProfileVersion = configValue('SKIT_PROFILE_VERSION', '')
 def skitProfileSha256 = configValue('SKIT_PROFILE_SHA256', '')
 def pangleAppId = configValue('SKIT_PANGLE_APP_ID', '5850994')
+def pangleContentSdkVersion = '2.9.0.9'
 def pangleSettingAsset = 'SDK_Setting.json'
-def h5AssetsDir = file(configValue(
-        'SKIT_H5_DIR',
-        rootProject.file('static-www').absolutePath
-))
+def configuredH5Dir = providers.gradleProperty('SKIT_H5_DIR').orNull ?:
+        providers.environmentVariable('SKIT_H5_DIR').orNull
+def h5AssetsDir = file(configuredH5Dir ?: rootProject.file('static-www').absolutePath)
 def pangleSettingSource = file(configValue(
         'SKIT_PANGLE_SETTINGS_JSON',
         rootProject.file("../nativeplugins/SkitPangleDrama/android/assets/SDK_Setting_${pangleAppId}.json").absolutePath
@@ -46,6 +82,7 @@ def takuAars = takuBundle.artifacts.collect { artifact ->
 def takuAppId = configValue('SKIT_TAKU_APP_ID', 'a6a50ac83df403')
 def takuAppKey = configValue('SKIT_TAKU_APP_KEY', '')
 def takuRewardPlacementId = configValue('SKIT_TAKU_REWARD_PLACEMENT_ID', 'b6a5c424bbbb6c')
+def dramaAdProvider = configValue('SKIT_DRAMA_AD_PROVIDER', 'taku')
 def takuDebugDeviceId = configValue('SKIT_TAKU_DEBUG_DEVICE_ID', '')
 def takuDebugNetworkFirmId = configValue('SKIT_TAKU_DEBUG_NETWORK_FIRM_ID', '0')
 def apiBaseUrl = configValue('SKIT_API_BASE_URL', 'http://127.0.0.1:48080')
@@ -66,67 +103,202 @@ def releaseKeyAlias = configValue('SKIT_RELEASE_KEY_ALIAS', '')
 def releaseKeyPassword = configValue('SKIT_RELEASE_KEY_PASSWORD', '')
 def releaseCertSha256 = configValue('SKIT_RELEASE_CERT_SHA256', '')
 
+def validateControlledAgentProfile = {
+    if (!skitAgentCode.matches('[A-Z0-9_-]{3,32}')) {
+        throw new GradleException('SKIT_AGENT_CODE must select a controlled release profile')
+    }
+    if (!skitProfileVersion.matches('[1-9][0-9]*')) {
+        throw new GradleException('SKIT_PROFILE_VERSION must be a positive integer')
+    }
+    if (!skitProfileSha256.matches('[a-f0-9]{64}')) {
+        throw new GradleException('SKIT_PROFILE_SHA256 must be a canonical 64 character SHA-256')
+    }
+    if (skitTenantId != skitAgentCode) {
+        throw new GradleException('SKIT_TENANT_ID must equal SKIT_AGENT_CODE')
+    }
+
+    def profilesDir = rootProject.file('profiles').canonicalFile
+    def profileFile = new File(profilesDir, "${skitAgentCode}.json")
+    if (!profileFile.isFile()) {
+        throw new GradleException(
+                "No controlled profile exists at profiles/${skitAgentCode}.json")
+    }
+    if (java.nio.file.Files.isSymbolicLink(profileFile.toPath())
+            || profileFile.canonicalFile.parentFile != profilesDir) {
+        throw new GradleException('Controlled release profile must be a regular profiles file')
+    }
+
+    def profile
+    try {
+        profile = new groovy.json.JsonSlurper().parse(profileFile, 'UTF-8')
+    } catch (Exception invalidProfile) {
+        throw new GradleException('Controlled release profile is invalid JSON', invalidProfile)
+    }
+    def profileKeys = [
+            'schemaVersion',
+            'profileVersion',
+            'profileCode',
+            'tenantId',
+            'profileId',
+            'applicationId',
+            'appName',
+            'adProvider',
+            'pangle',
+            'taku',
+            'outputBaseName'
+    ] as Set
+    def pangleKeys = [
+            'siteId',
+            'contentAppId',
+            'settingsAsset',
+            'settingsSource',
+            'adSdkVersion',
+            'contentSdkVersion'
+    ] as Set
+    def takuKeys = ['appId', 'rewardPlacementId', 'sdkVersion'] as Set
+    if (!(profile instanceof Map) || profile.keySet().toSet() != profileKeys
+            || !(profile.pangle instanceof Map)
+            || profile.pangle.keySet().toSet() != pangleKeys
+            || !(profile.taku instanceof Map)
+            || profile.taku.keySet().toSet() != takuKeys) {
+        throw new GradleException('Controlled release profile has an unsupported schema')
+    }
+    if (profile.schemaVersion != 2
+            || !(profile.profileVersion instanceof Number)
+            || profile.profileVersion.toString() != skitProfileVersion) {
+        throw new GradleException(
+                'Controlled release profile does not match SKIT_PROFILE_VERSION')
+    }
+    if (profile.profileCode != skitAgentCode || profile.tenantId != skitAgentCode) {
+        throw new GradleException(
+                'Controlled release profile identity does not match SKIT_AGENT_CODE')
+    }
+    if (profile.applicationId != skitApplicationId || profile.appName != skitAppName) {
+        throw new GradleException(
+                'Controlled release profile does not match the Android application identity')
+    }
+    if (profile.adProvider != dramaAdProvider
+            || profile.pangle.siteId != pangleAppId
+            || profile.pangle.settingsAsset != pangleSettingAsset) {
+        throw new GradleException(
+                'Controlled release profile does not match the configured ad provider')
+    }
+    if (profile.taku.appId != takuAppId
+            || profile.taku.rewardPlacementId != takuRewardPlacementId) {
+        throw new GradleException(
+                'Controlled release profile does not match the configured Taku identity')
+    }
+    if (profile.pangle.adSdkVersion != takuBundle.sdkVersions.pangleGroMore
+            || profile.pangle.contentSdkVersion != pangleContentSdkVersion
+            || profile.taku.sdkVersion != takuBundle.sdkVersions.takuCore) {
+        throw new GradleException(
+                'Controlled release profile does not match the locked mediation SDK versions')
+    }
+
+    def settingsSourceValue = profile.pangle.settingsSource
+    if (!(settingsSourceValue instanceof String)
+            || settingsSourceValue.startsWith('/')
+            || settingsSourceValue.contains('\\')
+            || settingsSourceValue.split('/').any { it.isEmpty() || it == '..' }) {
+        throw new GradleException(
+                'Controlled release profile contains an unsafe Pangle settings source')
+    }
+    if (!pangleSettingSource.isFile()) {
+        throw new GradleException('Controlled Pangle SDK settings file is missing')
+    }
+    def pangleSettings
+    try {
+        pangleSettings = new groovy.json.JsonSlurper().parse(pangleSettingSource, 'UTF-8')
+    } catch (Exception invalidSettings) {
+        throw new GradleException('Controlled Pangle SDK settings are invalid JSON', invalidSettings)
+    }
+    def licensedPackages = pangleSettings.license_config instanceof List ?
+            pangleSettings.license_config.collect { it.PackageName?.toString() } : []
+    if (pangleSettings.init?.site_id?.toString() != profile.pangle.siteId
+            || pangleSettings.init?.app_id?.toString() != profile.pangle.contentAppId
+            || !licensedPackages.contains(profile.applicationId)) {
+        throw new GradleException(
+                'Controlled Pangle SDK settings do not match the release profile')
+    }
+
+    if (sha256FileHex(profileFile) != skitProfileSha256) {
+        throw new GradleException(
+                'SKIT_PROFILE_SHA256 does not match the controlled release profile file')
+    }
+    return profile
+}
+
+def validateH5ProfileMarker = { String expectedSourceRevision ->
+    if (!new File(h5AssetsDir, 'index.html').isFile()) {
+        throw new GradleException("SKIT_H5_DIR must contain index.html: ${h5AssetsDir}")
+    }
+    def marker = new File(h5AssetsDir, '.skit-h5-build-profile.json')
+    if (!marker.isFile()) {
+        throw new GradleException('SKIT_H5_DIR must point to a newly built H5 profile output')
+    }
+    def markerProfile
+    try {
+        markerProfile = new groovy.json.JsonSlurper().parse(marker, 'UTF-8')
+    } catch (Exception invalidMarker) {
+        throw new GradleException('H5 fallback profile marker is invalid', invalidMarker)
+    }
+    def markerKeys = [
+            'agentCode',
+            'profileVersion',
+            'profileSha256',
+            'apiBaseUrlSha256',
+            'sourceRevision'
+    ] as Set
+    if (!(markerProfile instanceof Map)
+            || markerProfile.keySet().toSet() != markerKeys) {
+        throw new GradleException('H5 fallback profile marker is invalid')
+    }
+    if (markerProfile.agentCode != skitAgentCode) {
+        throw new GradleException('H5 fallback profile does not match SKIT_AGENT_CODE')
+    }
+    if (!(markerProfile.profileVersion instanceof Number)
+            || markerProfile.profileVersion.toString() != skitProfileVersion) {
+        throw new GradleException('H5 fallback profile does not match SKIT_PROFILE_VERSION')
+    }
+    if (markerProfile.profileSha256 != skitProfileSha256) {
+        throw new GradleException('H5 fallback profile does not match SKIT_PROFILE_SHA256')
+    }
+    def apiBaseUrlSha256 = sha256Hex(apiBaseUrl)
+    if (markerProfile.apiBaseUrlSha256 != apiBaseUrlSha256) {
+        throw new GradleException('H5 fallback profile does not match SKIT_API_BASE_URL')
+    }
+    if (!(markerProfile.sourceRevision instanceof String)
+            || !markerProfile.sourceRevision.matches('[a-f0-9]{40}')) {
+        throw new GradleException('H5 fallback profile source revision is invalid')
+    }
+    if (expectedSourceRevision != null
+            && markerProfile.sourceRevision != expectedSourceRevision) {
+        throw new GradleException('H5 fallback profile does not match the current Git revision')
+    }
+    def loginAssetsDir = new File(h5AssetsDir, 'assets')
+    def loginAssets = loginAssetsDir.listFiles()?.findAll {
+        it.isFile() && it.name.startsWith('pages-auth-index') && it.name.endsWith('.js')
+    } ?: []
+    if (!loginAssets.any { it.getText('UTF-8').contains("\"${skitAgentCode}\"") }) {
+        throw new GradleException('H5 fallback profile does not match SKIT_AGENT_CODE')
+    }
+}
+
 def prepareSkitRuntimeAssets = tasks.register('prepareSkitRuntimeAssets', Sync) {
     inputs.property('skitAgentCode', skitAgentCode)
     inputs.property('skitProfileVersion', skitProfileVersion)
     inputs.property('skitProfileSha256', skitProfileSha256)
     inputs.property('skitApiBaseUrlSha256', sha256Hex(apiBaseUrl))
+    if (skitAgentCode.matches('[A-Z0-9_-]{3,32}')) {
+        inputs.file(rootProject.file("profiles/${skitAgentCode}.json"))
+    }
     into generatedRuntimeAssetsDir
     doFirst {
-        if (!new File(h5AssetsDir, 'index.html').isFile()) {
-            throw new GradleException("SKIT_H5_DIR must contain index.html: ${h5AssetsDir}")
-        }
         if (!skitAgentCode.isEmpty()) {
-            if (!skitAgentCode.matches('[A-Z0-9_-]{3,32}')) {
-                throw new GradleException('SKIT_AGENT_CODE has an invalid format')
-            }
-            if (!skitProfileVersion.matches('[1-9][0-9]*')) {
-                throw new GradleException('SKIT_PROFILE_VERSION is required for an agent build')
-            }
-            if (!skitProfileSha256.matches('[a-f0-9]{64}')) {
-                throw new GradleException('SKIT_PROFILE_SHA256 is required for an agent build')
-            }
-            def marker = new File(h5AssetsDir, '.skit-h5-build-profile.json')
-            if (!marker.isFile()) {
-                throw new GradleException('H5 fallback profile marker is missing')
-            }
-            def markerProfile
-            try {
-                markerProfile = new groovy.json.JsonSlurper().parse(marker, 'UTF-8')
-            } catch (Exception invalidMarker) {
-                throw new GradleException('H5 fallback profile marker is invalid', invalidMarker)
-            }
-            def markerKeys = [
-                    'agentCode',
-                    'profileVersion',
-                    'profileSha256',
-                    'apiBaseUrlSha256'
-            ] as Set
-            if (!(markerProfile instanceof Map)
-                    || markerProfile.keySet().toSet() != markerKeys) {
-                throw new GradleException('H5 fallback profile marker is invalid')
-            }
-            if (markerProfile.agentCode != skitAgentCode) {
-                throw new GradleException('H5 fallback profile does not match SKIT_AGENT_CODE')
-            }
-            if (!(markerProfile.profileVersion instanceof Number)
-                    || markerProfile.profileVersion.toString() != skitProfileVersion) {
-                throw new GradleException('H5 fallback profile does not match SKIT_PROFILE_VERSION')
-            }
-            if (markerProfile.profileSha256 != skitProfileSha256) {
-                throw new GradleException('H5 fallback profile does not match SKIT_PROFILE_SHA256')
-            }
-            def apiBaseUrlSha256 = sha256Hex(apiBaseUrl)
-            if (markerProfile.apiBaseUrlSha256 != apiBaseUrlSha256) {
-                throw new GradleException('H5 fallback profile does not match SKIT_API_BASE_URL')
-            }
-            def loginAssetsDir = new File(h5AssetsDir, 'assets')
-            def loginAssets = loginAssetsDir.listFiles()?.findAll {
-                it.isFile() && it.name.startsWith('pages-auth-index') && it.name.endsWith('.js')
-            } ?: []
-            if (!loginAssets.any { it.getText('UTF-8').contains("\"${skitAgentCode}\"") }) {
-                throw new GradleException('H5 fallback profile does not match SKIT_AGENT_CODE')
-            }
+            validateControlledAgentProfile()
+            validateH5ProfileMarker(null)
+        } else if (!new File(h5AssetsDir, 'index.html').isFile()) {
+            throw new GradleException("SKIT_H5_DIR must contain index.html: ${h5AssetsDir}")
         }
         if (!pangleSettingSource.isFile()) {
             throw new GradleException(
@@ -216,6 +388,61 @@ if (!localApiEndpoint && takuAppKey.isEmpty()) {
     throw new GradleException('Android builds for non-local APIs require SKIT_TAKU_APP_KEY')
 }
 
+def validateSkitReleasePackageInputs = {
+    def sourceRevision = resolveCleanGitSourceRevision()
+    validateControlledAgentProfile()
+    if (!(configuredH5Dir instanceof String) || configuredH5Dir.trim().isEmpty()) {
+        throw new GradleException(
+                'Release build requires an explicit SKIT_H5_DIR Gradle property or environment variable')
+    }
+    if (h5AssetsDir.canonicalFile == rootProject.file('static-www').canonicalFile) {
+        throw new GradleException(
+                'Release SKIT_H5_DIR must point to a newly built H5 output, not static-www')
+    }
+    validateH5ProfileMarker(sourceRevision)
+    if (!skitTenantId.matches('[A-Z0-9_-]{3,32}')) {
+        throw new GradleException('Release build requires SKIT_TENANT_ID')
+    }
+    if (!runtimeUpdatePublicKey.matches('[A-Za-z0-9+/=]{128,2048}')) {
+        throw new GradleException('Release build requires SKIT_RUNTIME_UPDATE_PUBLIC_KEY')
+    }
+    if (!runtimeProtocolVersion.matches('[1-9][0-9]*')) {
+        throw new GradleException(
+                'Release build requires a positive SKIT_RUNTIME_PROTOCOL_VERSION')
+    }
+    if (!runtimeReleaseNo.matches('[1-9][0-9]*')) {
+        throw new GradleException('Release build requires a positive SKIT_RUNTIME_RELEASE_NO')
+    }
+    if (!apiBaseUrl.startsWith('https://')) {
+        throw new GradleException('Release build requires an HTTPS SKIT_API_BASE_URL')
+    }
+    if (configuredVersionCode == null || configuredVersionName == null) {
+        throw new GradleException('Release build requires SKIT_VERSION_CODE and SKIT_VERSION_NAME')
+    }
+    if (!releaseStoreFile || !file(releaseStoreFile).isFile()
+            || !releaseStorePassword || !releaseKeyAlias || !releaseKeyPassword
+            || !releaseCertSha256.matches('[A-Fa-f0-9]{64}')) {
+        throw new GradleException(
+                'Release build requires complete pinned APK signing metadata')
+    }
+    if (!pangleSettingSource.isFile()) {
+        throw new GradleException('Release build requires SKIT_PANGLE_SETTINGS_JSON')
+    }
+    if (takuDebuggerConfigured) {
+        throw new GradleException('Release builds cannot include Taku debugger configuration')
+    }
+}
+
+def validateSkitReleaseInputs = tasks.register('validateSkitReleaseInputs') {
+    doLast {
+        validateSkitReleasePackageInputs()
+    }
+}
+
+prepareSkitRuntimeAssets.configure {
+    mustRunAfter validateSkitReleaseInputs
+}
+
 android {
     namespace 'top.neoshen.xingheyingguan'
     compileSdk 36
@@ -300,40 +527,23 @@ tasks.named('preBuild').configure {
     dependsOn prepareSkitRuntimeAssets, verifyTakuAdapterBundle, verifyTakuDependencyContract
 }
 
+def releaseArtifactTaskNames = [
+        'assembleRelease',
+        'packageRelease',
+        'bundleRelease',
+        'packageReleaseBundle',
+        'packageReleaseUniversalApk',
+        'makeApkFromBundleForRelease',
+        'signReleaseBundle',
+        'zipApksForRelease',
+        'extractApksForRelease',
+        'extractApksFromBundleForRelease'
+] as Set
 tasks.configureEach { task ->
-    if (task.name == 'assembleRelease' || task.name == 'packageRelease'
-            || task.name == 'bundleRelease') {
+    if (releaseArtifactTaskNames.contains(task.name)) {
+        task.dependsOn validateSkitReleaseInputs
         task.doFirst {
-            if (!skitTenantId.matches('[A-Z0-9_-]{3,32}')) {
-                throw new GradleException('Release build requires SKIT_TENANT_ID')
-            }
-            if (!runtimeUpdatePublicKey.matches('[A-Za-z0-9+/=]{128,2048}')) {
-                throw new GradleException('Release build requires SKIT_RUNTIME_UPDATE_PUBLIC_KEY')
-            }
-            if (!runtimeProtocolVersion.matches('[1-9][0-9]*')) {
-                throw new GradleException('Release build requires a positive SKIT_RUNTIME_PROTOCOL_VERSION')
-            }
-            if (!runtimeReleaseNo.matches('[1-9][0-9]*')) {
-                throw new GradleException('Release build requires a positive SKIT_RUNTIME_RELEASE_NO')
-            }
-            if (!apiBaseUrl.startsWith('https://')) {
-                throw new GradleException('Release build requires an HTTPS SKIT_API_BASE_URL')
-            }
-            if (configuredVersionCode == null || configuredVersionName == null) {
-                throw new GradleException('Release build requires SKIT_VERSION_CODE and SKIT_VERSION_NAME')
-            }
-            if (!releaseStoreFile || !file(releaseStoreFile).isFile()
-                    || !releaseStorePassword || !releaseKeyAlias || !releaseKeyPassword
-                    || !releaseCertSha256.matches('[A-Fa-f0-9]{64}')) {
-                throw new GradleException('Release build requires complete pinned APK signing metadata')
-            }
-            if (!pangleSettingSource.isFile()) {
-                throw new GradleException('Release build requires SKIT_PANGLE_SETTINGS_JSON')
-            }
-            if (takuDebuggerConfigured) {
-                throw new GradleException(
-                        'Release builds cannot include Taku debugger configuration')
-            }
+            validateSkitReleasePackageInputs()
         }
     }
 }
@@ -350,8 +560,8 @@ dependencies {
     implementation files(takuAars)
     implementation 'androidx.core:core:1.13.1'
     implementation 'androidx.webkit:webkit:1.16.0'
-    implementation 'com.pangle.cn:pangrowth-base:2.9.0.9'
-    implementation 'com.pangle.cn:pangrowth-djx-sdk-lite:2.9.0.9'
+    implementation "com.pangle.cn:pangrowth-base:${pangleContentSdkVersion}"
+    implementation "com.pangle.cn:pangrowth-djx-sdk-lite:${pangleContentSdkVersion}"
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'

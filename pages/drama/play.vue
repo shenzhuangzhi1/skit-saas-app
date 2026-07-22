@@ -635,6 +635,14 @@
     return '广告暂不可用，请稍后重试';
   }
 
+  function hasTerminalRewardEvidence(error) {
+    const telemetry = error?.terminalTelemetry;
+    return (
+      (telemetry?.nativeState === 'ERROR' || telemetry?.nativeState === 'CLOSED') &&
+      telemetry?.clientRewardObserved === true
+    );
+  }
+
   async function playCurrentEpisode(
     source,
     rewardEvidence = null,
@@ -835,25 +843,36 @@
           if (!created.nativeProtocol) {
             throw new Error('新请求缺少原生播放协议');
           }
-          const adPlayback = await runNativeActivityPresentation(() =>
-            showDramaRewardedVideoAd({
-              protocol: created.nativeProtocol,
-              onClientEvent: (clientEvent) =>
-                adSessionOrchestrator.recordClientEvent(
-                  identity,
-                  created.nativeProtocol,
-                  clientEvent,
-                ),
-            }),
-          );
-          assertPageRequestCurrent(unlockRequest);
-          result = await adSessionOrchestrator.pollSession(identity, created.sessionId);
-          assertPageRequestCurrent(unlockRequest);
-          if (adPlayback.outcome === 'INCOMPLETE' && result.resolution !== 'GRANTED') {
-            if (isPageUiRequestCurrent(unlockRequest)) {
-              uni.showToast({ title: '广告未完整观看，请重新观看', icon: 'none' });
+          let adPlayback;
+          try {
+            adPlayback = await runNativeActivityPresentation(() =>
+              showDramaRewardedVideoAd({
+                protocol: created.nativeProtocol,
+                onClientEvent: (clientEvent) =>
+                  adSessionOrchestrator.recordClientEvent(
+                    identity,
+                    created.nativeProtocol,
+                    clientEvent,
+                  ),
+              }),
+            );
+          } catch (error) {
+            if (!hasTerminalRewardEvidence(error)) {
+              throw error;
             }
-            return;
+            result = await adSessionOrchestrator.pollSession(identity, created.sessionId);
+            assertPageRequestCurrent(unlockRequest);
+          }
+          if (!result) {
+            assertPageRequestCurrent(unlockRequest);
+            result = await adSessionOrchestrator.pollSession(identity, created.sessionId);
+            assertPageRequestCurrent(unlockRequest);
+            if (adPlayback.outcome === 'INCOMPLETE' && result.resolution !== 'GRANTED') {
+              if (isPageUiRequestCurrent(unlockRequest)) {
+                uni.showToast({ title: '广告未完整观看，请重新观看', icon: 'none' });
+              }
+              return;
+            }
           }
         } else {
           result = await adSessionOrchestrator.pollSession(identity, created.sessionId);

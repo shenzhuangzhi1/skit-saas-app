@@ -5,8 +5,10 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const source = readFileSync(resolve(root, 'sheep/services/app-update.js'), 'utf8')
-  .replace("import AppReleaseApi from '@/sheep/api/app/release';", 'const AppReleaseApi = {};');
+const source = readFileSync(resolve(root, 'sheep/services/app-update.js'), 'utf8').replace(
+  "import AppReleaseApi from '@/sheep/api/app/release';",
+  'const AppReleaseApi = {};',
+);
 const subject = await import(
   `data:text/javascript;base64,${Buffer.from(source).toString('base64')}#${Date.now()}`
 );
@@ -55,7 +57,8 @@ test('rejects wrong scope, rollback, unsigned, and disabled update manifests', (
     [{}, { updatesEnabled: false }],
   ]) {
     assert.throws(
-      () => subject.normalizeSignedManifest({ ...manifest, ...patch }, { ...runtime, ...runtimePatch }),
+      () =>
+        subject.normalizeSignedManifest({ ...manifest, ...patch }, { ...runtime, ...runtimePatch }),
       /签名清单|不匹配/,
     );
   }
@@ -74,8 +77,12 @@ test('hot-update bundles enforce the same real-content production gates as the b
   assert.match(productionEnv, /export VITE_DRAMA_MOCK_REWARD_AD="false"/);
   assert.match(productionEnv, /export VITE_DRAMA_REAL_CONTENT_REQUIRED="true"/);
   assert.ok(
-    hotBuilder.indexOf('production-h5-env.sh')
-      < hotBuilder.indexOf('build-h5.sh'),
+    hotBuilder.indexOf('production-h5-env.sh') < hotBuilder.indexOf('build-h5.sh'),
     'hot bundle must set the real-content gate before compiling H5',
+  );
+  assert.match(hotBuilder, /export SKIT_BUILD_TYPE=release/);
+  assert.ok(
+    hotBuilder.indexOf('export SKIT_BUILD_TYPE=release') < hotBuilder.indexOf('build-h5.sh'),
+    'formal hot updates must enforce the clean release-source gate before compiling H5',
   );
 });

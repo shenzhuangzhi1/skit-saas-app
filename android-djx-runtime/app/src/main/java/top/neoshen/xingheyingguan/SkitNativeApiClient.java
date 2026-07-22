@@ -10,7 +10,9 @@ import java.io.IOException;
 import java.io.Reader;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
@@ -240,21 +242,9 @@ final class SkitNativeApiClient {
             return;
         }
         JSONObject event = new JSONObject();
-        put(event, "protocolVersion", telemetry.getProtocol().getProtocolVersion());
-        put(event, "clientEventId", telemetry.getProtocol().getSessionId()
-                + ":" + telemetry.getCallbackSequence());
-        put(event, "callbackSequence", telemetry.getCallbackSequence());
-        put(event, "sessionId", telemetry.getProtocol().getSessionId());
-        put(event, "provider", telemetry.getProtocol().getProvider());
-        put(event, "placementId", telemetry.getProtocol().getPlacementId());
-        put(event, "eventType", eventType(telemetry));
-        put(event, "nativeState", telemetry.getState().name());
-        put(event, "sdkRequestId", telemetry.getSdkRequestId());
-        put(event, "providerShowId", telemetry.getProviderShowId());
-        put(event, "networkFirmId", telemetry.getNetworkFirmId());
-        put(event, "adsourceId", telemetry.getAdsourceId());
-        put(event, "clientRewardObserved", telemetry.isClientRewardObserved());
-        put(event, "closed", telemetry.isClosed());
+        for (Map.Entry<String, Object> field : telemetryEvent(telemetry).entrySet()) {
+            put(event, field.getKey(), field.getValue());
+        }
         JSONObject request = new JSONObject();
         JSONArray events = new JSONArray();
         events.put(event);
@@ -263,6 +253,26 @@ final class SkitNativeApiClient {
                 + telemetry.getProtocol().getSessionId() + "/client-events";
         execute("POST", path, request, SkitNativeApiClient::parseSessionStatus, callback,
                 TELEMETRY_MAX_ATTEMPTS);
+    }
+
+    static Map<String, Object> telemetryEvent(TakuTelemetry telemetry) {
+        Map<String, Object> event = new LinkedHashMap<>();
+        event.put("protocolVersion", telemetry.getProtocol().getProtocolVersion());
+        event.put("clientEventId", telemetry.getProtocol().getSessionId()
+                + ":" + telemetry.getCallbackSequence());
+        event.put("callbackSequence", telemetry.getCallbackSequence());
+        event.put("sessionId", telemetry.getProtocol().getSessionId());
+        event.put("provider", telemetry.getProtocol().getProvider());
+        event.put("placementId", telemetry.getProtocol().getPlacementId());
+        event.put("eventType", eventType(telemetry));
+        event.put("nativeState", telemetry.getState().name());
+        event.put("sdkRequestId", telemetry.getSdkRequestId());
+        event.put("providerShowId", telemetry.getProviderShowId());
+        event.put("networkFirmId", telemetry.getNetworkFirmId());
+        event.put("adsourceId", telemetry.getAdsourceId());
+        event.put("clientRewardObserved", telemetry.isClientRewardObserved());
+        event.put("closed", telemetry.isClosed());
+        return Collections.unmodifiableMap(event);
     }
 
     void getSession(String sessionId, Callback<SessionStatus> callback) {

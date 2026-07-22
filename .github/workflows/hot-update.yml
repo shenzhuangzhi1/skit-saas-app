@@ -41,6 +41,8 @@ jobs:
             --profile-code "$PROFILE_CODE" \
             --github-env "$GITHUB_ENV" \
             --github-output "$GITHUB_OUTPUT"
+      - name: Install locked H5 dependencies
+        run: npm ci
       - name: Materialize protected manifest signing key
         env:
           RUNTIME_UPDATE_SIGNING_KEY_BASE64: ${{ secrets.RUNTIME_UPDATE_SIGNING_KEY_BASE64 }}

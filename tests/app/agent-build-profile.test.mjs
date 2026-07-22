@@ -67,15 +67,24 @@ test('resolver rejects cross-profile reuse of a native application identity', ()
 });
 
 test('production workflows select a versioned repository profile and a profile-scoped Environment', () => {
-  const apkWorkflow = readFileSync(resolve(root, '.github/workflows/android-production.yml'), 'utf8');
+  const apkWorkflow = readFileSync(
+    resolve(root, '.github/workflows/android-production.yml'),
+    'utf8',
+  );
   const hotWorkflow = readFileSync(resolve(root, '.github/workflows/hot-update.yml'), 'utf8');
   const apkBuilder = readFileSync(resolve(root, 'android-djx-runtime/build-djx-apk.sh'), 'utf8');
-  const verifier = readFileSync(resolve(root, 'android-djx-runtime/verify-production-apk.sh'), 'utf8');
+  const verifier = readFileSync(
+    resolve(root, 'android-djx-runtime/verify-production-apk.sh'),
+    'utf8',
+  );
   const sdkCheck = readFileSync(resolve(root, 'android-djx-runtime/check-sdk-config.sh'), 'utf8');
   const gitignore = readFileSync(resolve(root, '.gitignore'), 'utf8');
 
   for (const workflow of [apkWorkflow, hotWorkflow]) {
-    assert.match(workflow, /environment:\s*android-production-\$\{\{\s*inputs\.profile_code\s*\}\}/);
+    assert.match(
+      workflow,
+      /environment:\s*android-production-\$\{\{\s*inputs\.profile_code\s*\}\}/,
+    );
     assert.match(workflow, /resolve-build-profile\.mjs/);
     assert.match(workflow, /--profile-code\s+"\$PROFILE_CODE"/);
     assert.match(workflow, /--github-env\s+"\$GITHUB_ENV"/);
@@ -83,12 +92,25 @@ test('production workflows select a versioned repository profile and a profile-s
   assert.doesNotMatch(apkBuilder, /production-profile\.json/);
   const dependencyInstall = apkWorkflow.indexOf('npm ci');
   const productionBuild = apkWorkflow.indexOf('./android-djx-runtime/build-djx-apk.sh');
-  assert.ok(dependencyInstall >= 0, 'production Android packaging must install locked H5 dependencies');
+  const hotDependencyInstall = hotWorkflow.indexOf('npm ci');
+  const hotProductionBuild = hotWorkflow.indexOf('./android-djx-runtime/build-hot-bundle.sh');
+  assert.ok(
+    dependencyInstall >= 0,
+    'production Android packaging must install locked H5 dependencies',
+  );
   assert.ok(existsSync(resolve(root, 'package-lock.json')), 'the npm lockfile must be committed');
   assert.doesNotMatch(gitignore, /^package-lock\.json$/m, 'the npm lockfile must not be ignored');
   assert.ok(
     dependencyInstall < productionBuild,
     'locked H5 dependencies must be installed before the production APK build',
+  );
+  assert.ok(
+    hotDependencyInstall >= 0,
+    'production hot updates must install locked H5 dependencies',
+  );
+  assert.ok(
+    hotDependencyInstall < hotProductionBuild,
+    'locked H5 dependencies must be installed before the production hot-update build',
   );
   assert.match(apkBuilder, /export SKIT_PROFILE_VERSION="\$PROFILE_VERSION"/);
   assert.match(apkBuilder, /export SKIT_PROFILE_SHA256="\$PROFILE_SHA256"/);
@@ -105,10 +127,7 @@ test('production workflows select a versioned repository profile and a profile-s
   assert.match(verifier, /outputBaseName/);
   assert.equal(existsSync(resolve(root, 'android-djx-runtime/production-profile.json')), false);
 
-  const productionProfilePath = resolve(
-    root,
-    'android-djx-runtime/profiles/AG162.json',
-  );
+  const productionProfilePath = resolve(root, 'android-djx-runtime/profiles/AG162.json');
   const productionProfile = JSON.parse(readFileSync(productionProfilePath, 'utf8'));
   assert.equal(productionProfile.schemaVersion, 2);
   assert.ok(Number.isSafeInteger(productionProfile.profileVersion));
@@ -117,12 +136,7 @@ test('production workflows select a versioned repository profile and a profile-s
   assert.equal(productionProfile.profileVersion, 3);
   assert.equal(productionProfile.pangle.adSdkVersion, '7.6.1.1');
   assert.equal(productionProfile.taku.sdkVersion, '6.6.30');
-  for (const forbiddenKey of [
-    'networkFirmId',
-    'networkId',
-    'adsourceId',
-    'providerSourceId',
-  ]) {
+  for (const forbiddenKey of ['networkFirmId', 'networkId', 'adsourceId', 'providerSourceId']) {
     assert.equal(
       Object.hasOwn(productionProfile, forbiddenKey) ||
         Object.hasOwn(productionProfile.taku, forbiddenKey) ||
@@ -131,4 +145,65 @@ test('production workflows select a versioned repository profile and a profile-s
       `${forbiddenKey} must remain a server-selected runtime value`,
     );
   }
+});
+
+test('direct Gradle release packaging fails closed on profile and H5 identity', () => {
+  const gradle = readFileSync(resolve(root, 'android-djx-runtime/app/build.gradle'), 'utf8');
+
+  assert.match(
+    gradle,
+    /def configuredH5Dir = providers\.gradleProperty\('SKIT_H5_DIR'\)\.orNull\s*\?:\s*providers\.environmentVariable\('SKIT_H5_DIR'\)\.orNull/,
+    'both a Gradle property and environment variable must be accepted as an explicit H5 input',
+  );
+  assert.match(gradle, /def validateControlledAgentProfile = \{/);
+  assert.match(
+    gradle,
+    /new File\(profilesDir, "\$\{skitAgentCode\}\.json"\)/,
+    'a direct Gradle build must resolve only profiles/<agent>.json',
+  );
+  assert.match(gradle, /profile\.profileCode != skitAgentCode/);
+  assert.match(gradle, /profile\.tenantId != skitAgentCode/);
+  assert.match(gradle, /profile\.applicationId != skitApplicationId/);
+  assert.match(gradle, /profile\.pangle\.siteId != pangleAppId/);
+  assert.match(gradle, /profile\.pangle\.contentSdkVersion != pangleContentSdkVersion/);
+  assert.match(gradle, /pangrowth-base:\$\{pangleContentSdkVersion\}/);
+  assert.match(gradle, /pangrowth-djx-sdk-lite:\$\{pangleContentSdkVersion\}/);
+  assert.match(gradle, /profile\.taku\.appId != takuAppId/);
+  assert.match(gradle, /profile\.taku\.rewardPlacementId != takuRewardPlacementId/);
+  assert.match(gradle, /sha256FileHex\(profileFile\) != skitProfileSha256/);
+  assert.match(gradle, /skitProfileVersion\.matches\('\[1-9\]\[0-9\]\*'\)/);
+  assert.match(gradle, /skitProfileSha256\.matches\('\[a-f0-9\]\{64\}'\)/);
+  assert.match(gradle, /skitTenantId != skitAgentCode/);
+
+  const releaseValidator = gradle.indexOf("tasks.register('validateSkitReleaseInputs')");
+  const releaseTaskHook = gradle.indexOf('def releaseArtifactTaskNames = [');
+  assert.ok(releaseValidator >= 0, 'release validation must be an always-run task dependency');
+  assert.ok(releaseTaskHook > releaseValidator, 'release tasks must be wired after the validator');
+  for (const taskName of [
+    'assembleRelease',
+    'packageRelease',
+    'bundleRelease',
+    'packageReleaseBundle',
+    'packageReleaseUniversalApk',
+    'makeApkFromBundleForRelease',
+  ]) {
+    assert.match(gradle, new RegExp(`'${taskName}'`));
+  }
+  assert.match(gradle, /task\.dependsOn validateSkitReleaseInputs/);
+  assert.match(
+    gradle,
+    /task\.doFirst \{\s*validateSkitReleasePackageInputs\(\)/,
+    'direct release tasks must also validate immediately before producing the package',
+  );
+  assert.match(
+    gradle,
+    /Release build requires an explicit SKIT_H5_DIR Gradle property or environment variable/,
+  );
+  assert.match(gradle, /Release SKIT_H5_DIR must point to a newly built H5 output/);
+  assert.match(gradle, /validateH5ProfileMarker\(sourceRevision\)/);
+  assert.match(gradle, /\.skit-h5-build-profile\.json/);
+  assert.match(gradle, /sourceRevision/);
+  assert.match(gradle, /resolveCleanGitSourceRevision\(\)/);
+  assert.match(gradle, /status.*--porcelain.*--untracked-files=normal/);
+  assert.match(gradle, /H5 fallback profile does not match the current Git revision/);
 });

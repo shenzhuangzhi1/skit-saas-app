@@ -116,6 +116,7 @@ if [[ "$BUILD_TYPE" != "debug" && "$BUILD_TYPE" != "release" ]]; then
   echo "SKIT_BUILD_TYPE must be debug or release" >&2
   exit 1
 fi
+export SKIT_BUILD_TYPE="$BUILD_TYPE"
 if [[ "$AD_PROVIDER" != "pangle" && "$AD_PROVIDER" != "taku" ]]; then
   echo "SKIT_DRAMA_AD_PROVIDER must be pangle or taku" >&2
   exit 1

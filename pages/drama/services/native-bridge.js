@@ -131,7 +131,10 @@ function normalizeNativeTelemetry(value, protocol) {
   if ((value.nativeState === 'CLOSED') !== value.closed) {
     throw new Error('原生关闭标记与 nativeState 不一致');
   }
-  const showRequired = value.nativeState === 'SHOWING' || value.nativeState === 'CLOSED';
+  const showRequired =
+    value.nativeState === 'SHOWING' ||
+    value.nativeState === 'CLOSED' ||
+    (value.nativeState === 'ERROR' && value.clientRewardObserved);
   const showIdentityAllowed =
     showRequired || (value.nativeState === 'ERROR' && value.providerShowId !== null);
   let providerShowId = null;
@@ -245,8 +248,11 @@ export function createNativeTelemetryValidator(serverProtocol) {
       if (value.nativeState === 'CLOSED' && value.clientRewardObserved !== rewardObserved) {
         throw new Error('关闭回调的奖励观察状态与当前会话不一致');
       }
-      if (value.nativeState === 'ERROR' && value.clientRewardObserved) {
-        throw new Error('失败事件不能冒充客户端奖励观察');
+      if (value.nativeState === 'ERROR' && (value.providerShowId !== null) !== showingSeen) {
+        throw new Error('失败回调的展示证据与当前会话不一致');
+      }
+      if (value.nativeState === 'ERROR' && value.clientRewardObserved !== rewardObserved) {
+        throw new Error('失败回调的奖励观察状态与当前会话不一致');
       }
       lastSequence = value.callbackSequence;
       previousState = value.nativeState;

@@ -91,6 +91,21 @@ public class TakuSessionStateMachineTest {
     }
 
     @Test
+    public void failureAfterRewardRetainsRewardObservationEvidence() {
+        TakuSessionStateMachine machine = new TakuSessionStateMachine(PROTOCOL, "request-1");
+        machine.loading();
+        machine.loaded();
+        machine.showing("show-1", 66, "source-1");
+        machine.rewardObserved("show-1", 66, "source-1");
+
+        TakuTelemetry failure = machine.failed(null, null, null);
+
+        assertEquals(TakuNativeState.ERROR, failure.getState());
+        assertTrue(failure.isClientRewardObserved());
+        assertEquals("show-1", failure.getProviderShowId());
+    }
+
+    @Test
     public void closeBeforeRewardIsAnExplicitUnrewardedTerminalEvent() {
         TakuSessionStateMachine machine = new TakuSessionStateMachine(PROTOCOL, "request-1");
         machine.initializing();

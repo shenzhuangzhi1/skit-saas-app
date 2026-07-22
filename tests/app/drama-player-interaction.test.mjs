@@ -113,7 +113,7 @@ test('an early ad close is incomplete and never starts the long verification wat
 
   assert.match(
     unlockFlow,
-    /const adPlayback = await runNativeActivityPresentation\(\(\) =>\s*showDramaRewardedVideoAd\(/,
+    /adPlayback = await runNativeActivityPresentation\(\(\) =>\s*showDramaRewardedVideoAd\(/,
   );
   assert.match(unlockFlow, /adPlayback\.outcome === 'INCOMPLETE'/);
   assert.match(unlockFlow, /广告未完整观看，请重新观看/);
@@ -122,6 +122,26 @@ test('an early ad close is incomplete and never starts the long verification wat
     unlockFlow.indexOf("result.resolution === 'GRANTED'"),
   );
   assert.doesNotMatch(incompleteBranch, /schedulePendingRewardVerification\(/);
+});
+
+test('a terminal SDK error after reward evidence keeps polling in the same unlock tap', () => {
+  const helperStart = playerSource.indexOf('function hasTerminalRewardEvidence(error)');
+  const helperEnd = playerSource.indexOf('\n  function ', helperStart + 1);
+  assert.notEqual(helperStart, -1, 'rewarded terminal error classifier must exist');
+  const helper = playerSource.slice(helperStart, helperEnd);
+  assert.match(helper, /nativeState === 'ERROR'/);
+  assert.match(helper, /nativeState === 'CLOSED'/);
+  assert.match(helper, /clientRewardObserved === true/);
+
+  const unlockStart = playerSource.indexOf('async function unlockCurrent()');
+  const unlockEnd = playerSource.indexOf('\n  function ', unlockStart + 1);
+  const unlockFlow = playerSource.slice(unlockStart, unlockEnd);
+  assert.match(
+    unlockFlow,
+    /catch \(error\) \{\s*if \(!hasTerminalRewardEvidence\(error\)\) \{\s*throw error;[\s\S]*?result = await adSessionOrchestrator\.pollSession\(identity, created\.sessionId\)/,
+  );
+  assert.match(unlockFlow, /result\.resolution === 'VERIFYING'/);
+  assert.match(unlockFlow, /schedulePendingRewardVerification\(/);
 });
 
 test('a VERIFYING create outcome polls without handing a missing protocol to native SDK', () => {
@@ -278,7 +298,7 @@ test('native rewarded-ad activity does not invalidate the active unlock generati
   );
   assert.match(
     playerSource,
-    /const adPlayback = await runNativeActivityPresentation\(\(\) =>\s*showDramaRewardedVideoAd\(/,
+    /adPlayback = await runNativeActivityPresentation\(\(\) =>\s*showDramaRewardedVideoAd\(/,
   );
   assert.match(
     playerSource,

@@ -99,7 +99,7 @@ public final class TakuSessionStateMachine {
         }
         terminal = true;
         state = TakuNativeState.ERROR;
-        return event(showId, networkFirmId, adsourceId, failureReason, false, false);
+        return event(showId, networkFirmId, adsourceId, failureReason, rewardObserved, false);
     }
 
     private TakuTelemetry event(String showId, Integer networkFirmId, String adsourceId,

@@ -353,6 +353,20 @@ export function createAdSessionOrchestrator(options = {}) {
         return { kind: 'RECOVERED', result: recovered };
       }
     }
+    const created = await createSession(normalized, { dramaId, episodeNo });
+    if (created.outcome !== 'REUSED') {
+      return { kind: 'CREATED', created };
+    }
+    const recovered = await pollSession(normalized, created.sessionId);
+    const replaceableOrphan =
+      recovered.resolution === 'REJECTED' &&
+      recovered.status?.clientLifecycleStatus === 'LOAD_EXPIRED' &&
+      recovered.status?.rewardVerificationStatus === 'REJECTED' &&
+      recovered.status?.entitlementStatus === 'NONE' &&
+      !recovered.status?.providerShowId;
+    if (!replaceableOrphan) {
+      return { kind: 'RECOVERED', result: recovered };
+    }
     return {
       kind: 'CREATED',
       created: await createSession(normalized, { dramaId, episodeNo }),

@@ -140,8 +140,7 @@ test('preserves backend business codes when session creation is rejected', async
 
   await assert.rejects(
     () => orchestrator.createSession(identityA, { dramaId: 1631, episodeNo: 1 }),
-    (error) =>
-      error?.code === 1030007008 && error?.message === '当前剧目同步失败，请稍后重试',
+    (error) => error?.code === 1030007008 && error?.message === '当前剧目同步失败，请稍后重试',
   );
 });
 
@@ -285,6 +284,76 @@ test('replaces a terminal pending session in the same unlock preparation', async
     orchestrator.getPendingSessions(identityA).map((item) => item.sessionId),
     [replacement.sessionId],
   );
+});
+
+test('replaces a server-reused unshown orphan once without requiring a second tap', async () => {
+  const { createAdSessionOrchestrator } = requireSubject();
+  const replacement = {
+    ...protocol,
+    sessionId: 'session_9876543210WXYZ',
+    customData: 'token_9876543210WXYZAB',
+  };
+  let createCalls = 0;
+  const orchestrator = createAdSessionOrchestrator({
+    api: makeApi({
+      createAdSession: async () =>
+        ok(createCalls++ === 0 ? { ...protocol, outcome: 'REUSED' } : replacement),
+      getAdSession: async (sessionId) =>
+        ok({
+          sessionId,
+          clientLifecycleStatus: 'LOAD_EXPIRED',
+          rewardVerificationStatus: 'REJECTED',
+          entitlementStatus: 'NONE',
+          revenueStatus: 'NONE',
+          providerShowId: null,
+        }),
+    }),
+    storage: memoryStorage(),
+    sleep: async () => {},
+  });
+
+  const prepared = await orchestrator.prepareUnlockSession(identityA, {
+    dramaId: 901,
+    episodeNo: 7,
+  });
+
+  assert.equal(prepared.kind, 'CREATED');
+  assert.equal(prepared.created.outcome, 'CREATED');
+  assert.equal(prepared.created.sessionId, replacement.sessionId);
+  assert.equal(createCalls, 2);
+});
+
+test('never replaces a reused terminal session that has show evidence', async () => {
+  const { createAdSessionOrchestrator } = requireSubject();
+  let createCalls = 0;
+  const orchestrator = createAdSessionOrchestrator({
+    api: makeApi({
+      createAdSession: async () => {
+        createCalls += 1;
+        return ok({ ...protocol, outcome: 'REUSED' });
+      },
+      getAdSession: async (sessionId) =>
+        ok({
+          sessionId,
+          clientLifecycleStatus: 'LOAD_EXPIRED',
+          rewardVerificationStatus: 'REJECTED',
+          entitlementStatus: 'NONE',
+          revenueStatus: 'NONE',
+          providerShowId: 'show-1',
+        }),
+    }),
+    storage: memoryStorage(),
+    sleep: async () => {},
+  });
+
+  const prepared = await orchestrator.prepareUnlockSession(identityA, {
+    dramaId: 901,
+    episodeNo: 7,
+  });
+
+  assert.equal(prepared.kind, 'RECOVERED');
+  assert.equal(prepared.result.resolution, 'REJECTED');
+  assert.equal(createCalls, 1);
 });
 
 test('polls after close with the approved 0.5/1/2/3/3 second schedule', async () => {

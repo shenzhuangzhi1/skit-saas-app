@@ -28,6 +28,30 @@ PY
 )"
 HBUILDERX_APP_ROOT="${HX_APP_ROOT:-$(cd "$HBUILDERX_DIR/../.." && pwd)}"
 
+if ! command -v git >/dev/null 2>&1; then
+  echo "Git is required to bind the H5 build to an exact source revision" >&2
+  exit 1
+fi
+if [[ "$(git -C "$ROOT_DIR" rev-parse --is-inside-work-tree 2>/dev/null || true)" != "true" ]]; then
+  echo "Android H5 builds require a Git worktree" >&2
+  exit 1
+fi
+SOURCE_REVISION="$(git -C "$ROOT_DIR" rev-parse --verify HEAD 2>/dev/null || true)"
+if [[ ! "$SOURCE_REVISION" =~ ^[a-f0-9]{40}$ ]]; then
+  echo "Android H5 builds require a canonical 40 character Git source revision" >&2
+  exit 1
+fi
+if [[ "${SKIT_BUILD_TYPE:-debug}" == "release" ]]; then
+  if ! SOURCE_STATUS="$(git -C "$ROOT_DIR" status --porcelain --untracked-files=normal)"; then
+    echo "Unable to verify the Android H5 source worktree" >&2
+    exit 1
+  fi
+  if [[ -n "$SOURCE_STATUS" ]]; then
+    echo "Release Android H5 builds require a clean Git worktree" >&2
+    exit 1
+  fi
+fi
+
 if [[ -z "${SKIT_AGENT_CODE:-}" || ! "$SKIT_AGENT_CODE" =~ ^[A-Z0-9_-]{3,32}$ ]]; then
   echo "SKIT_AGENT_CODE is required for Android H5 builds" >&2
   exit 1
@@ -101,11 +125,12 @@ API_BASE_URL_SHA256="$(
   printf '%s' "$SKIT_API_BASE_URL" | \
     python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
 )"
-printf '{"agentCode":"%s","profileVersion":%s,"profileSha256":"%s","apiBaseUrlSha256":"%s"}\n' \
+printf '{"agentCode":"%s","profileVersion":%s,"profileSha256":"%s","apiBaseUrlSha256":"%s","sourceRevision":"%s"}\n' \
   "$SKIT_AGENT_CODE" \
   "$SKIT_PROFILE_VERSION" \
   "$SKIT_PROFILE_SHA256" \
   "$API_BASE_URL_SHA256" \
+  "$SOURCE_REVISION" \
   > "$OUTPUT_DIR/.skit-h5-build-profile.json"
 
 echo "$OUTPUT_DIR"

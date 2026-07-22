@@ -257,11 +257,136 @@ test('emits a backend-valid failure event even after a reward observation', () =
       providerShowId: 'show-1',
       networkFirmId: 66,
       adsourceId: 'source-1',
-      clientRewardObserved: false,
+      clientRewardObserved: true,
     }),
   );
   assert.equal(nativeTelemetryToClientEvent(failure).eventType, 'FAILED');
-  assert.equal(nativeTelemetryToClientEvent(failure).clientRewardObserved, false);
+  assert.equal(nativeTelemetryToClientEvent(failure).clientRewardObserved, true);
+});
+
+test('rejects fabricated or regressed reward evidence on a failure event', () => {
+  const { createNativeTelemetryValidator } = requireBridge();
+  assert.throws(
+    () =>
+      createNativeTelemetryValidator(serverProtocol).accept(
+        event({
+          nativeState: 'ERROR',
+          providerShowId: 'show-1',
+          networkFirmId: 66,
+          adsourceId: 'source-1',
+          clientRewardObserved: true,
+        }),
+      ),
+    /奖励观察状态|展示回调|展示证据/i,
+  );
+  assert.throws(
+    () =>
+      createNativeTelemetryValidator(serverProtocol).accept(
+        event({
+          nativeState: 'ERROR',
+          providerShowId: 'show-1',
+          networkFirmId: 66,
+          adsourceId: 'source-1',
+        }),
+      ),
+    /展示证据/i,
+  );
+
+  const validator = createNativeTelemetryValidator(serverProtocol);
+  validator.accept(event());
+  validator.accept(event({ callbackSequence: 1, nativeState: 'LOADED' }));
+  validator.accept(
+    event({
+      callbackSequence: 2,
+      nativeState: 'SHOWING',
+      providerShowId: 'show-1',
+      networkFirmId: 66,
+      adsourceId: 'source-1',
+    }),
+  );
+  validator.accept(
+    event({
+      callbackSequence: 3,
+      nativeState: 'SHOWING',
+      providerShowId: 'show-1',
+      networkFirmId: 66,
+      adsourceId: 'source-1',
+      clientRewardObserved: true,
+    }),
+  );
+  assert.throws(
+    () =>
+      validator.accept(
+        event({
+          callbackSequence: 4,
+          nativeState: 'ERROR',
+          providerShowId: 'show-1',
+          networkFirmId: 66,
+          adsourceId: 'source-1',
+          clientRewardObserved: false,
+        }),
+      ),
+    /奖励观察状态/i,
+  );
+});
+
+test('post-show failure cannot omit the bound show identity', () => {
+  const { createNativeTelemetryValidator } = requireBridge();
+  const validator = createNativeTelemetryValidator(serverProtocol);
+  validator.accept(event());
+  validator.accept(event({ callbackSequence: 1, nativeState: 'LOADED' }));
+  validator.accept(
+    event({
+      callbackSequence: 2,
+      nativeState: 'SHOWING',
+      providerShowId: 'show-1',
+      networkFirmId: 66,
+      adsourceId: 'source-1',
+    }),
+  );
+
+  assert.throws(
+    () => validator.accept(event({ callbackSequence: 3, nativeState: 'ERROR' })),
+    /展示证据/i,
+  );
+});
+
+test('post-reward failure requires the complete original show identity', () => {
+  const { createNativeTelemetryValidator } = requireBridge();
+  const validator = createNativeTelemetryValidator(serverProtocol);
+  validator.accept(event());
+  validator.accept(event({ callbackSequence: 1, nativeState: 'LOADED' }));
+  validator.accept(
+    event({
+      callbackSequence: 2,
+      nativeState: 'SHOWING',
+      providerShowId: 'show-1',
+      networkFirmId: 66,
+      adsourceId: 'source-1',
+    }),
+  );
+  validator.accept(
+    event({
+      callbackSequence: 3,
+      nativeState: 'SHOWING',
+      providerShowId: 'show-1',
+      networkFirmId: 66,
+      adsourceId: 'source-1',
+      clientRewardObserved: true,
+    }),
+  );
+
+  assert.throws(
+    () =>
+      validator.accept(
+        event({
+          callbackSequence: 4,
+          nativeState: 'ERROR',
+          clientRewardObserved: true,
+        }),
+      ),
+    /show|广告源证据/i,
+  );
 });
 
 test('maps safe no-fill telemetry to a UI-only reason without widening backend events', () => {
@@ -529,11 +654,7 @@ test('runtime behavior keeps the 11-field callback compatible and never leaks hi
   runtimeWindow.__SkitNativeBridgeEmit(secondId, JSON.stringify(rawError), true);
   assert.equal(Object.prototype.hasOwnProperty.call(secondResult, 'failureReason'), false);
 
-  for (const reason of [
-    'PRIVACY_CONSENT_REQUIRED',
-    'PANGLE_INIT_FAILED',
-    'TAKU_INIT_FAILED',
-  ]) {
+  for (const reason of ['PRIVACY_CONSENT_REQUIRED', 'PANGLE_INIT_FAILED', 'TAKU_INIT_FAILED']) {
     let result;
     plugin.showRewardedVideo({}, (value) => {
       result = value;
@@ -705,6 +826,75 @@ test('Taku bridge retries one failed telemetry POST in order and still completes
       'SHOWN',
       'REWARD_OBSERVED',
       'CLOSED',
+    ]);
+  } finally {
+    globalThis.uni = originalUni;
+  }
+});
+
+test('Taku bridge still delivers FAILED reward evidence when REWARD_OBSERVED delivery fails', async () => {
+  const originalUni = globalThis.uni;
+  const callbacks = [
+    event(),
+    event({ callbackSequence: 1, nativeState: 'LOADED' }),
+    event({
+      callbackSequence: 2,
+      nativeState: 'SHOWING',
+      providerShowId: 'show-1',
+      networkFirmId: 66,
+      adsourceId: 'source-1',
+    }),
+    event({
+      callbackSequence: 3,
+      nativeState: 'SHOWING',
+      providerShowId: 'show-1',
+      networkFirmId: 66,
+      adsourceId: 'source-1',
+      clientRewardObserved: true,
+    }),
+    event({
+      callbackSequence: 4,
+      nativeState: 'ERROR',
+      providerShowId: 'show-1',
+      networkFirmId: 66,
+      adsourceId: 'source-1',
+      clientRewardObserved: true,
+    }),
+  ];
+  globalThis.uni = {
+    requireNativePlugin() {
+      return {
+        showRewardedVideo(_payload, callback) {
+          queueMicrotask(() => callbacks.forEach(callback));
+        },
+      };
+    },
+  };
+  try {
+    const taku = await importTakuSource();
+    const attempts = [];
+    await assert.rejects(
+      () =>
+        taku.showRewardedVideoAd(serverProtocol, {
+          onClientEvent: async (clientEvent) => {
+            attempts.push({
+              eventType: clientEvent.eventType,
+              clientRewardObserved: clientEvent.clientRewardObserved,
+            });
+            if (clientEvent.eventType === 'REWARD_OBSERVED') {
+              throw new Error('reward POST failed');
+            }
+          },
+          telemetryRetryDelaysMs: [],
+          timeoutMs: 100,
+        }),
+      (error) => error?.code === 'TELEMETRY_DELIVERY_FAILED',
+    );
+    assert.deepEqual(attempts, [
+      { eventType: 'LOAD_STARTED', clientRewardObserved: false },
+      { eventType: 'SHOWN', clientRewardObserved: false },
+      { eventType: 'REWARD_OBSERVED', clientRewardObserved: true },
+      { eventType: 'FAILED', clientRewardObserved: true },
     ]);
   } finally {
     globalThis.uni = originalUni;

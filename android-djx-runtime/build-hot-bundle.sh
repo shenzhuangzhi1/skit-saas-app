@@ -128,6 +128,7 @@ export SKIT_PRODUCTION_PROFILE="$PROFILE_FILE"
 export SKIT_TENANT_ID="$TENANT_ID"
 export SKIT_APPLICATION_ID="$APPLICATION_ID"
 export SKIT_API_BASE_URL="$API_BASE_URL"
+export SKIT_BUILD_TYPE=release
 export H5_DIR
 # shellcheck source=production-h5-env.sh
 . "$RUNTIME_DIR/production-h5-env.sh"
