@@ -102,6 +102,7 @@ public class DramaPlayerActivity extends Activity {
     private int pendingResumeProgress;
     private int lastPlayingEpisode;
     private boolean terminatingSdkUnlock;
+    private boolean unrewardedCloseTelemetryPending;
     private Runnable sdkUnlockRendezvousTimeout;
 
     /** DJX may synchronously finish its host immediately after its terminal callback. */
@@ -120,6 +121,10 @@ public class DramaPlayerActivity extends Activity {
 
     /** Our own fatal paths must never be hidden by the narrow SDK terminal-finish guard. */
     private void finishHostActivity() {
+        if (isUnrewardedCloseSettlementPending()) {
+            Log.i(TAG, "deferring host exit until unrewarded CLOSED telemetry settles");
+            return;
+        }
         cancelSdkUnlockRendezvousTimeout();
         sdkUnlockResumePolicy.cancel();
         super.finish();
@@ -767,8 +772,6 @@ public class DramaPlayerActivity extends Activity {
         if (!isActiveUnlock(generation, targetEpisode)) {
             return;
         }
-        boolean unrewardedClose = telemetry.getState() == TakuNativeState.CLOSED
-                && !telemetry.isClientRewardObserved();
         if (telemetry.getProviderShowId() != null) {
             if (activeProviderShowId == null) {
                 activeProviderShowId = telemetry.getProviderShowId();
@@ -787,29 +790,42 @@ public class DramaPlayerActivity extends Activity {
                 return;
             }
         }
+        if (telemetry.getState() == TakuNativeState.CLOSED
+                && !telemetry.isClientRewardObserved()) {
+            unrewardedCloseTelemetryPending = true;
+        }
         nativeApiClient.recordTelemetry(telemetry,
                 new SkitNativeApiClient.Callback<SkitNativeApiClient.SessionStatus>() {
                     @Override
                     public void onSuccess(SkitNativeApiClient.SessionStatus ignored) {
-                        afterTelemetryRecorded(telemetry, generation, targetEpisode);
+                        afterTelemetryRecorded(
+                                telemetry, generation, targetEpisode, true);
                     }
 
                     @Override
                     public void onFailure() {
-                        afterTelemetryRecorded(telemetry, generation, targetEpisode);
+                        afterTelemetryRecorded(
+                                telemetry, generation, targetEpisode, false);
                     }
                 });
-        if (unrewardedClose) {
-            handler.post(() -> failActiveUnlock(
-                    generation, targetEpisode, "广告未完整观看，请重新观看"));
-        }
     }
 
     private void afterTelemetryRecorded(TakuTelemetry telemetry, long generation,
-                                        int targetEpisode) {
+                                        int targetEpisode, boolean telemetryDelivered) {
         if (!isActiveUnlock(generation, targetEpisode) || activeProtocol == null
                 || !activeProtocol.getSessionId().equals(
                         telemetry.getProtocol().getSessionId())) {
+            return;
+        }
+        if (telemetry.getState() == TakuNativeState.CLOSED
+                && !telemetry.isClientRewardObserved()) {
+            unrewardedCloseTelemetryPending = false;
+            failActiveUnlock(
+                    generation,
+                    targetEpisode,
+                    telemetryDelivered
+                            ? "广告未完整观看，请重新观看"
+                            : "广告状态同步失败，请稍后重试");
             return;
         }
         if (telemetry.getState() == TakuNativeState.ERROR) {
@@ -1209,6 +1225,10 @@ public class DramaPlayerActivity extends Activity {
         if (!isActiveUnlock(generation, targetEpisode)) {
             return;
         }
+        if (isUnrewardedCloseSettlementPending()) {
+            Log.i(TAG, "deferring unlock failure until unrewarded CLOSED telemetry settles");
+            return;
+        }
         IDJXDramaUnlockListener.CustomAdCallback callback = activeUnlockCallback;
         boolean pageGateUnlock = activePageGateUnlock;
         boolean sdkOwnedUnlock = callback != null && !pageGateUnlock;
@@ -1258,6 +1278,7 @@ public class DramaPlayerActivity extends Activity {
         activeSessionId = null;
         activeProviderShowId = null;
         activeSessionPollOnly = false;
+        unrewardedCloseTelemetryPending = false;
         callbackShowSessionId = null;
         callbackShowId = null;
         pollAttempt = 0;
@@ -1297,6 +1318,10 @@ public class DramaPlayerActivity extends Activity {
         return activeUnlockCallback != null || activePageGateUnlock;
     }
 
+    private boolean isUnrewardedCloseSettlementPending() {
+        return unrewardedCloseTelemetryPending && hasActiveUnlock();
+    }
+
     private boolean isActiveAd(long generation, int targetEpisode, String expectedSessionId,
                                String expectedShowId) {
         return isActiveUnlock(generation, targetEpisode) && activeSessionId != null
@@ -1323,6 +1348,10 @@ public class DramaPlayerActivity extends Activity {
 
     @Override
     public void onBackPressed() {
+        if (unrewardedCloseTelemetryPending && hasActiveUnlock()) {
+            Toast.makeText(this, "广告状态同步中，请稍候", Toast.LENGTH_SHORT).show();
+            return;
+        }
         if (hasActiveUnlock()) {
             Log.i(TAG, "cancelled active unlock from host Back");
             boolean pageGateUnlock = activePageGateUnlock;

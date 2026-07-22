@@ -31,10 +31,10 @@
         <view v-if="!currentVideoUrl" class="content-placeholder">
           <uni-icons type="videocam" size="44" color="#fff" />
           <view class="placeholder-title">
-            {{ pangleReady ? '播放器已就绪' : '当前剧集暂不可播放' }}
+            {{ nativePlayerPlaceholder.title }}
           </view>
           <view class="placeholder-desc">
-            {{ pangleReady ? '正在打开剧集' : '请稍后再试' }}
+            {{ nativePlayerPlaceholder.description }}
           </view>
         </view>
         <view class="episode-badge">第{{ currentEpisode }}集</view>
@@ -149,6 +149,10 @@
     openPangleDramaPlayer,
   } from '@/pages/drama/services/pangle-content';
   import {
+    nativePlayerPlaceholderCopy,
+    transitionNativePlayerPhase,
+  } from '@/pages/drama/services/native-player-presentation';
+  import {
     acquireAdSessionOwnership,
     adSessionOrchestrator,
     recoverPendingAdSessions,
@@ -170,6 +174,7 @@
   const unlocking = ref(false);
   const videoErrored = ref(false);
   const pangleReady = ref(false);
+  const nativePlayerPhase = ref('IDLE');
   const pendingVerificationSessions = new Set();
   const userStore = sheep.$store('user');
   const pageAsyncGuard = createDramaPageAsyncGuard();
@@ -208,6 +213,10 @@
       !locked.value
     );
   });
+
+  const nativePlayerPlaceholder = computed(() =>
+    nativePlayerPlaceholderCopy(pangleReady.value, nativePlayerPhase.value),
+  );
 
   const unlockRangeText = computed(() => {
     return currentEpisode.value;
@@ -694,6 +703,7 @@
       if (!consentGranted) {
         return { skipped: true, reason: 'privacy-consent-declined' };
       }
+      nativePlayerPhase.value = transitionNativePlayerPhase(nativePlayerPhase.value, 'LAUNCH');
       const opened = await runNativeActivityPresentation(() =>
         openPangleDramaPlayer({
           drama: drama.value,
@@ -706,6 +716,7 @@
       );
       assertPageRequestCurrent(playerRequest);
       if (opened?.opened) {
+        nativePlayerPhase.value = transitionNativePlayerPhase(nativePlayerPhase.value, 'ACK');
         saveHistory(drama.value.id, targetEpisode);
       }
       return opened;
@@ -716,6 +727,7 @@
       ) {
         return { skipped: true, reason: 'stale-page-context' };
       }
+      nativePlayerPhase.value = transitionNativePlayerPhase(nativePlayerPhase.value, 'FAIL');
       if (pendingRawPlaybackEpisode === targetEpisode) {
         pendingRawPlaybackEpisode = null;
       }
@@ -956,6 +968,7 @@
       pageHasShown = true;
       return;
     }
+    nativePlayerPhase.value = transitionNativePlayerPhase(nativePlayerPhase.value, 'RETURN');
     if (pageAsyncGuard.isPresenting()) {
       foregroundSyncPending = true;
       return;
@@ -986,6 +999,7 @@
     cancelPendingDramaRewardedVideoAd();
     foregroundSyncPending = false;
     pendingRawPlaybackEpisode = null;
+    nativePlayerPhase.value = transitionNativePlayerPhase(nativePlayerPhase.value, 'RESET');
     pageAsyncGuard.setVisible(false);
     pageAsyncGuard.deactivate();
   });
@@ -997,6 +1011,7 @@
     videoErrored.value = false;
     pendingRawPlaybackEpisode = null;
     activePlaybackEpisode.value = null;
+    nativePlayerPhase.value = transitionNativePlayerPhase(nativePlayerPhase.value, 'RESET');
   });
 
   watch(
@@ -1011,6 +1026,7 @@
       grantedEpisodeNos.value = [];
       pendingRawPlaybackEpisode = null;
       activePlaybackEpisode.value = null;
+      nativePlayerPhase.value = transitionNativePlayerPhase(nativePlayerPhase.value, 'RESET');
       if (!pageAsyncGuard.isVisible()) {
         return;
       }

@@ -142,29 +142,41 @@ test('native player ends an unrewarded close without entering reward verificatio
     'private void scheduleNextPoll',
   );
 
-  const unrewardedDecision = telemetryFlow.indexOf(
+  const telemetryRecord = telemetryFlow.indexOf('nativeApiClient.recordTelemetry(telemetry');
+  const prematureRelease = telemetryFlow.indexOf('failActiveUnlock(', telemetryRecord);
+  const pendingGuard = telemetryFlow.indexOf('unrewardedCloseTelemetryPending = true');
+  const recordedUnrewardedBranch = terminalFlow.indexOf(
     'telemetry.getState() == TakuNativeState.CLOSED\n                && !telemetry.isClientRewardObserved()',
   );
-  const telemetryRecord = telemetryFlow.indexOf('nativeApiClient.recordTelemetry(telemetry');
-  const releaseBranch = telemetryFlow.indexOf('if (unrewardedClose)', telemetryRecord);
-  const deferredRelease = telemetryFlow.indexOf('handler.post(', releaseBranch);
-  const failUnlock = telemetryFlow.indexOf('failActiveUnlock(', deferredRelease);
+  const failUnlock = terminalFlow.indexOf('failActiveUnlock(', recordedUnrewardedBranch);
   const rewardedClosedBranch = terminalFlow.indexOf(
     'telemetry.getState() == TakuNativeState.CLOSED\n                && telemetry.isClientRewardObserved()',
   );
   const verificationPoll = terminalFlow.indexOf('scheduleNextPoll(', rewardedClosedBranch);
 
-  assert.notEqual(
-    unrewardedDecision,
-    -1,
-    'CLOSED telemetry must distinguish a close before the reward callback',
-  );
   assert.notEqual(telemetryRecord, -1, 'the cancellation event must still be queued for telemetry');
-  assert.notEqual(releaseBranch, -1, 'the cancellation decision must run after queuing telemetry');
-  assert.notEqual(deferredRelease, -1, 'unlock release must run after the SDK callback unwinds');
-  assert.notEqual(failUnlock, -1, 'an unrewarded close must release the active unlock');
+  assert.ok(
+    pendingGuard !== -1 && pendingGuard < telemetryRecord,
+    'host exit must be guarded before terminal telemetry is queued',
+  );
+  assert.equal(
+    prematureRelease,
+    -1,
+    'an unrewarded close must not release the Activity before terminal telemetry settles',
+  );
+  assert.notEqual(
+    recordedUnrewardedBranch,
+    -1,
+    'the settled telemetry callback must recognize an unrewarded close',
+  );
+  assert.notEqual(failUnlock, -1, 'settled unrewarded telemetry must release the active unlock');
   assert.match(
-    telemetryFlow,
+    terminalFlow,
+    /unrewardedCloseTelemetryPending = false;[\s\S]*?failActiveUnlock\(/,
+    'the callback must disarm the host Back guard before releasing the unlock',
+  );
+  assert.match(
+    terminalFlow,
     /"广告未完整观看，请重新观看"/,
     'an unrewarded close must use the stable device-verification message',
   );
@@ -174,12 +186,26 @@ test('native player ends an unrewarded close without entering reward verificatio
     'only a close with an observed reward may enter signed verification',
   );
   assert.notEqual(verificationPoll, -1, 'a rewarded close must retain signed-server polling');
-  assert.ok(
-    unrewardedDecision < telemetryRecord &&
-      telemetryRecord < releaseBranch &&
-      releaseBranch < deferredRelease &&
-      deferredRelease < failUnlock,
-    'the unrewarded close must be recorded and then released without waiting for HTTP',
+  assert.ok(recordedUnrewardedBranch < failUnlock);
+  assert.match(
+    player,
+    /onBackPressed\(\)[\s\S]*?unrewardedCloseTelemetryPending && hasActiveUnlock\(\)[\s\S]*?广告状态同步中，请稍候[\s\S]*?return;[\s\S]*?if \(hasActiveUnlock\(\)\)/,
+    'Back must not release the Activity while an unrewarded CLOSED event is settling',
+  );
+  assert.match(
+    player,
+    /private void clearActiveUnlock\(\)[\s\S]*?unrewardedCloseTelemetryPending = false;/,
+    'every unlock cleanup path must clear the terminal telemetry Back guard',
+  );
+  assert.match(
+    player,
+    /private void finishHostActivity\(\) \{[\s\S]*?isUnrewardedCloseSettlementPending\(\)[\s\S]*?return;[\s\S]*?super\.finish\(\)/,
+    'all explicit host exits must wait for unrewarded CLOSED settlement',
+  );
+  assert.match(
+    player,
+    /private void failActiveUnlock[\s\S]*?isActiveUnlock[\s\S]*?isUnrewardedCloseSettlementPending\(\)[\s\S]*?return;[\s\S]*?clearActiveUnlock\(\)/,
+    'all unlock failure paths must wait for unrewarded CLOSED settlement',
   );
   assert.match(
     player,
