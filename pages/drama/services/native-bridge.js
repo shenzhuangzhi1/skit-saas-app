@@ -29,7 +29,13 @@ const NATIVE_FIELDS = new Set([
   'closed',
 ]);
 const NATIVE_STATES = new Set(['LOADING', 'LOADED', 'SHOWING', 'CLOSED', 'ERROR']);
-const ERROR_FAILURE_REASONS = new Set(['NO_FILL', 'SDK_FAILURE']);
+const ERROR_FAILURE_REASONS = new Set([
+  'NO_FILL',
+  'SDK_FAILURE',
+  'PRIVACY_CONSENT_REQUIRED',
+  'PANGLE_INIT_FAILED',
+  'TAKU_INIT_FAILED',
+]);
 
 function requireSafeText(value, label) {
   const text = String(value ?? '');

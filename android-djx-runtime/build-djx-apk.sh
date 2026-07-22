@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 RUNTIME_DIR="$ROOT_DIR/android-djx-runtime"
 APP_DIR="$RUNTIME_DIR/app"
+TAKU_BUNDLE_LOCK="$RUNTIME_DIR/taku-adapter-bundle.lock.json"
+TAKU_BUNDLE_VERIFIER="$RUNTIME_DIR/verify-taku-adapter-bundle.mjs"
 DEFAULT_H5_DIR="$ROOT_DIR/unpackage/dist/build/h5-android-runtime"
 H5_DIR="${H5_DIR:-$DEFAULT_H5_DIR}"
 GRADLE_VERSION="${GRADLE_VERSION:-8.10.2}"
@@ -12,6 +14,12 @@ GRADLE_ZIP="$RUNTIME_DIR/.gradle-dist/gradle-$GRADLE_VERSION-bin.zip"
 JAVA_HOME="${JAVA_HOME:-$(/usr/libexec/java_home -v 17)}"
 ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 export JAVA_HOME ANDROID_HOME
+
+node "$TAKU_BUNDLE_VERIFIER" \
+  --mode source \
+  --manifest "$TAKU_BUNDLE_LOCK" \
+  --bundle-dir "$APP_DIR/libs/taku" \
+  --keep-file "$APP_DIR/src/main/res/raw/keep.xml"
 
 PROFILE_CODE="${SKIT_PROFILE_CODE:-${SKIT_AGENT_CODE:-}}"
 if [[ ! "$PROFILE_CODE" =~ ^[A-Z0-9_-]{3,32}$ ]]; then
@@ -311,6 +319,10 @@ else
     SKIT_PRODUCTION_PROFILE="$PROFILE_FILE" \
     SKIT_ALLOW_DEBUG_RUNTIME_DEFAULTS=1 \
     "$RUNTIME_DIR/verify-production-apk.sh"
+fi
+if [[ -n "${SKIT_REUSABLE_PACKAGE_GATE:-}" ]]; then
+  APK_FILE="$ROOT_DIR/dist/$OUTPUT_NAME" \
+    "$RUNTIME_DIR/run-reusable-package-gate.sh"
 fi
 echo "profile=$PROFILE_ID"
 echo "profile_code=$PROFILE_CODE profile_version=$PROFILE_VERSION"

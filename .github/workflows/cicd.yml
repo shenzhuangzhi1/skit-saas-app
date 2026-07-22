@@ -51,6 +51,14 @@ jobs:
       - name: Enforce Skit member identity boundary
         run: node scripts/check-member-identity-boundary.mjs
 
+      - name: Verify locked official Taku adapter bundle
+        run: |
+          node android-djx-runtime/verify-taku-adapter-bundle.mjs \
+            --mode source \
+            --manifest android-djx-runtime/taku-adapter-bundle.lock.json \
+            --bundle-dir android-djx-runtime/app/libs/taku \
+            --keep-file android-djx-runtime/app/src/main/res/raw/keep.xml
+
       - name: Enforce server-verified ad session boundary
         run: node --test tests/app/*.test.mjs
 
@@ -62,7 +70,7 @@ jobs:
           printf '%s\n' '{}' > "${DEBUG_PANGLE_SETTINGS}"
           SKIT_PANGLE_SETTINGS_JSON="${DEBUG_PANGLE_SETTINGS}" \
             gradle --no-daemon -p android-djx-runtime \
-            :app:testDebugUnitTest :app:assembleDebug
+            :app:checkDebugDuplicateClasses :app:testDebugUnitTest :app:assembleDebug
           jar tf android-djx-runtime/app/build/outputs/apk/debug/app-debug.apk \
             > "${RUNNER_TEMP}/skit-debug-apk-entries.txt"
           grep -Fxq 'assets/www/index.html' "${RUNNER_TEMP}/skit-debug-apk-entries.txt"

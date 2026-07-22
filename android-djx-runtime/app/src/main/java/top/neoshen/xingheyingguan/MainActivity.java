@@ -47,6 +47,8 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import top.neoshen.xingheyingguan.ad.ThirdPartySdkBootstrap;
+
 public class MainActivity extends Activity {
     private static final String TAG = "SkitDjxRuntime";
     private static final String ASSET_HOST = "127.0.0.1";
@@ -56,13 +58,15 @@ public class MainActivity extends Activity {
     private BridgeOriginGuard originGuard;
     private SkitPangleDramaBridge pangleDramaBridge;
     private SkitTakuAdBridge takuAdBridge;
+    private SkitPrivacyConsentBridge privacyConsentBridge;
     private SkitRuntimeUpdateBridge runtimeUpdateBridge;
+    private ThirdPartySdkBootstrap thirdPartySdkBootstrap;
     private boolean nativeMessageListenerAttached;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        TakuRewardedAdController.initialize(getApplicationContext());
+        thirdPartySdkBootstrap = createThirdPartySdkBootstrap();
         assetServer = new LocalAssetServer(getAssets(), "www", new File(getFilesDir(), "skit-web-update"));
         assetServer.start();
 
@@ -155,6 +159,10 @@ public class MainActivity extends Activity {
             assetServer.close();
             assetServer = null;
         }
+        if (thirdPartySdkBootstrap != null) {
+            thirdPartySdkBootstrap.close();
+            thirdPartySdkBootstrap = null;
+        }
         super.onDestroy();
     }
 
@@ -165,8 +173,12 @@ public class MainActivity extends Activity {
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
             throw new IllegalStateException("Secure native WebView messaging is unavailable");
         }
-        pangleDramaBridge = new SkitPangleDramaBridge(this, webView, originGuard);
-        takuAdBridge = new SkitTakuAdBridge(this, webView, originGuard);
+        pangleDramaBridge = new SkitPangleDramaBridge(
+                this, webView, originGuard, thirdPartySdkBootstrap);
+        takuAdBridge = new SkitTakuAdBridge(
+                this, webView, originGuard, thirdPartySdkBootstrap);
+        privacyConsentBridge = new SkitPrivacyConsentBridge(
+                this, webView, originGuard, thirdPartySdkBootstrap);
         runtimeUpdateBridge = new SkitRuntimeUpdateBridge(this, webView, originGuard);
         WebViewCompat.addWebMessageListener(
                 webView,
@@ -200,6 +212,9 @@ public class MainActivity extends Activity {
                 case "TAKU":
                     takuAdBridge.postMessage(rawMessage);
                     break;
+                case "PRIVACY":
+                    privacyConsentBridge.postMessage(rawMessage);
+                    break;
                 case "RUNTIME_UPDATE":
                     runtimeUpdateBridge.postMessage(rawMessage);
                     break;
@@ -221,9 +236,52 @@ public class MainActivity extends Activity {
             takuAdBridge.destroy();
             takuAdBridge = null;
         }
+        if (pangleDramaBridge != null) {
+            pangleDramaBridge.destroy();
+        }
         pangleDramaBridge = null;
+        privacyConsentBridge = null;
         runtimeUpdateBridge = null;
         nativeMessageListenerAttached = false;
+    }
+
+    private ThirdPartySdkBootstrap createThirdPartySdkBootstrap() {
+        return new ThirdPartySdkBootstrap(new ThirdPartySdkBootstrap.Starter() {
+            @Override
+            public void startPangle(ThirdPartySdkBootstrap.Completion completion) {
+                PangleAdSdkInitializer.ensureStarted(
+                        getApplicationContext(),
+                        BuildConfig.DEBUG,
+                        new PangleAdSdkInitializer.Callback() {
+                            @Override
+                            public void onSuccess() {
+                                completion.onSuccess();
+                            }
+
+                            @Override
+                            public void onFailure(int code, String message) {
+                                completion.onFailure(code, "Pangle initialization failed");
+                            }
+                        });
+            }
+
+            @Override
+            public void startTaku(ThirdPartySdkBootstrap.Completion completion) {
+                try {
+                    TakuRewardedAdController.initializeOrThrow(getApplicationContext());
+                    completion.onSuccess();
+                } catch (Throwable failure) {
+                    Log.w(TAG, "Taku initialization failed: type="
+                            + safeThrowableType(failure));
+                    completion.onFailure(-703, "Taku initialization failed");
+                }
+            }
+        });
+    }
+
+    private static String safeThrowableType(Throwable error) {
+        String type = error == null ? "<none>" : error.getClass().getSimpleName();
+        return type.matches("[A-Za-z0-9_$]{1,64}") ? type : "<invalid>";
     }
 
     private void openExternal(Uri uri) {

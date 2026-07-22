@@ -332,6 +332,45 @@ test('Taku bridge exposes no-fill as a structured error after recording FAILED',
   }
 });
 
+test('maps bounded bootstrap failure hints to stable H5 errors without widening telemetry', async () => {
+  const originalUni = globalThis.uni;
+  const mappings = [
+    ['PRIVACY_CONSENT_REQUIRED', 'PRIVACY_CONSENT_REQUIRED'],
+    ['PANGLE_INIT_FAILED', 'PANGLE_INIT_FAILED'],
+    ['TAKU_INIT_FAILED', 'TAKU_INIT_FAILED'],
+  ];
+  try {
+    for (const [failureReason, expectedCode] of mappings) {
+      globalThis.uni = {
+        requireNativePlugin() {
+          return {
+            showRewardedVideo(_payload, callback) {
+              queueMicrotask(() =>
+                callback(eventWithFailureReason({ nativeState: 'ERROR' }, failureReason)),
+              );
+            },
+          };
+        },
+      };
+      const taku = await importTakuSource();
+      const clientEvents = [];
+      await assert.rejects(
+        () =>
+          taku.showRewardedVideoAd(serverProtocol, {
+            onClientEvent: async (clientEvent) => clientEvents.push(clientEvent),
+            timeoutMs: 100,
+          }),
+        (error) => error?.code === expectedCode && !!error?.terminalTelemetry,
+      );
+      assert.equal(clientEvents.length, 1);
+      assert.equal(clientEvents[0].eventType, 'FAILED');
+      assert.equal(Object.hasOwn(clientEvents[0], 'failureReason'), false);
+    }
+  } finally {
+    globalThis.uni = originalUni;
+  }
+});
+
 test('runtime failure hints remain non-enumerable and callback-scoped', () => {
   const runtime = readFileSync(resolve(root, 'android-djx-runtime/djx-runtime.js'), 'utf8');
   assert.match(runtime, /__SkitNativeBridgeFailureHint/);
@@ -382,6 +421,22 @@ test('runtime behavior keeps the 11-field callback compatible and never leaks hi
   runtimeWindow.__SkitNativeBridgeFailureHint(secondId, 'Return Ad is empty.');
   runtimeWindow.__SkitNativeBridgeEmit(secondId, JSON.stringify(rawError), true);
   assert.equal(Object.prototype.hasOwnProperty.call(secondResult, 'failureReason'), false);
+
+  for (const reason of [
+    'PRIVACY_CONSENT_REQUIRED',
+    'PANGLE_INIT_FAILED',
+    'TAKU_INIT_FAILED',
+  ]) {
+    let result;
+    plugin.showRewardedVideo({}, (value) => {
+      result = value;
+    });
+    const id = posts.at(-1).id;
+    runtimeWindow.__SkitNativeBridgeFailureHint(id, reason);
+    runtimeWindow.__SkitNativeBridgeEmit(id, JSON.stringify(rawError), true);
+    assert.equal(result.failureReason, reason);
+    assert.equal(Object.getOwnPropertyDescriptor(result, 'failureReason')?.enumerable, false);
+  }
 });
 
 test('Taku bridge forwards only the server protocol and streams backend client events', async () => {

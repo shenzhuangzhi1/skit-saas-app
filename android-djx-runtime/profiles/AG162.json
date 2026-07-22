@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "profileVersion": 2,
+  "profileVersion": 3,
   "profileCode": "AG162",
   "tenantId": "AG162",
   "profileId": "ag162-cn-production",
@@ -12,13 +12,13 @@
     "contentAppId": "1037672",
     "settingsAsset": "SDK_Setting.json",
     "settingsSource": "nativeplugins/SkitPangleDrama/android/assets/SDK_Setting_5850994.json",
-    "adSdkVersion": "7.1.0.5",
+    "adSdkVersion": "7.6.1.1",
     "contentSdkVersion": "2.9.0.9"
   },
   "taku": {
     "appId": "a6a50ac83df403",
     "rewardPlacementId": "b6a5c424bbbb6c",
-    "sdkVersion": "6.6.22"
+    "sdkVersion": "6.6.30"
   },
   "outputBaseName": "ag162"
 }

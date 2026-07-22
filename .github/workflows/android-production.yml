@@ -69,6 +69,14 @@ jobs:
       - name: Install locked H5 dependencies
         run: npm ci
 
+      - name: Verify locked official Taku adapter bundle
+        run: |
+          node android-djx-runtime/verify-taku-adapter-bundle.mjs \
+            --mode source \
+            --manifest android-djx-runtime/taku-adapter-bundle.lock.json \
+            --bundle-dir android-djx-runtime/app/libs/taku \
+            --keep-file android-djx-runtime/app/src/main/res/raw/keep.xml
+
       - name: Build and verify production APK
         env:
           SKIT_BUILD_TYPE: release

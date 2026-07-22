@@ -16,6 +16,8 @@
    `node android-djx-runtime/resolve-build-profile.mjs --profile-code <PROFILE_CODE> --format json`
    校验后提交。然后在 Actions 中运行 `Android production APK`，输入完全相同的 code。
 
+当前 `AG162` 的 `profileVersion: 3` 对应 Taku 6.6.30 与 Pangle/GroMore 7.6.1.1。SDK 版本升级必须同时更新官方 bundle lock、源码/APK verifier 证据并递增 profileVersion。不得在 profile 中加入 `networkFirmId`、adsource ID 或固定供应商选择；这些值由 Taku 服务端动态下发。
+
 档案只保存会被打进 APK 的公开身份，不保存 Taku App Key、穿山甲 Setting 正文、APK
 签名私钥、热更新私钥、密码或后台广告平台 Secret。Secret 只进入该 profile 对应的 GitHub
 Environment。更新普通页面/业务逻辑无需改档案，直接运行该 profile 的热更新 workflow。

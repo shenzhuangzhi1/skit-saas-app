@@ -116,7 +116,11 @@ test('native Taku bridge terminates callbacks on protocol or startup errors', ()
   assert.match(showFlow, /catch \(Throwable error\)[\s\S]*?emitTerminalError\(id, protocol\)/);
   assert.match(
     bridge,
-    /private void emitTerminalError[\s\S]*?TakuNativeState\.ERROR[\s\S]*?emit\(id, result, true, TakuFailureReason\.SDK_FAILURE\)/,
+    /private void emitTerminalError\(String id, AdSessionProtocol protocol\)\s*\{\s*emitTerminalError\(id, protocol, TakuFailureReason\.SDK_FAILURE\)/,
+  );
+  assert.match(
+    bridge,
+    /private void emitTerminalError\(String id, AdSessionProtocol protocol,[\s\S]*?TakuNativeState\.ERROR[\s\S]*?emit\(id, result, true, failureReason\)/,
   );
 });
 

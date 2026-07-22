@@ -158,6 +158,7 @@
     cancelPendingDramaRewardedVideoAd,
     showDramaRewardedVideoAd,
   } from '@/pages/drama/services/reward-ad';
+  import { ensureAdPrivacyConsent } from '@/pages/drama/services/privacy-consent';
 
   const drama = ref(getDramaById());
   const currentEpisode = ref(1);
@@ -610,6 +611,15 @@
     if (error?.code === 'NATIVE_AD_NO_FILL') {
       return '当前广告库存不足，请稍后再试';
     }
+    if (error?.code === 'PRIVACY_CONSENT_REQUIRED') {
+      return '请先同意隐私与广告服务后再观看广告';
+    }
+    if (error?.code === 'PANGLE_INIT_FAILED') {
+      return '内容与广告服务初始化失败，请重启应用后重试';
+    }
+    if (error?.code === 'TAKU_INIT_FAILED') {
+      return '广告服务初始化失败，请稍后重试';
+    }
     if (error?.code === 'REWARD_REJECTED' || error?.code === 'REWARD_VERIFY_TIMEOUT') {
       return '本次奖励未到账，请重新观看广告';
     }
@@ -679,6 +689,11 @@
       }
 
       assertPageRequestCurrent(playerRequest);
+      const consentGranted = await ensureAdPrivacyConsent(identity);
+      assertPlayerLaunchCurrent();
+      if (!consentGranted) {
+        return { skipped: true, reason: 'privacy-consent-declined' };
+      }
       const opened = await runNativeActivityPresentation(() =>
         openPangleDramaPlayer({
           drama: drama.value,
@@ -747,6 +762,12 @@
       const identity = currentIdentity();
       const dramaId = resolveServerDramaId();
       unlockRequest = beginPageRequest('unlock', identity, dramaId);
+      const consentGranted = await ensureAdPrivacyConsent(identity);
+      assertPageRequestCurrent(unlockRequest);
+      if (!consentGranted) {
+        uni.showToast({ title: '未同意隐私与广告服务，本集仍保持锁定', icon: 'none' });
+        return;
+      }
       releaseUnlockOwnership = await acquireAdSessionOwnership({
         ...identity,
         dramaId,

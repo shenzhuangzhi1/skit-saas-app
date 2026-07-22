@@ -8,7 +8,14 @@
 
     window.__SkitNativeBridgeFailureHint = function (id, reason) {
       if (!callbacks[id]) return;
-      if (reason !== 'NO_FILL' && reason !== 'SDK_FAILURE') return;
+      if (
+        reason !== 'NO_FILL' &&
+        reason !== 'SDK_FAILURE' &&
+        reason !== 'PRIVACY_CONSENT_REQUIRED' &&
+        reason !== 'PANGLE_INIT_FAILED' &&
+        reason !== 'TAKU_INIT_FAILED'
+      )
+        return;
       failureHints[id] = reason;
     };
 
@@ -26,7 +33,11 @@
       if (
         terminal === true &&
         result.nativeState === 'ERROR' &&
-        (failureHint === 'NO_FILL' || failureHint === 'SDK_FAILURE')
+        (failureHint === 'NO_FILL' ||
+          failureHint === 'SDK_FAILURE' ||
+          failureHint === 'PRIVACY_CONSENT_REQUIRED' ||
+          failureHint === 'PANGLE_INIT_FAILED' ||
+          failureHint === 'TAKU_INIT_FAILED')
       ) {
         Object.defineProperty(result, 'failureReason', {
           value: failureHint,
@@ -81,6 +92,10 @@
       callNative('RUNTIME_UPDATE', 'SkitRuntimeUpdate', method, payload, callback);
     }
 
+    function callPrivacy(method, payload, callback) {
+      callNative('PRIVACY', 'SkitPrivacyConsent', method, payload, callback);
+    }
+
     var originalRequire = window.uni.requireNativePlugin;
     window.uni.requireNativePlugin = function (name) {
       if (name === 'SkitPangleDrama') {
@@ -131,6 +146,13 @@
           },
           installWebBundle: function (payload, callback) {
             callRuntimeUpdate('installWebBundle', payload, callback);
+          },
+        };
+      }
+      if (name === 'SkitPrivacyConsent') {
+        return {
+          setAdPrivacyConsent: function (payload, callback) {
+            callPrivacy('setAdPrivacyConsent', payload, callback);
           },
         };
       }

@@ -1,0 +1,250 @@
+{
+  "schemaVersion": 1,
+  "bundleVersion": "20260722071201",
+  "officialZipSha256": "16290b41af3c5a06d50edbcfd685238970c5db19697f594de721e8cd97949adf",
+  "keepXml": {
+    "path": "app/src/main/res/raw/keep.xml",
+    "sha256": "b7013883588142b175ae10a53fef2598de82a1f2186ca6a80d7aa422f9001d90"
+  },
+  "sdkVersions": {
+    "takuCore": "6.6.30",
+    "takuAdx": "6.5.75",
+    "baidu": "9.450",
+    "gdt": "4.690.1560",
+    "kuaishou": "5.4.10.2",
+    "pangleGroMore": "7.6.1.1"
+  },
+  "forbiddenMergedPermissions": [
+    "android.permission.ACCESS_COARSE_LOCATION",
+    "android.permission.ACCESS_FINE_LOCATION",
+    "android.permission.GET_TASKS",
+    "android.permission.QUERY_ALL_PACKAGES",
+    "android.permission.READ_EXTERNAL_STORAGE",
+    "android.permission.READ_PHONE_STATE",
+    "android.permission.REQUEST_INSTALL_PACKAGES",
+    "android.permission.WRITE_EXTERNAL_STORAGE"
+  ],
+  "mergedComponentMarkers": [
+    "com.anythink.core.api.ATInitializationProvider",
+    "com.baidu.mobads.sdk.api.MobRewardVideoActivity",
+    "com.bytedance.sdk.openadsdk.core.component.reward.activity.TTRewardVideoActivity",
+    "com.kwad.sdk.api.proxy.app.KsRewardVideoActivity",
+    "com.qq.e.ads.RewardvideoPortraitADActivity",
+    "com.smartdigimkt.sdk.api.SDMInitializationProvider"
+  ],
+  "mergedResourceMarkers": [
+    "anythink_bk_gdt_file_path",
+    "anythink_bk_tt_file_path",
+    "anythink_privace_policy_layout",
+    "bd_ic_gift_box",
+    "gdt_file_path",
+    "ksad_reward_gift",
+    "sdm_myoffer_reward_icon",
+    "tt_adl_notification_layout"
+  ],
+  "apkClassMarkers": [
+    "Lcom/aegis/verbanr/VerbAnrHandler;",
+    "Lcom/anythink/core/api/ATSDK;",
+    "Lcom/anythink/network/adx/AdxATRewardedVideoAdapter;",
+    "Lcom/anythink/network/baidu/BaiduATRewardedVideoAdapter;",
+    "Lcom/anythink/network/gdt/GDTATRewardedVideoAdapter;",
+    "Lcom/anythink/network/ks/KSATRewardedVideoAdapter;",
+    "Lcom/anythink/network/toutiao/TTATRewardedVideoAdapter;",
+    "Lcom/anythink/rewardvideo/api/ATRewardVideoAd;",
+    "Lcom/baidu/mobads/sdk/api/RewardVideoAd;",
+    "Lcom/bytedance/sdk/openadsdk/TTAdSdk;",
+    "Lcom/kwad/sdk/api/KsRewardVideoAd;",
+    "Lcom/qq/e/ads/rewardvideo/RewardVideoAD;",
+    "Lcom/smartdigimkt/sdk/api/format/SDMRewardedVideoAd;"
+  ],
+  "artifacts": [
+    {
+      "file": "Baidu_MobAds_SDK-release_v9.450.aar",
+      "sha256": "2f1bd99a59b83e956c73473c322c7651784c00c99ab295fd8c562d9812c7cdff",
+      "jarEntries": [
+        { "path": "assets/bdxadsdk.jar", "sha256": "f52272ae2c05f29ff3f9e3ad30e8d623a24a17a4f481acc798a674a3f909d7ac" },
+        { "path": "classes.jar", "sha256": "295c6e327e98675ef93e6b1017f623e5403da12056339aa6533d028540f87f68" },
+        { "path": "libs/__xadsdk__proxy__final.jar", "sha256": "416604f5361d070fffa6e9381b724755b5861f68b3aa3d16e6cae747c6b348a3" }
+      ],
+      "classMarkers": ["com/baidu/mobads/sdk/api/RewardVideoAd.class"],
+      "dexMarkers": [],
+      "manifestMarkers": ["com.baidu.mobads.sdk.api.MobRewardVideoActivity"],
+      "resourceMarkers": ["res/drawable/bd_ic_gift_box.png"],
+      "nativeLibraries": []
+    },
+    {
+      "file": "GDTSDK.unionNormal.4.690.1560.aar",
+      "sha256": "7f6d3b412ca34968cda186a1022330ce69dc05336973cb01270125335e9d7206",
+      "jarEntries": [
+        { "path": "assets/gdt_plugin/gdtadv2.jar", "sha256": "3affc62a55459a19ef524a3bc320e8ddbd2243298d603378355ef9ab208ca517" },
+        { "path": "classes.jar", "sha256": "28a1a31678c196c1bba68f53f7a5fda6f004533e01d5ab1c3d58b69ab8b285a7" }
+      ],
+      "classMarkers": ["com/qq/e/ads/rewardvideo/RewardVideoAD.class"],
+      "dexMarkers": [],
+      "manifestMarkers": ["com.qq.e.ads.RewardvideoPortraitADActivity"],
+      "resourceMarkers": ["res/xml/gdt_file_path.xml"],
+      "nativeLibraries": []
+    },
+    {
+      "file": "anythink_adx_sdk_kuying_6.5.75_necessary.aar",
+      "sha256": "18556ae241317ad7ec6567f561e8100f2d02a605877aaf5f7786fdfa4755c9c1",
+      "jarEntries": [
+        { "path": "classes.jar", "sha256": "4de9303263e86b2a43e30f7909c3e4d431d8c0575339a37390490d47f63765b9" }
+      ],
+      "classMarkers": ["com/smartdigimkt/sdk/api/format/SDMRewardedVideoAd.class"],
+      "dexMarkers": [],
+      "manifestMarkers": ["com.smartdigimkt.sdk.api.SDMInitializationProvider"],
+      "resourceMarkers": ["res/drawable/sdm_myoffer_reward_icon.png"],
+      "nativeLibraries": []
+    },
+    {
+      "file": "anythink_common_util_1.1.3.aar",
+      "sha256": "c0b668c24108f229bd620c892a86655b0aa9b1ee359c7cb6c46a36f1846b3409",
+      "jarEntries": [
+        { "path": "classes.jar", "sha256": "be0b12c65cd75a8bf5fbd5eaecbc736b4bcd5ff18828fc1ffebe46855fc3c81b" }
+      ],
+      "classMarkers": ["com/aegis/verbanr/VerbAnrHandler.class"],
+      "dexMarkers": [],
+      "manifestMarkers": [],
+      "resourceMarkers": [],
+      "nativeLibraries": [
+        "jni/arm64-v8a/libverbanr.so",
+        "jni/armeabi-v7a/libverbanr.so"
+      ]
+    },
+    {
+      "file": "anythink_core_6.6.30.aar",
+      "sha256": "05f1d63db3abdded4bc0b2c0989904e032486c82270be14ff0ae6f8ca3d461fc",
+      "jarEntries": [
+        { "path": "classes.jar", "sha256": "3322b369baa9ad0ec66399803654f2658dbd2262a6aa91c6513cb8cf733a5bc6" },
+        { "path": "libs/anythink_core.jar", "sha256": "8e07e0892f53256b0d6bdff85f56a38daefad7b1821810ab40762f9c3a17b6a8" }
+      ],
+      "classMarkers": [
+        "com/anythink/core/api/ATSDK.class",
+        "com/anythink/rewardvideo/api/ATRewardVideoAd.class"
+      ],
+      "dexMarkers": [],
+      "manifestMarkers": ["com.anythink.core.api.ATInitializationProvider"],
+      "resourceMarkers": ["res/layout/anythink_privace_policy_layout.xml"],
+      "nativeLibraries": []
+    },
+    {
+      "file": "anythink_network_adx_kuying_sdk_necessary_6.5.75.1.2.aar",
+      "sha256": "431677454ab746531f3089d0bc4d5e870161419845011cf824549d4eb3a96976",
+      "jarEntries": [
+        { "path": "classes.jar", "sha256": "912de4e68ceadeb8673e25f424af1f58c4a11eb5482e635e8047ba58d5ed40dc" }
+      ],
+      "classMarkers": ["com/anythink/network/adx/AdxATRewardedVideoAdapter.class"],
+      "dexMarkers": [],
+      "manifestMarkers": [],
+      "resourceMarkers": [],
+      "nativeLibraries": []
+    },
+    {
+      "file": "anythink_network_baidu_9.450.1.2.aar",
+      "sha256": "3a1899955fc55a9e11bfe12f628a0d88ef7b4fcddf4c4fa1e811d1eda35f98ca",
+      "jarEntries": [
+        { "path": "classes.jar", "sha256": "e2b585767d82357babd4fa979ce27c775a76348ded86c80b144afce0821b5b24" }
+      ],
+      "classMarkers": ["com/anythink/network/baidu/BaiduATRewardedVideoAdapter.class"],
+      "dexMarkers": [],
+      "manifestMarkers": [],
+      "resourceMarkers": [],
+      "nativeLibraries": []
+    },
+    {
+      "file": "anythink_network_csj_mix_7.6.1.1.1.0.aar",
+      "sha256": "f739a4f49ea85537555b1b736aa1cf7e52f696d1731e13dfeee2d5d89c80e3f3",
+      "jarEntries": [
+        { "path": "classes.jar", "sha256": "4132f68435344fc8057f27247d5a8fc8e5b9f57ddda09080fff53073fc658c95" }
+      ],
+      "classMarkers": ["com/anythink/network/toutiao/TTATRewardedVideoAdapter.class"],
+      "dexMarkers": [],
+      "manifestMarkers": ["com.bytedance.sdk.openadsdk.TTFileProvider"],
+      "resourceMarkers": ["res/xml/anythink_bk_tt_file_path.xml"],
+      "nativeLibraries": []
+    },
+    {
+      "file": "anythink_network_gdt_4.690.1560.1.2.aar",
+      "sha256": "7f34b507142f8a4417e699d46fc32dd756c35b092a5bbea5a6dbd1915eed3109",
+      "jarEntries": [
+        { "path": "classes.jar", "sha256": "3521f67411a400d61b93bc16d3ade785389ff02280470907df9ef000c4836590" }
+      ],
+      "classMarkers": ["com/anythink/network/gdt/GDTATRewardedVideoAdapter.class"],
+      "dexMarkers": [],
+      "manifestMarkers": ["com.qq.e.comm.GDTFileProvider"],
+      "resourceMarkers": ["res/xml/anythink_bk_gdt_file_path.xml"],
+      "nativeLibraries": []
+    },
+    {
+      "file": "anythink_network_kuaishou_5.4.10.2.1.1.aar",
+      "sha256": "69deb0289076336515611e562ec12ac60ceb99986b039c0cab9564a0880894e9",
+      "jarEntries": [
+        { "path": "classes.jar", "sha256": "6af19da7c5d3defcaf5dfa1c03f10c6eefac7dc2385a20ef57a0cbc0ad3d6d01" }
+      ],
+      "classMarkers": ["com/anythink/network/ks/KSATRewardedVideoAdapter.class"],
+      "dexMarkers": [],
+      "manifestMarkers": [],
+      "resourceMarkers": [],
+      "nativeLibraries": []
+    },
+    {
+      "file": "anythink_network_mobrain_mix_plus_7.6.1.1.1.0.aar",
+      "sha256": "39c2026077b0fae4330675b2a53b046ee1b36dc94583a0dcfec4c2d8f33c75ae",
+      "jarEntries": [
+        { "path": "assets/anythink/pl/46/6.6.21-7.6.1.1-0.jar", "sha256": "e63cfafa89a1f02cb101ad74b319506799108c195a72ba49acec4f0d97d152ae" },
+        { "path": "classes.jar", "sha256": "ef5e63be430a4dc10809b92de671e07dfb52f4236ab04559913c36fbd766ab90" }
+      ],
+      "classMarkers": [],
+      "dexMarkers": [
+        "Lcom/alex/AlexGromoreRewardedVideoAdapter;",
+        "Lcom/anythink/network/mobrain/MobrainATAdapter;",
+        "Lcom/anythink/network/mobrain/MobrainATRewardedVideoAdapter;"
+      ],
+      "manifestMarkers": ["com.bytedance.sdk.openadsdk.TTFileProvider"],
+      "resourceMarkers": ["res/xml/anythink_bk_tt_file_path.xml"],
+      "nativeLibraries": []
+    },
+    {
+      "file": "kssdk-ad-5.4.10.2-publishRelease-2d5f51e600.aar",
+      "sha256": "6e42ead9877944f5918b9a035a30dc0fd4cb15b226caf9535415f891f318ef5a",
+      "jarEntries": [
+        { "path": "classes.jar", "sha256": "dbbbe7fecc2ba13ba18e85637a32c6301fc52f961e68f61bbbb65df690eb7f1c" }
+      ],
+      "classMarkers": ["com/kwad/sdk/api/KsRewardVideoAd.class"],
+      "dexMarkers": [],
+      "manifestMarkers": ["com.kwad.sdk.api.proxy.app.KsRewardVideoActivity"],
+      "resourceMarkers": ["res/drawable-xxhdpi-v4/ksad_reward_gift.png"],
+      "nativeLibraries": [
+        "jni/arm64-v8a/libplt-base.so",
+        "jni/arm64-v8a/libsgcore.so",
+        "jni/arm64-v8a/libti-monitor.so",
+        "jni/armeabi-v7a/libplt-base.so",
+        "jni/armeabi-v7a/libsgcore.so",
+        "jni/armeabi-v7a/libti-monitor.so",
+        "jni/armeabi/libsgcore.so"
+      ]
+    },
+    {
+      "file": "open_ad_sdk_7.6.1.1.aar",
+      "sha256": "feb2ec8f716f99903a3a2a62422a496708cb4e8aaeafaeae0583199afc08b48b",
+      "jarEntries": [
+        { "path": "classes.jar", "sha256": "dc65fe1f548231fc8145c50833aa5354e1bbb8bdf94f7e005875d782a36cf6d2" }
+      ],
+      "classMarkers": ["com/bytedance/sdk/openadsdk/TTAdSdk.class"],
+      "dexMarkers": [],
+      "manifestMarkers": ["com.bytedance.sdk.openadsdk.core.component.reward.activity.TTRewardVideoActivity"],
+      "resourceMarkers": ["res/layout/tt_adl_notification_layout.xml"],
+      "nativeLibraries": [
+        "jni/arm64-v8a/libPglbizssdk_ml.so",
+        "jni/arm64-v8a/libavmdl_lite.so",
+        "jni/arm64-v8a/libpanglearmor.so",
+        "jni/arm64-v8a/libpangleflipped.so",
+        "jni/arm64-v8a/libtobEmbedEncrypt.so",
+        "jni/arm64-v8a/libtt_ugen_layout.so",
+        "jni/arm64-v8a/libttmplayer_lite.so",
+        "jni/armeabi-v7a/libpangleflipped.so"
+      ]
+    }
+  ]
+}

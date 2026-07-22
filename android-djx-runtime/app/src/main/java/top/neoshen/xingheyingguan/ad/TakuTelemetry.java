@@ -54,6 +54,15 @@ public final class TakuTelemetry {
         return adsourceId;
     }
 
+    public String getAdsourceAlias() {
+        return SafeEvidenceReference.of(adsourceId);
+    }
+
+    public String safeSourceCorrelation() {
+        return "networkFirmId=" + (networkFirmId == null ? "<none>" : networkFirmId)
+                + " adsourceAlias=" + getAdsourceAlias();
+    }
+
     public int getCallbackSequence() {
         return callbackSequence;
     }

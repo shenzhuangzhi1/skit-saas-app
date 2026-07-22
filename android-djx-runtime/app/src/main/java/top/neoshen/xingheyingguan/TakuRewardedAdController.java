@@ -48,7 +48,7 @@ final class TakuRewardedAdController {
         this.activity = activity;
     }
 
-    static synchronized void initialize(Context context) {
+    static synchronized void initializeOrThrow(Context context) {
         if (initialized) {
             return;
         }
@@ -67,6 +67,7 @@ final class TakuRewardedAdController {
             ATSDK.start();
         } catch (Throwable error) {
             logInternalFailure("sdk-start", error);
+            throw new IllegalStateException("Taku SDK start failed", error);
         }
         initialized = true;
         Log.i(TAG, "Taku SDK initialized: " + ATSDK.getSDKVersionName());
@@ -89,7 +90,9 @@ final class TakuRewardedAdController {
             throw new IllegalStateException("Another Taku session is active");
         }
 
-        initialize(activity);
+        if (!initialized) {
+            throw new IllegalStateException("Taku SDK must pass the consent-aware bootstrap first");
+        }
         String sdkRequestId = "native-" + protocol.getSessionId();
         ActiveSession session = new ActiveSession(
                 protocol, listener, showAuthorization,
@@ -266,7 +269,8 @@ final class TakuRewardedAdController {
                 + " closed=" + telemetry.isClosed()
                 + " sessionRef="
                 + SafeEvidenceReference.of(telemetry.getProtocol().getSessionId())
-                + " showRef=" + SafeEvidenceReference.of(telemetry.getProviderShowId()));
+                + " showRef=" + SafeEvidenceReference.of(telemetry.getProviderShowId())
+                + " " + telemetry.safeSourceCorrelation());
         session.listener.onTelemetry(telemetry);
     }
 

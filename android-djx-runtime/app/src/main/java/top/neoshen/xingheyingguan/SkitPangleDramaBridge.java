@@ -18,9 +18,11 @@ import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import top.neoshen.xingheyingguan.ad.NativePlayerGrant;
 import top.neoshen.xingheyingguan.ad.SafeEvidenceReference;
+import top.neoshen.xingheyingguan.ad.ThirdPartySdkBootstrap;
 
 public class SkitPangleDramaBridge {
     private static final String TAG = "SkitPangleDrama";
@@ -30,12 +32,18 @@ public class SkitPangleDramaBridge {
     private final Activity activity;
     private final WebView webView;
     private final BridgeOriginGuard originGuard;
+    private final ThirdPartySdkBootstrap thirdPartySdkBootstrap;
+    private final List<ThirdPartySdkBootstrap.Registration> bootstrapRegistrations =
+            new CopyOnWriteArrayList<>();
+    private volatile boolean destroyed;
 
     public SkitPangleDramaBridge(Activity activity, WebView webView,
-                                 BridgeOriginGuard originGuard) {
+                                 BridgeOriginGuard originGuard,
+                                 ThirdPartySdkBootstrap thirdPartySdkBootstrap) {
         this.activity = activity;
         this.webView = webView;
         this.originGuard = originGuard;
+        this.thirdPartySdkBootstrap = thirdPartySdkBootstrap;
     }
 
     public void postMessage(String rawMessage) {
@@ -177,17 +185,68 @@ public class SkitPangleDramaBridge {
 
     private void ensureStarted(JSONObject payload, String id, Runnable action) {
         boolean debug = BuildConfig.DEBUG && payload.optBoolean("debug", false);
-        PangleAdSdkInitializer.ensureStarted(activity.getApplicationContext(), debug, new PangleAdSdkInitializer.Callback() {
+        BootstrapRegistrationSlot registrationSlot = new BootstrapRegistrationSlot();
+        ThirdPartySdkBootstrap.Registration registration =
+                thirdPartySdkBootstrap.whenContentReady(new ThirdPartySdkBootstrap.Callback() {
             @Override
-            public void onSuccess() {
-                activity.runOnUiThread(() -> startContentSdk(debug, id, action));
+            public void onReady() {
+                if (!registrationSlot.complete()) {
+                    return;
+                }
+                activity.runOnUiThread(() -> {
+                    if (!destroyed) {
+                        startContentSdk(debug, id, action);
+                    }
+                });
             }
 
             @Override
-            public void onFailure(int code, String message) {
-                resolve(id, fail(code, message));
+            public void onBlocked(int code, String message) {
+                if (!registrationSlot.complete()) {
+                    return;
+                }
+                activity.runOnUiThread(() -> {
+                    if (!destroyed) {
+                        resolve(id, fail(code, message));
+                    }
+                });
             }
         });
+        registrationSlot.attach(registration);
+    }
+
+    void destroy() {
+        destroyed = true;
+        for (ThirdPartySdkBootstrap.Registration registration : bootstrapRegistrations) {
+            registration.cancel();
+        }
+        bootstrapRegistrations.clear();
+    }
+
+    private final class BootstrapRegistrationSlot {
+        private ThirdPartySdkBootstrap.Registration registration;
+        private boolean terminal;
+
+        private synchronized void attach(ThirdPartySdkBootstrap.Registration value) {
+            if (terminal || destroyed) {
+                value.cancel();
+                return;
+            }
+            registration = value;
+            bootstrapRegistrations.add(value);
+        }
+
+        private synchronized boolean complete() {
+            if (terminal) {
+                return false;
+            }
+            terminal = true;
+            if (registration != null) {
+                bootstrapRegistrations.remove(registration);
+                registration = null;
+            }
+            return !destroyed;
+        }
     }
 
     private void startContentSdk(boolean debug, String id, Runnable action) {

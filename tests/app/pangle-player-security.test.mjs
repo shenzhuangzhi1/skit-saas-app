@@ -24,9 +24,11 @@ async function importPangleContent(plugin) {
     }
   `);
   const dramaDataUrl = sourceUrl('export function cacheExternalDramas() {}');
+  const privacyUrl = sourceUrl('export async function ensureAdPrivacyConsent() { return true; }');
   const source = read('pages/drama/services/pangle-content.js')
     .replace("from './native-bridge';", `from ${JSON.stringify(nativeBridgeUrl)};`)
-    .replace("from '@/pages/drama/data';", `from ${JSON.stringify(dramaDataUrl)};`);
+    .replace("from '@/pages/drama/data';", `from ${JSON.stringify(dramaDataUrl)};`)
+    .replace("from './privacy-consent';", `from ${JSON.stringify(privacyUrl)};`);
   return import(sourceUrl(source));
 }
 

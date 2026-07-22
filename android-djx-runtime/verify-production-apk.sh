@@ -3,6 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 RUNTIME_DIR="$ROOT_DIR/android-djx-runtime"
+TAKU_BUNDLE_LOCK="$RUNTIME_DIR/taku-adapter-bundle.lock.json"
+TAKU_BUNDLE_VERIFIER="$RUNTIME_DIR/verify-taku-adapter-bundle.mjs"
 PROFILE_CODE="${SKIT_PROFILE_CODE:-${SKIT_AGENT_CODE:-}}"
 if [[ ! "$PROFILE_CODE" =~ ^[A-Z0-9_-]{3,32}$ ]]; then
   echo "Production APK verification failed: SKIT_PROFILE_CODE is missing or invalid" >&2
@@ -24,6 +26,13 @@ fail() {
   echo "Production APK verification failed: $*" >&2
   exit 1
 }
+
+node "$TAKU_BUNDLE_VERIFIER" \
+  --mode source \
+  --manifest "$TAKU_BUNDLE_LOCK" \
+  --bundle-dir "$RUNTIME_DIR/app/libs/taku" \
+  --keep-file "$RUNTIME_DIR/app/src/main/res/raw/keep.xml" || \
+  fail "locked Taku source bundle verification failed"
 
 profile_value() {
   python3 - "$PROFILE_FILE" "$1" <<'PY'
@@ -126,6 +135,12 @@ if [[ -z "$APKANALYZER" ]]; then
   APKANALYZER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name apkanalyzer 2>/dev/null | sort -V | tail -1)"
 fi
 [[ -x "$APKANALYZER" ]] || fail "apkanalyzer not found under $ANDROID_HOME/cmdline-tools"
+
+node "$TAKU_BUNDLE_VERIFIER" \
+  --mode apk \
+  --manifest "$TAKU_BUNDLE_LOCK" \
+  --apk "$APK_FILE" \
+  --aapt "$AAPT" || fail "locked Taku APK bundle verification failed"
 
 ACTUAL_PACKAGE="$($AAPT dump badging "$APK_FILE" | sed -n "s/^package: name='\([^']*\)'.*/\1/p" | head -1)"
 [[ "$ACTUAL_PACKAGE" == "$EXPECTED_PACKAGE" ]] || \

@@ -68,6 +68,72 @@ test('Taku SDK failures expose codes but never provider descriptions in producti
   assert.doesNotMatch(bridge, throwableSink);
 });
 
+test('third-party SDK bootstrap is explicit-consent gated and Pangle always wins initialization', () => {
+  const main = read(mainActivityPath);
+  const pangleBridge = read(playerBridgePath);
+  const takuBridge = read(
+    'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/SkitTakuAdBridge.java',
+  );
+  const privacyBridge = read(
+    'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/SkitPrivacyConsentBridge.java',
+  );
+  const runtimeJs = read('android-djx-runtime/djx-runtime.js');
+  const privacyService = read('pages/drama/services/privacy-consent.js');
+  const pangleInitializer = read(
+    'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/PangleAdSdkInitializer.java',
+  );
+  const pangleOwnership = read(
+    'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/PangleBootstrapOwnership.java',
+  );
+
+  const onCreateBody = main.slice(
+    main.indexOf('protected void onCreate'),
+    main.indexOf('private void attachNativeMessageChannel'),
+  );
+  assert.doesNotMatch(onCreateBody, /TakuRewardedAdController\.initializeOrThrow\s*\(/);
+  assert.match(main, /new ThirdPartySdkBootstrap\s*\(/);
+  assert.match(pangleInitializer, /bootstrapOwnership\.request\(globalReady\)/);
+  assert.match(pangleInitializer, /REJECT_UNOWNED_READY/);
+  assert.match(pangleInitializer, /completeSuccess\(attempt\)/);
+  assert.match(pangleOwnership, /globalReady[\s\S]*REJECT_UNOWNED_READY/);
+  assert.doesNotMatch(
+    pangleInitializer,
+    /if\s*\(\s*TTAdSdk\.(?:isInitSuccess|isSdkReady)[\s\S]{0,160}callback\.onSuccess\s*\(/,
+  );
+  assert.match(main, /startTaku[\s\S]*?TakuRewardedAdController\.initializeOrThrow\s*\(/);
+  assert.match(main, /case "PRIVACY"/);
+  assert.match(pangleBridge, /thirdPartySdkBootstrap\.whenContentReady\s*\(/);
+  assert.match(pangleBridge, /BootstrapRegistrationSlot/);
+  assert.match(pangleBridge, /if \(!destroyed\)[\s\S]*startContentSdk/);
+  assert.doesNotMatch(pangleBridge, /PangleAdSdkInitializer\.ensureStarted\s*\(/);
+  assert.match(takuBridge, /thirdPartySdkBootstrap\.whenRewardedAdReady\s*\(/);
+  assert.match(takuBridge, /onReady\(\)[\s\S]*activity\.runOnUiThread[\s\S]*startRewardedVideo/);
+  assert.match(takuBridge, /destroyed \|\| !id\.equals\(pendingCallbackId\)/);
+  assert.match(takuBridge, /rewardedAdController\.start\s*\(/);
+  assert.match(privacyBridge, /payload\.has\("granted"\)/);
+  assert.match(privacyBridge, /payload\.getBoolean\("granted"\)/);
+  assert.match(privacyBridge, /payload\.get\("consentVersion"\) instanceof Integer/);
+  assert.match(privacyBridge, /thirdPartySdkBootstrap\.deliverConsent\s*\(/);
+  assert.match(
+    takuBridge,
+    /CONSENT_REQUIRED_CODE[\s\S]*PRIVACY_CONSENT_REQUIRED[\s\S]*PANGLE_INIT_FAILED_CODE[\s\S]*PANGLE_INIT_FAILED[\s\S]*TAKU_INIT_FAILED_CODE[\s\S]*TAKU_INIT_FAILED/,
+  );
+  assert.doesNotMatch(takuBridge, /onBlocked\([\s\S]{0,500}emitTerminalError\(id, protocol\);/);
+  assert.match(runtimeJs, /SkitPrivacyConsent/);
+  assert.match(runtimeJs, /setAdPrivacyConsent/);
+  assert.match(privacyService, /typeof granted !== 'boolean'/);
+  assert.match(privacyService, /consentVersion:\s*CONSENT_RECORD_VERSION/);
+  assert.doesNotMatch(privacyService, /granted\s*:\s*true/);
+  assert.doesNotMatch(runtimeJs, /setAdPrivacyConsent\s*\(\s*\{\s*granted\s*:\s*true/);
+});
+
+test('native source logs dynamic network and one-way adsource correlation only', () => {
+  const source = read(controllerPath);
+  assert.match(source, /telemetry\.safeSourceCorrelation\s*\(\s*\)/);
+  assert.doesNotMatch(source, /Log\.[a-z]+\([^;]*telemetry\.getAdsourceId\s*\(/s);
+  assert.doesNotMatch(source, /Log\.[a-z]+\([^;]*adInfo\.getAdsourceId\s*\(/s);
+});
+
 test('network security keeps production HTTPS-only while debug permits local API hosts', () => {
   const productionPath = 'android-djx-runtime/app/src/main/res/xml/network_security_config.xml';
   const debugPath = 'android-djx-runtime/app/src/debug/res/xml/network_security_config.xml';
@@ -80,18 +146,18 @@ test('network security keeps production HTTPS-only while debug permits local API
   assert.match(debug, /base-config cleartextTrafficPermitted="true"/);
 });
 
-test('native package uses Taku ADX for ads and keeps Pangle dependencies content-only', () => {
+test('native package exposes only Taku reward calls over a locked multi-provider adapter bundle', () => {
   const gradle = read('android-djx-runtime/app/build.gradle');
   const architecture = read('docs/android-ad-mediation.md');
-  assert.match(gradle, /anythink_core_6\.6\.22\.aar/);
-  assert.match(gradle, /anythink_adx_sdk_kuying_6\.5\.75_necessary\.aar/);
+  const controller = read(controllerPath);
+  const lock = JSON.parse(read('android-djx-runtime/taku-adapter-bundle.lock.json'));
+  assert.equal(lock.artifacts.length, 13);
+  assert.match(gradle, /implementation files\(takuAars\)/);
   assert.match(gradle, /pangrowth-djx-sdk-lite/);
-  assert.doesNotMatch(gradle, /anythink_network_csj/);
-  assert.doesNotMatch(gradle, /anythink_network_kuaishou/);
-  assert.doesNotMatch(gradle, /anythink_network_gdt/);
-  assert.doesNotMatch(gradle, /anythink_network_baidu/);
-  assert.match(architecture, /Taku SDK .*Taku ADX/);
-  assert.match(architecture, /穿山甲 DJX 只提供短剧内容和播放器/);
+  assert.match(controller, /new ATRewardVideoAd\s*\(/);
+  assert.doesNotMatch(controller, /(?:Baidu|GDT|KS|TT)ATRewardedVideoAdapter/);
+  assert.match(architecture, /统一激励广告入口[\s\S]*Taku/);
+  assert.match(architecture, /服务端.*选择.*广告源/);
 });
 
 test('native sources contain no local reward success or sentinel fallback', () => {

@@ -23,3 +23,5 @@ The App checks the manifest after startup. Its native bridge verifies the embedd
 ## Native update exception
 
 Pangle and Taku SDK identities, Pangle license package bindings, signing keys, and Android package names are native inputs. Changing any of them requires a selected agent's signed APK build through **Android production APK**; a hot bundle cannot and must not alter them.
+
+The same rule applies to the locked mediation bundle. Taku core/adapter or Pangle-GroMore SDK upgrades require a reviewed profileVersion increment, a new native APK, source/APK lock verification, duplicate-class checking, and the reusable package gate when configured. Provider network/adsource selection remains server-side and must never be added to a release profile.

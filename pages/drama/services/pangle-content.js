@@ -1,5 +1,6 @@
 import { callNativeMethod, getNativePlugin } from './native-bridge';
 import { cacheExternalDramas } from '@/pages/drama/data';
+import { ensureAdPrivacyConsent } from './privacy-consent';
 
 const PANGLE_PLUGIN_NAME = 'SkitPangleDrama';
 const DEFAULT_SETTING_FILE = import.meta.env?.VITE_PANGLE_DRAMA_SETTING_FILE || 'SDK_Setting.json';
@@ -40,7 +41,23 @@ export async function startPangleContentSdk(options = {}) {
 
   const result = await startPromise;
   if (result?.success === false) {
-    throw new Error(result.message || '短剧内容服务启动失败');
+    startPromise = null;
+    if (result.code === -701 && options.consentAttempted !== true) {
+      const consentGranted = await ensureAdPrivacyConsent(options.identity);
+      if (!consentGranted) {
+        const declined = new Error('未同意隐私与广告服务');
+        declined.code = 'PRIVACY_CONSENT_DECLINED';
+        throw declined;
+      }
+      return startPangleContentSdk({ ...options, consentAttempted: true });
+    }
+    const error = new Error(result.message || '短剧内容服务启动失败');
+    if (result.code === -701) {
+      error.code = 'PRIVACY_CONSENT_REQUIRED';
+    } else if (result.code === -702) {
+      error.code = 'PANGLE_INIT_FAILED';
+    }
+    throw error;
   }
   return result;
 }

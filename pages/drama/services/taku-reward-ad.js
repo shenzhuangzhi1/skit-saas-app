@@ -6,6 +6,22 @@ import {
 } from './native-bridge';
 
 const TAKU_PLUGIN_NAME = 'SkitTakuAd';
+const TERMINAL_FAILURES = Object.freeze({
+  NO_FILL: Object.freeze({ code: 'NATIVE_AD_NO_FILL', message: '当前广告库存不足' }),
+  PRIVACY_CONSENT_REQUIRED: Object.freeze({
+    code: 'PRIVACY_CONSENT_REQUIRED',
+    message: '请先同意隐私与广告服务',
+  }),
+  PANGLE_INIT_FAILED: Object.freeze({
+    code: 'PANGLE_INIT_FAILED',
+    message: '内容与广告服务初始化失败',
+  }),
+  TAKU_INIT_FAILED: Object.freeze({
+    code: 'TAKU_INIT_FAILED',
+    message: '广告服务初始化失败',
+  }),
+  SDK_FAILURE: Object.freeze({ code: 'NATIVE_AD_FAILED', message: '激励视频播放失败' }),
+});
 
 export class AdFlowError extends Error {
   constructor(code, message, options = {}) {
@@ -143,11 +159,12 @@ export function showRewardedVideoAd(serverProtocol, options = {}) {
           return;
         }
         if (telemetry.nativeState === 'ERROR') {
-          const noFill = telemetry.failureReason === 'NO_FILL';
+          const failure =
+            TERMINAL_FAILURES[telemetry.failureReason] || TERMINAL_FAILURES.SDK_FAILURE;
           finishWithError(
             flowError(
-              noFill ? 'NATIVE_AD_NO_FILL' : 'NATIVE_AD_FAILED',
-              noFill ? '当前广告库存不足' : '激励视频播放失败',
+              failure.code,
+              failure.message,
               undefined,
               telemetry,
             ),

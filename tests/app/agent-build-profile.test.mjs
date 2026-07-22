@@ -114,4 +114,21 @@ test('production workflows select a versioned repository profile and a profile-s
   assert.ok(Number.isSafeInteger(productionProfile.profileVersion));
   assert.equal(productionProfile.profileCode, 'AG162');
   assert.equal(productionProfile.tenantId, productionProfile.profileCode);
+  assert.equal(productionProfile.profileVersion, 3);
+  assert.equal(productionProfile.pangle.adSdkVersion, '7.6.1.1');
+  assert.equal(productionProfile.taku.sdkVersion, '6.6.30');
+  for (const forbiddenKey of [
+    'networkFirmId',
+    'networkId',
+    'adsourceId',
+    'providerSourceId',
+  ]) {
+    assert.equal(
+      Object.hasOwn(productionProfile, forbiddenKey) ||
+        Object.hasOwn(productionProfile.taku, forbiddenKey) ||
+        Object.hasOwn(productionProfile.pangle, forbiddenKey),
+      false,
+      `${forbiddenKey} must remain a server-selected runtime value`,
+    );
+  }
 });

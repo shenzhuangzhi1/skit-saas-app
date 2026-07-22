@@ -4,6 +4,9 @@ package top.neoshen.xingheyingguan.ad;
 public enum TakuFailureReason {
     NONE,
     NO_FILL,
+    PRIVACY_CONSENT_REQUIRED,
+    PANGLE_INIT_FAILED,
+    TAKU_INIT_FAILED,
     SDK_FAILURE;
 
     public static TakuFailureReason fromSdkCode(String code) {
