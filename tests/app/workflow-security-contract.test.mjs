@@ -37,6 +37,15 @@ test('self-hosted production workflows always erase materialized secrets', () =>
   }
 });
 
+test('production APK workflow keeps the Android SDK visible to every package gate', () => {
+  const workflow = read('.github/workflows/android-production.yml');
+
+  assert.match(
+    workflow,
+    /export ANDROID_HOME="\$\{ANDROID_HOME:-\$HOME\/Library\/Android\/sdk\}"[\s\S]*build-djx-apk\.sh[\s\S]*run-reusable-package-gate\.sh/,
+  );
+});
+
 test('production APK manifest checks cannot trip pipefail after grep exits early', () => {
   const verifier = read('android-djx-runtime/verify-production-apk.sh');
 

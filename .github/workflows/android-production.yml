@@ -98,6 +98,7 @@ jobs:
           SKIT_VERSION_NAME: ${{ inputs.native_version_name }}
         run: |
           set -euo pipefail
+          export ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
           ./android-djx-runtime/build-djx-apk.sh
           APK_FILE="$PWD/dist/${SKIT_OUTPUT_BASE_NAME}-release.apk" \
             ./android-djx-runtime/verify-production-apk.sh
