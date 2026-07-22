@@ -28,10 +28,11 @@ public class NativeSdkUnlockResumePolicyTest {
                     missingPolicy);
         }
         Object policy = type.getConstructor().newInstance();
-        Method arm = type.getMethod("arm", long.class, long.class, int.class);
-        Method complete = type.getMethod(
-                "completeWithServerEntitlements",
-                long.class, long.class, int.class, Collection.class);
+        Method begin = type.getMethod("begin", long.class, long.class, int.class);
+        Method observeTerminal = type.getMethod(
+                "observeTerminal", long.class, long.class, int.class);
+        Method authorizeFromServer = type.getMethod(
+                "authorizeFromServer", long.class, long.class, Collection.class);
         Method shouldSuppressTerminalFinish = type.getMethod(
                 "shouldSuppressTerminalFinish");
         Method hasOutstandingResumeScope = type.getMethod(
@@ -44,12 +45,15 @@ public class NativeSdkUnlockResumePolicyTest {
         long callbackEpoch = 7L;
         long dramaId = 1346L;
         int targetEpisode = 41;
-        arm.invoke(policy, callbackEpoch, dramaId, targetEpisode);
+        begin.invoke(policy, callbackEpoch, dramaId, targetEpisode);
         assertTrue((Boolean) hasOutstandingResumeScope.invoke(policy));
-        assertFalse((Boolean) shouldSuppressTerminalFinish.invoke(policy));
+        assertTrue(
+                "server-authorized scope must suppress a synchronous SDK finish "
+                        + "before unlockFlowEnd arrives",
+                (Boolean) shouldSuppressTerminalFinish.invoke(policy));
 
         try {
-            arm.invoke(policy, callbackEpoch + 1L, dramaId, targetEpisode + 1);
+            begin.invoke(policy, callbackEpoch + 1L, dramaId, targetEpisode + 1);
             fail("a second SDK unlock must not replace an armed resume scope");
         } catch (InvocationTargetException expected) {
             assertTrue(expected.getCause() instanceof IllegalStateException);
@@ -57,54 +61,66 @@ public class NativeSdkUnlockResumePolicyTest {
         assertEquals(
                 "a stale terminal callback must not cancel the current armed scope",
                 0,
-                complete.invoke(policy, callbackEpoch + 1L, dramaId, targetEpisode,
-                        Collections.singletonList(targetEpisode)));
+                observeTerminal.invoke(
+                        policy, callbackEpoch + 1L, dramaId, targetEpisode));
         assertTrue((Boolean) hasOutstandingResumeScope.invoke(policy));
 
-        assertEquals(0, complete.invoke(
-                policy, callbackEpoch, dramaId, targetEpisode, Collections.emptyList()));
-        assertFalse((Boolean) hasOutstandingResumeScope.invoke(policy));
-
-        arm.invoke(policy, callbackEpoch, dramaId, targetEpisode);
-        assertEquals(0, complete.invoke(
-                policy, callbackEpoch, dramaId, targetEpisode + 1,
-                Collections.singletonList(targetEpisode)));
-
-        arm.invoke(policy, callbackEpoch, dramaId, targetEpisode);
         assertEquals(
-                "DJX may omit the episode when its advisory status reports an ad error; "
-                        + "the exact armed episode must still resume from server entitlement",
+                "terminal-first must retain the exact scope while authoritative checks finish",
+                0,
+                observeTerminal.invoke(policy, callbackEpoch, dramaId, 0));
+        assertTrue((Boolean) hasOutstandingResumeScope.invoke(policy));
+        assertTrue((Boolean) shouldSuppressTerminalFinish.invoke(policy));
+        assertFalse((Boolean) isPendingResume.invoke(
+                policy, callbackEpoch, targetEpisode));
+        assertEquals(
+                "the later exact server entitlement must complete a terminal-first rendezvous",
                 targetEpisode,
-                complete.invoke(policy, callbackEpoch, dramaId, 0,
+                authorizeFromServer.invoke(policy, callbackEpoch, dramaId,
                         Collections.singletonList(targetEpisode)));
+        assertTrue((Boolean) isPendingResume.invoke(
+                policy, callbackEpoch, targetEpisode));
         assertTrue((Boolean) consumeForAttachment.invoke(policy, targetEpisode));
 
-        arm.invoke(policy, callbackEpoch, dramaId, targetEpisode);
+        begin.invoke(policy, callbackEpoch, dramaId, targetEpisode);
         assertEquals(
-                "DJX may omit both drama and episode on ERROR_GET_VIDEO_AD_ERROR; "
-                        + "the exact armed scope must still resume from server entitlement",
-                targetEpisode,
-                complete.invoke(policy, callbackEpoch, 0L, 0,
+                "server-first must wait for the exact terminal callback",
+                0,
+                authorizeFromServer.invoke(policy, callbackEpoch, dramaId,
                         Collections.singletonList(targetEpisode)));
+        assertTrue((Boolean) shouldSuppressTerminalFinish.invoke(policy));
+        assertEquals(
+                "DJX may omit both drama and episode on ERROR_GET_VIDEO_AD_ERROR",
+                targetEpisode,
+                observeTerminal.invoke(policy, callbackEpoch, 0L, 0));
         assertTrue((Boolean) consumeForAttachment.invoke(policy, targetEpisode));
 
-        arm.invoke(policy, callbackEpoch, dramaId, targetEpisode);
+        begin.invoke(policy, callbackEpoch, dramaId, targetEpisode);
         assertEquals(
                 "a mismatched positive drama id must never consume another drama's entitlement",
-                0,
-                complete.invoke(policy, callbackEpoch, dramaId + 1L, 0,
-                        Collections.singletonList(targetEpisode)));
+                -1,
+                observeTerminal.invoke(policy, callbackEpoch, dramaId + 1L, 0));
+        assertFalse((Boolean) hasOutstandingResumeScope.invoke(policy));
 
-        arm.invoke(policy, callbackEpoch, dramaId, targetEpisode);
-        assertEquals(targetEpisode, complete.invoke(
-                policy, callbackEpoch, dramaId, targetEpisode,
+        begin.invoke(policy, callbackEpoch, dramaId, targetEpisode);
+        assertEquals(0, observeTerminal.invoke(
+                policy, callbackEpoch, dramaId, targetEpisode));
+        assertEquals(-1, authorizeFromServer.invoke(
+                policy, callbackEpoch, dramaId, Collections.emptyList()));
+        assertFalse((Boolean) hasOutstandingResumeScope.invoke(policy));
+
+        begin.invoke(policy, callbackEpoch, dramaId, targetEpisode);
+        assertEquals(0, authorizeFromServer.invoke(
+                policy, callbackEpoch, dramaId,
                 Collections.singletonList(targetEpisode)));
+        assertEquals(targetEpisode, observeTerminal.invoke(
+                policy, callbackEpoch, dramaId, targetEpisode));
         assertTrue((Boolean) shouldSuppressTerminalFinish.invoke(policy));
         assertTrue((Boolean) isPendingResume.invoke(
                 policy, callbackEpoch, targetEpisode));
 
         try {
-            arm.invoke(policy, callbackEpoch + 1L, dramaId, targetEpisode + 1);
+            begin.invoke(policy, callbackEpoch + 1L, dramaId, targetEpisode + 1);
             fail("a new SDK unlock must not overwrite a server-authorized pending resume");
         } catch (InvocationTargetException expected) {
             assertTrue(expected.getCause() instanceof IllegalStateException);
@@ -115,8 +131,7 @@ public class NativeSdkUnlockResumePolicyTest {
         assertEquals(
                 "a duplicate DJX terminal callback must not consume the pending recovery",
                 0,
-                complete.invoke(policy, callbackEpoch, dramaId, targetEpisode,
-                        Collections.singletonList(targetEpisode)));
+                observeTerminal.invoke(policy, callbackEpoch, dramaId, targetEpisode));
         assertTrue((Boolean) shouldSuppressTerminalFinish.invoke(policy));
 
         assertFalse((Boolean) consumeForAttachment.invoke(policy, targetEpisode + 1));
@@ -124,9 +139,81 @@ public class NativeSdkUnlockResumePolicyTest {
         assertTrue((Boolean) consumeForAttachment.invoke(policy, targetEpisode));
         assertFalse((Boolean) shouldSuppressTerminalFinish.invoke(policy));
         assertFalse((Boolean) hasOutstandingResumeScope.invoke(policy));
-        assertEquals(0, complete.invoke(
-                policy, callbackEpoch, dramaId, targetEpisode,
+        assertEquals(-1, observeTerminal.invoke(
+                policy, callbackEpoch, dramaId, targetEpisode));
+    }
+
+    @Test
+    public void rejectsAnExplicitlyMismatchedDuplicateTerminalBeforeResume() {
+        NativeSdkUnlockResumePolicy policy = new NativeSdkUnlockResumePolicy();
+        long callbackEpoch = 7L;
+        long dramaId = 1337L;
+        int targetEpisode = 5;
+
+        policy.begin(callbackEpoch, dramaId, targetEpisode);
+        assertEquals(0, policy.observeTerminal(callbackEpoch, dramaId, 0));
+        assertEquals(
+                NativeSdkUnlockResumePolicy.REJECTED_EPISODE,
+                policy.observeTerminal(callbackEpoch, dramaId + 1L, targetEpisode));
+        assertFalse(policy.hasOutstandingResumeScope());
+        assertEquals(
+                NativeSdkUnlockResumePolicy.REJECTED_EPISODE,
+                policy.authorizeFromServer(
+                        callbackEpoch, dramaId,
+                        Collections.singletonList(targetEpisode)));
+
+        policy.begin(callbackEpoch, dramaId, targetEpisode);
+        assertEquals(
+                NativeSdkUnlockResumePolicy.REJECTED_EPISODE,
+                policy.observeTerminal(
+                        callbackEpoch, dramaId, targetEpisode + 1));
+        assertFalse(policy.hasOutstandingResumeScope());
+    }
+
+    @Test
+    public void exposesOnlyOneSidedRendezvousAndCancelReleasesEveryState() {
+        NativeSdkUnlockResumePolicy policy = new NativeSdkUnlockResumePolicy();
+        long callbackEpoch = 9L;
+        long dramaId = 1337L;
+        int targetEpisode = 5;
+
+        policy.begin(callbackEpoch, dramaId, targetEpisode);
+        assertFalse(policy.isWaitingForCounterpart(callbackEpoch, targetEpisode));
+        policy.cancel();
+        policy.begin(callbackEpoch, dramaId, targetEpisode);
+
+        assertEquals(0, policy.observeTerminal(callbackEpoch, dramaId, 0));
+        assertTrue(policy.isWaitingForCounterpart(callbackEpoch, targetEpisode));
+        policy.cancel();
+        policy.begin(callbackEpoch, dramaId, targetEpisode);
+
+        assertEquals(0, policy.authorizeFromServer(
+                callbackEpoch, dramaId, Collections.singletonList(targetEpisode)));
+        assertTrue(policy.isWaitingForCounterpart(callbackEpoch, targetEpisode));
+        policy.cancel();
+        policy.begin(callbackEpoch, dramaId, targetEpisode);
+
+        assertEquals(0, policy.observeTerminal(callbackEpoch, dramaId, 0));
+        assertEquals(targetEpisode, policy.authorizeFromServer(
+                callbackEpoch, dramaId, Collections.singletonList(targetEpisode)));
+        assertFalse(policy.isWaitingForCounterpart(callbackEpoch, targetEpisode));
+        policy.cancel();
+
+        policy.begin(callbackEpoch + 1L, dramaId, targetEpisode + 1);
+        assertTrue(policy.hasOutstandingResumeScope());
+
+        assertEquals(0, policy.observeTerminal(
+                callbackEpoch, dramaId, targetEpisode));
+        assertEquals(0, policy.authorizeFromServer(
+                callbackEpoch, dramaId,
                 Collections.singletonList(targetEpisode)));
+        assertFalse(policy.isWaitingForCounterpart(
+                callbackEpoch + 1L, targetEpisode + 1));
+        assertEquals(0, policy.observeTerminal(
+                callbackEpoch + 1L, dramaId, targetEpisode + 1));
+        assertEquals(targetEpisode + 1, policy.authorizeFromServer(
+                callbackEpoch + 1L, dramaId,
+                Collections.singletonList(targetEpisode + 1)));
     }
 
     @Test
@@ -157,6 +244,14 @@ public class NativeSdkUnlockResumePolicyTest {
         exact.put("drama_id", dramaId);
         exact.put("index", targetEpisode);
         assertEquals(targetEpisode, reportedEpisode.invoke(null, exact, dramaId));
+
+        Map<String, Object> dramaOnly = new HashMap<>();
+        dramaOnly.put("drama_id", dramaId);
+        assertEquals(
+                "DJX may preserve the correct drama while omitting the episode on its "
+                        + "terminal ad-error callback",
+                0,
+                reportedEpisode.invoke(null, dramaOnly, dramaId));
 
         Map<String, Object> wrongDrama = new HashMap<>(exact);
         wrongDrama.put("drama_id", dramaId + 1L);

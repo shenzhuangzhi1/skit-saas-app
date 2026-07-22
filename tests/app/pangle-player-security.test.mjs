@@ -195,13 +195,23 @@ test('DJX unlock callbacks are bound to the current widget epoch and preserve SD
   );
   assert.match(
     player,
-    /completeFromServerEntitlement[\s\S]*?sdkUnlockResumePolicy\.arm\([\s\S]*?callback\.onRewardVerify/,
-    'the exact server-authorized episode must remain armed until DJX finishes its async unlock',
+    /completeFromServerEntitlement[\s\S]*?sdkUnlockResumePolicy\.authorizeFromServer\([\s\S]*?callback\.onRewardVerify/,
+    'the exact signed entitlement must join the registered SDK scope before reward verification',
   );
   assert.match(
     player,
-    /unlockFlowEnd[\s\S]*?sdkUnlockResumePolicy\.completeWithServerEntitlements\([\s\S]*?completedEpisode[\s\S]*?grantedEpisodes\)[\s\S]*?resumeAfterSdkUnlock/,
-    'server entitlement must resume the exact episode even when DJX reports a custom-ad error',
+    /unlockFlowEnd[\s\S]*?dispatchSdkUnlockTerminal\([\s\S]*?completedEpisode/,
+    'the SDK terminal callback must be marshalled through the dedicated rendezvous dispatcher',
+  );
+  assert.match(
+    player,
+    /dispatchSdkUnlockTerminal[\s\S]*?sdkUnlockHandler\.post\(terminal\)[\s\S]*?handleSdkUnlockTerminal[\s\S]*?sdkUnlockResumePolicy\.observeTerminal/,
+    'off-main DJX callbacks must join the policy on the main thread',
+  );
+  assert.match(
+    player,
+    /handleSdkUnlockTerminal[\s\S]*?sdkUnlockResumePolicy\.observeTerminal\([\s\S]*?queueSdkUnlockResume/,
+    'the terminal callback must join the exact registered episode even when DJX reports an ad error',
   );
   assert.doesNotMatch(
     player,
@@ -215,8 +225,18 @@ test('DJX unlock callbacks are bound to the current widget epoch and preserve SD
   );
   assert.match(
     player,
-    /public void finish\(\)[\s\S]*?sdkUnlockResumePolicy\.shouldSuppressTerminalFinish\(\)[\s\S]*?suppressed terminal finish[\s\S]*?super\.finish\(\)/,
-    'a synchronous DJX terminal finish must not beat the queued server-authorized resume',
+    /shouldDeferHostExitForUnlock\(\)[\s\S]*?hasActiveUnlock\(\)[\s\S]*?sdkUnlockResumePolicy\.hasOutstandingResumeScope\(\)/,
+    'host exit must be deferred during both the active ad and server-authorized terminal window',
+  );
+  assert.match(
+    player,
+    /public void finish\(\)[\s\S]*?shouldDeferHostExitForUnlock\(\)[\s\S]*?suppressed terminal finish[\s\S]*?super\.finish\(\)/,
+    'a synchronous DJX finish must not beat the active or server-authorized unlock flow',
+  );
+  assert.match(
+    player,
+    /onBackPressed\(\)[\s\S]*?if \(hasActiveUnlock\(\)\)[\s\S]*?failActiveUnlock\([\s\S]*?return;[\s\S]*?hasOutstandingResumeScope\(\)[\s\S]*?finishHostActivity\(\)/,
+    'a real host Back must cancel either an active ad flow or a one-sided rendezvous',
   );
   assert.match(
     player,
@@ -235,8 +255,69 @@ test('DJX unlock callbacks are bound to the current widget epoch and preserve SD
   );
   assert.match(
     player,
-    /unlockFlowEnd[\s\S]*?NativeSdkUnlockTerminalEvidence\.reportedEpisode\(\s*extra, dramaId\)/,
+    /showCustomAd[\s\S]*?targetEpisode <= 0[\s\S]*?sdkUnlockResumePolicy\.begin\(\s*callbackEpoch,\s*targetDramaId,\s*targetEpisode\s*\)[\s\S]*?verifyExistingEntitlementOrStartAd/,
+    'the exact SDK scope must be registered before terminal and server callbacks can race',
+  );
+  assert.match(
+    player,
+    /unlockFlowEnd[\s\S]*?NativeSdkUnlockTerminalEvidence\.reportedEpisode\(\s*extra, dramaId\)[\s\S]*?sdkUnlockResumePolicy\.observeTerminal/,
     'missing terminal evidence must be distinguished from malformed or mismatched evidence',
+  );
+  assert.match(
+    player,
+    /completeFromServerEntitlement[\s\S]*?sdkUnlockResumePolicy\.authorizeFromServer[\s\S]*?callback\.onRewardVerify/,
+    'signed entitlement and terminal completion must rendezvous in either arrival order',
+  );
+  const completionStart = player.indexOf('private void completeFromServerEntitlement');
+  const completionEnd = player.indexOf(
+    'private boolean matchesLaunchRewardEvidence',
+    completionStart,
+  );
+  assert.ok(completionStart !== -1 && completionEnd > completionStart);
+  const completion = player.slice(completionStart, completionEnd);
+  const cleared = completion.indexOf('clearActiveUnlock()');
+  const authorized = completion.indexOf('sdkUnlockResumePolicy.authorizeFromServer');
+  const resumeQueued = completion.indexOf('queueSdkUnlockResume');
+  const rewardCallback = completion.indexOf('callback.onRewardVerify');
+  assert.ok(
+    cleared !== -1 &&
+      authorized !== -1 &&
+      resumeQueued !== -1 &&
+      rewardCallback !== -1 &&
+      cleared < authorized &&
+      authorized < resumeQueued &&
+      resumeQueued < rewardCallback,
+    'broad callback cleanup must precede authorization, and resume must be queued before the third-party callback',
+  );
+  assert.match(
+    completion,
+    /try \{\s*callback\.onRewardVerify[\s\S]*?catch \(Throwable callbackFailure\)[\s\S]*?isPendingResume[\s\S]*?isWaitingForCounterpart/,
+    'a throwing DJX reward callback must preserve an already queued or off-main terminal join',
+  );
+  assert.match(
+    player,
+    /SDK_UNLOCK_SERVER_FIRST_TIMEOUT_MS[\s\S]*?SDK_UNLOCK_TERMINAL_FIRST_TIMEOUT_MS[\s\S]*?scheduleSdkUnlockRendezvousTimeout[\s\S]*?isWaitingForCounterpart[\s\S]*?failDetachedSdkUnlock/,
+    'a one-sided rendezvous must fail closed within a bounded timeout',
+  );
+  assert.match(
+    player,
+    /scheduleSdkUnlockRendezvousTimeout[\s\S]*?sdkUnlockRendezvousTimeout != null[\s\S]*?return;[\s\S]*?postDelayed/,
+    'duplicate terminal callbacks must not extend the original rendezvous deadline',
+  );
+  assert.match(
+    player,
+    /long timeoutMillis = hasActiveUnlock\(\)[\s\S]*?SDK_UNLOCK_TERMINAL_FIRST_TIMEOUT_MS[\s\S]*?SDK_UNLOCK_SERVER_FIRST_TIMEOUT_MS/,
+    'terminal-first must allow the bounded HTTP verification chain while server-first stays short',
+  );
+  assert.match(
+    player,
+    /queueSdkUnlockResume[\s\S]*?cancelSdkUnlockRendezvousTimeout\(\)[\s\S]*?sdkUnlockHandler\.post/,
+    'a successful rendezvous must cancel its timeout before queueing resume',
+  );
+  assert.match(
+    player,
+    /onDestroy\(\)[\s\S]*?cancelSdkUnlockRendezvousTimeout\(\)[\s\S]*?sdkUnlockHandler\.removeCallbacksAndMessages/,
+    'destroying the player must release all dedicated rendezvous work',
   );
 });
 

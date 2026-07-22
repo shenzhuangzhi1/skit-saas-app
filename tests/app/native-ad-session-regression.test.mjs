@@ -205,8 +205,8 @@ test('native player always leaves a terminal SDK-owned unlock state', () => {
 
   assert.match(
     unlockListener,
-    /completeWithServerEntitlements\([\s\S]*?completedEpisode[\s\S]*?grantedEpisodes\)/,
-    'a signed server entitlement must survive a DJX error callback that omits its episode field',
+    /reportedEpisode\([\s\S]*?sdkUnlockResumePolicy\.observeTerminal\([\s\S]*?completedEpisode\)/,
+    'a DJX terminal callback that omits its episode must wait for the signed server entitlement',
   );
   assert.match(
     failureFlow,
