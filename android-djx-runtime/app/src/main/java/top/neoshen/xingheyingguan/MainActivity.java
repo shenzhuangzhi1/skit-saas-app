@@ -267,21 +267,20 @@ public class MainActivity extends Activity {
 
             @Override
             public void startTaku(ThirdPartySdkBootstrap.Completion completion) {
-                try {
-                    TakuRewardedAdController.initializeOrThrow(getApplicationContext());
-                    completion.onSuccess();
-                } catch (Throwable failure) {
-                    Log.w(TAG, "Taku initialization failed: type="
-                            + safeThrowableType(failure));
-                    completion.onFailure(-703, "Taku initialization failed");
-                }
+                TakuRewardedAdController.initialize(getApplicationContext(),
+                        new TakuRewardedAdController.InitializationCallback() {
+                            @Override
+                            public void onReady() {
+                                completion.onSuccess();
+                            }
+
+                            @Override
+                            public void onFailure() {
+                                completion.onFailure(-703, "Taku initialization failed");
+                            }
+                        });
             }
         });
-    }
-
-    private static String safeThrowableType(Throwable error) {
-        String type = error == null ? "<none>" : error.getClass().getSimpleName();
-        return type.matches("[A-Za-z0-9_$]{1,64}") ? type : "<invalid>";
     }
 
     private void openExternal(Uri uri) {

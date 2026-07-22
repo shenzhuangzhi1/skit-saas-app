@@ -320,7 +320,7 @@ else
     SKIT_ALLOW_DEBUG_RUNTIME_DEFAULTS=1 \
     "$RUNTIME_DIR/verify-production-apk.sh"
 fi
-if [[ -n "${SKIT_REUSABLE_PACKAGE_GATE:-}" ]]; then
+if [[ "$BUILD_TYPE" == "release" ]]; then
   APK_FILE="$ROOT_DIR/dist/$OUTPUT_NAME" \
     "$RUNTIME_DIR/run-reusable-package-gate.sh"
 fi

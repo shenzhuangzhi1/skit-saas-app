@@ -97,6 +97,27 @@ function sortedUniqueStrings(values, label) {
   return [...values].sort();
 }
 
+function validateExactProviders(values) {
+  if (!Array.isArray(values) || values.length === 0) {
+    fail('requiredExactMergedProviders must be a non-empty array');
+  }
+  const names = [];
+  for (const value of values) {
+    if (!value || typeof value !== 'object'
+        || typeof value.name !== 'string' || !value.name
+        || typeof value.exported !== 'boolean'
+        || Object.keys(value).sort().join(',') !== 'exported,name') {
+      fail('requiredExactMergedProviders contains an invalid provider');
+    }
+    names.push(value.name);
+  }
+  const sorted = [...names].sort();
+  if (new Set(names).size !== names.length
+      || names.some((name, index) => name !== sorted[index])) {
+    fail('requiredExactMergedProviders must contain sorted unique names');
+  }
+}
+
 function validateLock(lock) {
   if (!lock || lock.schemaVersion !== 1) fail('unsupported locked manifest schema');
   if (!/^[0-9]{14}$/.test(lock.bundleVersion || '')) fail('invalid bundleVersion');
@@ -147,6 +168,12 @@ function validateLock(lock) {
     }
   }
   sortedUniqueStrings(lock.forbiddenMergedPermissions, 'forbiddenMergedPermissions');
+  sortedUniqueStrings(lock.forbiddenMergedComponents, 'forbiddenMergedComponents');
+  validateExactProviders(lock.requiredExactMergedProviders);
+  sortedUniqueStrings(
+    lock.allowedAndroidxStartupInitializers,
+    'allowedAndroidxStartupInitializers',
+  );
   sortedUniqueStrings(lock.mergedComponentMarkers, 'mergedComponentMarkers');
   sortedUniqueStrings(lock.mergedResourceMarkers, 'mergedResourceMarkers');
   sortedUniqueStrings(lock.apkClassMarkers, 'apkClassMarkers');
@@ -386,6 +413,60 @@ function verifyPackagedAssetJars(lock, apk, entries, tempDir) {
   }
 }
 
+function manifestProviderBlocks(manifestTree) {
+  const lines = manifestTree.split(/\r?\n/u);
+  const blocks = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = /^(\s*)E: provider\b/u.exec(lines[index]);
+    if (!match) continue;
+    const indent = match[1].length;
+    const block = [lines[index]];
+    for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
+      const element = /^(\s*)E: /u.exec(lines[cursor]);
+      if (element && element[1].length <= indent) break;
+      block.push(lines[cursor]);
+    }
+    blocks.push(block.join('\n'));
+  }
+  return blocks;
+}
+
+function providerName(block) {
+  const match = /android:name[^\n]*="([^"]+)"/u.exec(block);
+  return match ? match[1] : null;
+}
+
+function verifyProviderPolicy(lock, manifestTree) {
+  const providers = manifestProviderBlocks(manifestTree);
+  for (const forbidden of lock.forbiddenMergedComponents) {
+    if (providers.some((block) => providerName(block) === forbidden)) {
+      fail(`APK manifest contains forbidden auto-init component ${forbidden}`);
+    }
+  }
+  for (const required of lock.requiredExactMergedProviders) {
+    const matches = providers.filter((block) => providerName(block) === required.name);
+    if (matches.length !== 1) {
+      fail(`APK manifest must contain exactly one provider ${required.name}`);
+    }
+    const expected = required.exported ? '0xffffffff' : '0x0';
+    if (!new RegExp(`android:exported[^\\n]*${expected}`, 'u').test(matches[0])) {
+      fail(`APK provider ${required.name} has the wrong exported state`);
+    }
+  }
+  const startupName = 'androidx.startup.InitializationProvider';
+  const startup = providers.find((block) => providerName(block) === startupName);
+  if (!startup) fail(`APK manifest is missing provider ${startupName}`);
+  const names = [...startup.matchAll(/android:name[^\n]*="([^"]+)"/gu)]
+    .map((match) => match[1])
+    .filter((name) => name !== startupName)
+    .sort();
+  assertExact(
+    names,
+    lock.allowedAndroidxStartupInitializers,
+    'AndroidX Startup initializers',
+  );
+}
+
 function verifyApk(lock, apk, explicitAapt) {
   if (!statSync(apk).isFile()) fail(`APK is missing: ${apk}`);
   const entries = listZip(apk);
@@ -424,6 +505,7 @@ function verifyApk(lock, apk, explicitAapt) {
 
   const aapt = findAapt(explicitAapt);
   const manifestTree = String(run(aapt, ['dump', 'xmltree', apk, 'AndroidManifest.xml']));
+  verifyProviderPolicy(lock, manifestTree);
   for (const component of lock.mergedComponentMarkers) {
     if (!manifestTree.includes(component)) fail(`APK manifest is missing component ${component}`);
   }

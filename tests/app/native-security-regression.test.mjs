@@ -90,7 +90,7 @@ test('third-party SDK bootstrap is explicit-consent gated and Pangle always wins
     main.indexOf('protected void onCreate'),
     main.indexOf('private void attachNativeMessageChannel'),
   );
-  assert.doesNotMatch(onCreateBody, /TakuRewardedAdController\.initializeOrThrow\s*\(/);
+  assert.doesNotMatch(onCreateBody, /TakuRewardedAdController\.initialize\s*\(/);
   assert.match(main, /new ThirdPartySdkBootstrap\s*\(/);
   assert.match(pangleInitializer, /bootstrapOwnership\.request\(globalReady\)/);
   assert.match(pangleInitializer, /REJECT_UNOWNED_READY/);
@@ -100,7 +100,10 @@ test('third-party SDK bootstrap is explicit-consent gated and Pangle always wins
     pangleInitializer,
     /if\s*\(\s*TTAdSdk\.(?:isInitSuccess|isSdkReady)[\s\S]{0,160}callback\.onSuccess\s*\(/,
   );
-  assert.match(main, /startTaku[\s\S]*?TakuRewardedAdController\.initializeOrThrow\s*\(/);
+  assert.match(
+    main,
+    /startTaku[\s\S]*?TakuRewardedAdController\.initialize\(getApplicationContext\(\),[\s\S]*?onReady\(\)[\s\S]*?completion\.onSuccess\(\)[\s\S]*?onFailure\(\)[\s\S]*?completion\.onFailure\(-703, "Taku initialization failed"\)/,
+  );
   assert.match(main, /case "PRIVACY"/);
   assert.match(pangleBridge, /thirdPartySdkBootstrap\.whenContentReady\s*\(/);
   assert.match(pangleBridge, /BootstrapRegistrationSlot/);

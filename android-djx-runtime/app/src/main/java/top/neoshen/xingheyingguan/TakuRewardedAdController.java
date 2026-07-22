@@ -2,12 +2,16 @@ package top.neoshen.xingheyingguan;
 
 import android.app.Activity;
 import android.content.Context;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 
 import com.anythink.core.api.ATAdConst;
 import com.anythink.core.api.ATAdInfo;
 import com.anythink.core.api.ATDebuggerConfig;
+import com.anythink.core.api.ATNetworkConfig;
 import com.anythink.core.api.ATSDK;
+import com.anythink.core.api.ATSDKInitListener;
 import com.anythink.core.api.ATShowConfig;
 import com.anythink.core.api.AdError;
 import com.anythink.rewardvideo.api.ATRewardVideoAd;
@@ -29,7 +33,30 @@ final class TakuRewardedAdController {
     static final String APP_KEY = BuildConfig.TAKU_APP_KEY;
 
     private static final String TAG = "SkitTakuAd";
-    private static boolean initialized;
+    private static final long INITIALIZATION_TIMEOUT_MILLIS = 15_000L;
+    private static final Handler MAIN_HANDLER = new Handler(Looper.getMainLooper());
+    private static final TakuSdkInitializationCoordinator INITIALIZATION =
+            new TakuSdkInitializationCoordinator();
+    private static final TakuSdkInitializationCoordinator.Scheduler MAIN_SCHEDULER =
+            new TakuSdkInitializationCoordinator.Scheduler() {
+                @Override
+                public TakuSdkInitializationCoordinator.Cancellable schedule(
+                        Runnable runnable, long delayMillis) {
+                    if (!MAIN_HANDLER.postDelayed(runnable, delayMillis)) {
+                        throw new IllegalStateException("Taku timeout scheduling failed");
+                    }
+                    return () -> MAIN_HANDLER.removeCallbacks(runnable);
+                }
+
+                @Override
+                public void execute(Runnable runnable) {
+                    if (Looper.myLooper() == Looper.getMainLooper()) {
+                        runnable.run();
+                    } else if (!MAIN_HANDLER.post(runnable)) {
+                        throw new IllegalStateException("Taku main-thread dispatch failed");
+                    }
+                }
+            };
 
     interface EventListener {
         void onTelemetry(TakuTelemetry telemetry);
@@ -37,6 +64,12 @@ final class TakuRewardedAdController {
 
     interface ShowAuthorization {
         boolean canPresent();
+    }
+
+    interface InitializationCallback {
+        void onReady();
+
+        void onFailure();
     }
 
     private final Activity activity;
@@ -48,29 +81,64 @@ final class TakuRewardedAdController {
         this.activity = activity;
     }
 
-    static synchronized void initializeOrThrow(Context context) {
-        if (initialized) {
-            return;
+    static TakuSdkInitializationCoordinator.Registration initialize(
+            Context context, InitializationCallback callback) {
+        if (context == null || callback == null) {
+            throw new IllegalArgumentException("Taku initialization context and callback are required");
         }
-        boolean debuggerEnabled = BuildConfig.DEBUG
-                && BuildConfig.TAKU_DEBUG_NETWORK_FIRM_ID > 0
-                && !BuildConfig.TAKU_DEBUG_DEVICE_ID.isEmpty();
-        if (debuggerEnabled) {
-            ATSDK.setDebuggerConfig(
-                    context.getApplicationContext(),
-                    BuildConfig.TAKU_DEBUG_DEVICE_ID,
-                    new ATDebuggerConfig.Builder(BuildConfig.TAKU_DEBUG_NETWORK_FIRM_ID).build());
-        }
-        ATSDK.setNetworkLogDebug(BuildConfig.DEBUG);
-        ATSDK.init(context.getApplicationContext(), APP_ID, APP_KEY);
-        try {
-            ATSDK.start();
-        } catch (Throwable error) {
-            logInternalFailure("sdk-start", error);
-            throw new IllegalStateException("Taku SDK start failed", error);
-        }
-        initialized = true;
-        Log.i(TAG, "Taku SDK initialized: " + ATSDK.getSDKVersionName());
+        Context applicationContext = context.getApplicationContext();
+        return INITIALIZATION.ensureStarted(completion -> {
+            boolean debuggerEnabled = BuildConfig.DEBUG
+                    && BuildConfig.TAKU_DEBUG_NETWORK_FIRM_ID > 0
+                    && !BuildConfig.TAKU_DEBUG_DEVICE_ID.isEmpty();
+            if (debuggerEnabled) {
+                ATSDK.setDebuggerConfig(
+                        applicationContext,
+                        BuildConfig.TAKU_DEBUG_DEVICE_ID,
+                        new ATDebuggerConfig.Builder(
+                                BuildConfig.TAKU_DEBUG_NETWORK_FIRM_ID).build());
+            }
+            ATSDK.setNetworkLogDebug(BuildConfig.DEBUG);
+            ATSDK.init(applicationContext, APP_ID, APP_KEY,
+                    new ATNetworkConfig.Builder().build(), new ATSDKInitListener() {
+                        @Override
+                        public void onSuccess() {
+                            try {
+                                MAIN_SCHEDULER.execute(() -> {
+                                    try {
+                                        ATSDK.start();
+                                        Log.i(TAG, "Taku SDK initialized: "
+                                                + ATSDK.getSDKVersionName());
+                                        completion.onSuccess();
+                                    } catch (Throwable error) {
+                                        logInternalFailure("sdk-start", error);
+                                        completion.onFailure();
+                                    }
+                                });
+                            } catch (Throwable error) {
+                                logInternalFailure("sdk-start-dispatch", error);
+                                completion.onFailure();
+                            }
+                        }
+
+                        @Override
+                        public void onFail(String ignoredProviderMessage) {
+                            Log.w(TAG, "Taku SDK initialization callback reported failure");
+                            completion.onFailure();
+                        }
+                    });
+        }, MAIN_SCHEDULER, INITIALIZATION_TIMEOUT_MILLIS,
+                new TakuSdkInitializationCoordinator.Callback() {
+                    @Override
+                    public void onReady() {
+                        callback.onReady();
+                    }
+
+                    @Override
+                    public void onFailure() {
+                        callback.onFailure();
+                    }
+                });
     }
 
     void start(AdSessionProtocol protocol, EventListener listener) {
@@ -90,7 +158,7 @@ final class TakuRewardedAdController {
             throw new IllegalStateException("Another Taku session is active");
         }
 
-        if (!initialized) {
+        if (!INITIALIZATION.isReady()) {
             throw new IllegalStateException("Taku SDK must pass the consent-aware bootstrap first");
         }
         String sdkRequestId = "native-" + protocol.getSessionId();

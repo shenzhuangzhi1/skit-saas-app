@@ -24,13 +24,30 @@
     "android.permission.REQUEST_INSTALL_PACKAGES",
     "android.permission.WRITE_EXTERNAL_STORAGE"
   ],
-  "mergedComponentMarkers": [
+  "forbiddenMergedComponents": [
     "com.anythink.core.api.ATInitializationProvider",
+    "com.smartdigimkt.sdk.api.SDMInitializationProvider"
+  ],
+  "requiredExactMergedProviders": [
+    {
+      "name": "androidx.startup.InitializationProvider",
+      "exported": false
+    },
+    {
+      "name": "com.bytedance.sdk.djx.act.DJXProvider",
+      "exported": false
+    }
+  ],
+  "allowedAndroidxStartupInitializers": [
+    "androidx.lifecycle.ProcessLifecycleInitializer",
+    "androidx.profileinstaller.ProfileInstallerInitializer"
+  ],
+  "mergedComponentMarkers": [
     "com.baidu.mobads.sdk.api.MobRewardVideoActivity",
+    "com.bytedance.sdk.djx.act.DJXProvider",
     "com.bytedance.sdk.openadsdk.core.component.reward.activity.TTRewardVideoActivity",
     "com.kwad.sdk.api.proxy.app.KsRewardVideoActivity",
-    "com.qq.e.ads.RewardvideoPortraitADActivity",
-    "com.smartdigimkt.sdk.api.SDMInitializationProvider"
+    "com.qq.e.ads.RewardvideoPortraitADActivity"
   ],
   "mergedResourceMarkers": [
     "anythink_bk_gdt_file_path",

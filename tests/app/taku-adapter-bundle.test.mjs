@@ -159,6 +159,7 @@ test('Gradle and both formal package gates consume the locked bundle', () => {
   const ci = read('.github/workflows/cicd.yml');
   const productionCi = read('.github/workflows/android-production.yml');
   const reusableGate = read('android-djx-runtime/run-reusable-package-gate.sh');
+  const vendoredGate = read('android-djx-runtime/verify-agent-apk.sh');
 
   assert.match(gradle, /taku-adapter-bundle\.lock\.json/);
   assert.match(gradle, /verifyTakuAdapterBundle/);
@@ -183,10 +184,25 @@ test('Gradle and both formal package gates consume the locked bundle', () => {
     assert.match(source, /taku-adapter-bundle\.lock\.json/);
   }
   assert.match(builder, /run-reusable-package-gate\.sh/);
+  assert.doesNotMatch(
+    builder,
+    /-n\s+"\$\{SKIT_REUSABLE_PACKAGE_GATE:-\}"/,
+    'release packaging must never make the reusable gate optional',
+  );
+  assert.match(
+    builder,
+    /"\$BUILD_TYPE"\s*==\s*"release"[\s\S]*run-reusable-package-gate\.sh/,
+  );
   assert.match(reusableGate, /verify-agent-apk\.sh/);
   assert.match(reusableGate, /--project[\s\S]*--profile[\s\S]*--apk/);
+  assert.doesNotMatch(reusableGate, /SKIT_REUSABLE_PACKAGE_GATE/);
+  assert.match(vendoredGate, /verify-taku-adapter-bundle\.mjs/);
+  assert.match(vendoredGate, /--mode[\s\\\n]+source/);
+  assert.match(vendoredGate, /--mode[\s\\\n]+apk/);
+  assert.doesNotMatch(vendoredGate, /\/Users\/neo|\.codex\/skills/);
   assert.match(ci, /verify-taku-adapter-bundle\.mjs/);
   assert.match(productionCi, /verify-taku-adapter-bundle\.mjs/);
+  assert.match(productionCi, /run-reusable-package-gate\.sh/);
 });
 
 test('official keep rules and merged-permission policy are locked', () => {
@@ -214,6 +230,65 @@ test('official keep rules and merged-permission policy are locked', () => {
       `${permission} must be removed from the merged manifest`,
     );
   }
+});
+
+test('auto-init providers are forbidden while the required DJX lifecycle provider stays exact', () => {
+  const lock = loadLock();
+  assert.deepEqual(lock.forbiddenMergedComponents, [
+    'com.anythink.core.api.ATInitializationProvider',
+    'com.smartdigimkt.sdk.api.SDMInitializationProvider',
+  ]);
+  assert.deepEqual(lock.requiredExactMergedProviders, [
+    {
+      name: 'androidx.startup.InitializationProvider',
+      exported: false,
+    },
+    {
+      name: 'com.bytedance.sdk.djx.act.DJXProvider',
+      exported: false,
+    },
+  ]);
+  assert.deepEqual(lock.allowedAndroidxStartupInitializers, [
+    'androidx.lifecycle.ProcessLifecycleInitializer',
+    'androidx.profileinstaller.ProfileInstallerInitializer',
+  ]);
+
+  const appManifest = read('android-djx-runtime/app/src/main/AndroidManifest.xml');
+  for (const provider of lock.forbiddenMergedComponents) {
+    const escaped = provider.replaceAll('.', '\\.');
+    assert.match(
+      appManifest,
+      new RegExp(
+        `<provider\\s+android:name="${escaped}"\\s+tools:node="remove"\\s*/>`,
+      ),
+      `${provider} must be removed before process startup`,
+    );
+  }
+  assert.doesNotMatch(
+    appManifest,
+    /com\.bytedance\.sdk\.djx\.act\.DJXProvider[\s\S]*tools:node="remove"/,
+  );
+
+  const verifier = read('android-djx-runtime/verify-taku-adapter-bundle.mjs');
+  assert.match(verifier, /forbiddenMergedComponents/);
+  assert.match(verifier, /requiredExactMergedProviders/);
+  assert.match(verifier, /allowedAndroidxStartupInitializers/);
+
+  const controller = read(
+    'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/TakuRewardedAdController.java',
+  );
+  assert.match(controller, /INITIALIZATION_TIMEOUT_MILLIS\s*=\s*15_000L/);
+  assert.match(
+    controller,
+    /ATSDK\.init\(applicationContext, APP_ID, APP_KEY,[\s\S]*new ATNetworkConfig\.Builder\(\)\.build\(\), new ATSDKInitListener\(\)/,
+  );
+  assert.doesNotMatch(
+    controller,
+    /ATSDK\.init\(applicationContext, APP_ID, APP_KEY\s*\);/,
+    'the no-listener overload can hide initialization failures',
+  );
+  assert.match(controller, /public void onSuccess\(\)[\s\S]*ATSDK\.start\(\)/);
+  assert.match(controller, /if \(!INITIALIZATION\.isReady\(\)\)/);
 });
 
 test('App reward production code remains Taku-only while adapters are controlled by the lock', () => {

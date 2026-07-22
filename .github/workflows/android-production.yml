@@ -101,6 +101,8 @@ jobs:
           ./android-djx-runtime/build-djx-apk.sh
           APK_FILE="$PWD/dist/${SKIT_OUTPUT_BASE_NAME}-release.apk" \
             ./android-djx-runtime/verify-production-apk.sh
+          APK_FILE="$PWD/dist/${SKIT_OUTPUT_BASE_NAME}-release.apk" \
+            ./android-djx-runtime/run-reusable-package-gate.sh
 
       - name: Upload signed APK
         uses: actions/upload-artifact@v4

@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PROFILE_CODE="${SKIT_PROFILE_CODE:-${SKIT_AGENT_CODE:-}}"
 APK_PATH="${APK_FILE:-${1:-}}"
-GATE_SCRIPT="${SKIT_REUSABLE_PACKAGE_GATE:-}"
+GATE_SCRIPT="$ROOT_DIR/android-djx-runtime/verify-agent-apk.sh"
 
 if [[ ! "$PROFILE_CODE" =~ ^[A-Z0-9_-]{3,32}$ ]]; then
   echo "Reusable package gate failed: SKIT_PROFILE_CODE is missing or invalid" >&2
@@ -14,12 +14,8 @@ if [[ ! -f "$APK_PATH" ]]; then
   echo "Reusable package gate failed: APK_FILE is missing" >&2
   exit 2
 fi
-if [[ -z "$GATE_SCRIPT" || ! -x "$GATE_SCRIPT" ]]; then
-  echo "Reusable package gate failed: set SKIT_REUSABLE_PACKAGE_GATE to verify-agent-apk.sh" >&2
-  exit 2
-fi
-if [[ "$(basename "$GATE_SCRIPT")" != "verify-agent-apk.sh" ]]; then
-  echo "Reusable package gate failed: expected verify-agent-apk.sh" >&2
+if [[ ! -x "$GATE_SCRIPT" ]]; then
+  echo "Reusable package gate failed: controlled verify-agent-apk.sh is missing or not executable" >&2
   exit 2
 fi
 

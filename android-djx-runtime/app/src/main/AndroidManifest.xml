@@ -22,6 +22,12 @@
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="${skitUsesCleartextTraffic}"
         tools:replace="android:allowBackup,android:label,android:networkSecurityConfig,android:usesCleartextTraffic">
+        <provider
+            android:name="com.anythink.core.api.ATInitializationProvider"
+            tools:node="remove" />
+        <provider
+            android:name="com.smartdigimkt.sdk.api.SDMInitializationProvider"
+            tools:node="remove" />
         <uses-library android:name="org.apache.http.legacy" android:required="false"/>
         <activity
             android:name=".DramaPlayerActivity"
