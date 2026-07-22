@@ -154,12 +154,12 @@ ACTUAL_VERSION_NAME="$($AAPT dump badging "$APK_FILE" | sed -n "s/^package: .*ve
 
 if [[ "$ALLOW_DEBUG_RUNTIME_DEFAULTS" != "1" ]]; then
   MANIFEST_TREE="$($AAPT dump xmltree "$APK_FILE" AndroidManifest.xml)"
-  if printf '%s\n' "$MANIFEST_TREE" | grep -q 'android:debuggable.*0xffffffff'; then
+  if [[ "$MANIFEST_TREE" =~ android:debuggable.*0xffffffff ]]; then
     fail "production APK is debuggable"
   fi
-  printf '%s\n' "$MANIFEST_TREE" | grep -q 'android:usesCleartextTraffic.*0x0' || \
+  [[ "$MANIFEST_TREE" =~ android:usesCleartextTraffic.*0x0 ]] || \
     fail "production APK must deny cleartext traffic by default"
-  printf '%s\n' "$MANIFEST_TREE" | grep -q 'android:networkSecurityConfig' || \
+  [[ "$MANIFEST_TREE" =~ android:networkSecurityConfig ]] || \
     fail "production APK is missing the loopback network security config"
 
   NETWORK_SECURITY_FILE="$($APKANALYZER resources value \
@@ -239,11 +239,15 @@ if expected_package not in packages:
     raise SystemExit(f"license does not include package {expected_package}")
 PY
 
-FRONTEND_REFS="$({
-  while IFS= read -r js_file; do
-    unzip -p "$APK_FILE" "$js_file"
-  done < <(printf '%s\n' "$APK_ENTRIES" | grep -E '^assets/www/assets/.*\.js$' || true)
-} | grep -aoE 'SDK_Setting(_[0-9]+)?\.json' | sort -u || true)"
+FRONTEND_JS_BUNDLE="$TMP_DIR/frontend-js.txt"
+: > "$FRONTEND_JS_BUNDLE"
+while IFS= read -r js_file; do
+  unzip -p "$APK_FILE" "$js_file" >> "$FRONTEND_JS_BUNDLE" || \
+    fail "frontend asset $js_file is unreadable"
+done < <(printf '%s\n' "$APK_ENTRIES" | grep -E '^assets/www/assets/.*\.js$' || true)
+FRONTEND_REFS="$(
+  grep -aoE 'SDK_Setting(_[0-9]+)?\.json' "$FRONTEND_JS_BUNDLE" | sort -u || true
+)"
 [[ -n "$FRONTEND_REFS" ]] || fail "frontend contains no SDK settings reference"
 while IFS= read -r frontend_ref; do
   [[ "$frontend_ref" == "$EXPECTED_ASSET" ]] || \
@@ -274,8 +278,9 @@ grep -Fq "skit-runtime-protocol-v$EXPECTED_RUNTIME_PROTOCOL" "$DEX_STRINGS" || \
 grep -Fq "skit-runtime-release-$EXPECTED_RUNTIME_RELEASE" "$DEX_STRINGS" || \
   fail "runtime release metadata missing"
 
-if unzip -p "$APK_FILE" 'assets/www/assets/*.js' | \
-  grep -Eq 'skit-local-unlock|onRewardVerify[[:space:]]*\([[:space:]]*true|unlocked\.add'; then
+if grep -Eq \
+  'skit-local-unlock|onRewardVerify[[:space:]]*\([[:space:]]*true|unlocked\.add' \
+  "$FRONTEND_JS_BUNDLE"; then
   fail "frontend bundle contains a local reward fallback"
 fi
 
