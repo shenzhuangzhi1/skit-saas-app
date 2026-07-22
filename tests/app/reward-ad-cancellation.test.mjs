@@ -49,3 +49,43 @@ test('cancellation is a safe no-op when an older native shell lacks the method',
   const rewardAd = await importTakuRewardAd({});
   assert.equal(rewardAd.cancelPendingRewardedVideoAd(), false);
 });
+
+test('native bootstrap cancellation terminates the original show before acknowledging cancel', () => {
+  const bridge = readFileSync(
+    resolve(
+      root,
+      'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/SkitTakuAdBridge.java',
+    ),
+    'utf8',
+  );
+  const cancelMethod = bridge.match(
+    /private void cancelRewardedVideo\(String id\) \{([\s\S]*?)\n    \}/,
+  )?.[1];
+
+  assert.ok(cancelMethod, 'native cancellation method must exist');
+  assert.match(cancelMethod, /boolean bootstrapCancelled = cancelBootstrapRegistration\(\)/);
+  assert.match(cancelMethod, /RewardedRequestOwnership\.Request request/);
+  assert.match(cancelMethod, /emitTerminalError\([\s\S]*?request\.getCallbackId\(\)/);
+  assert.match(cancelMethod, /TakuFailureReason\.SDK_FAILURE/);
+  assert.match(cancelMethod, /put\(result, "cancelled", cancelled\)/);
+  assert.ok(
+    cancelMethod.indexOf('emitTerminalError') < cancelMethod.indexOf('emit(id, result, true)'),
+    'the original show must become terminal before the cancel acknowledgement',
+  );
+});
+
+test('native rewarded telemetry is serialized on the activity UI thread', () => {
+  const bridge = readFileSync(
+    resolve(
+      root,
+      'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/SkitTakuAdBridge.java',
+    ),
+    'utf8',
+  );
+
+  assert.match(
+    bridge,
+    /telemetry -> activity\.runOnUiThread\([\s\S]*?handleRewardedTelemetry\(id, telemetry\)/,
+  );
+  assert.match(bridge, /requestOwnership\.clearIfCurrent\(id\)/);
+});

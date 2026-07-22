@@ -61,6 +61,7 @@ public class MainActivity extends Activity {
     private SkitPrivacyConsentBridge privacyConsentBridge;
     private SkitRuntimeUpdateBridge runtimeUpdateBridge;
     private ThirdPartySdkBootstrap thirdPartySdkBootstrap;
+    private PangleInitializationRegistrationSlot pangleInitializationSlot;
     private boolean nativeMessageListenerAttached;
 
     @Override
@@ -148,6 +149,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         detachNativeMessageChannel();
+        cancelPangleInitializationRegistration();
         if (originGuard != null) {
             originGuard.updateTopLevel(null);
         }
@@ -249,20 +251,37 @@ public class MainActivity extends Activity {
         return new ThirdPartySdkBootstrap(new ThirdPartySdkBootstrap.Starter() {
             @Override
             public void startPangle(ThirdPartySdkBootstrap.Completion completion) {
-                PangleAdSdkInitializer.ensureStarted(
+                PangleInitializationRegistrationSlot slot =
+                        new PangleInitializationRegistrationSlot();
+                PangleInitializationRegistrationSlot previous = pangleInitializationSlot;
+                pangleInitializationSlot = slot;
+                if (previous != null) {
+                    previous.cancel();
+                }
+                PangleAdSdkInitializer.Registration registration =
+                        PangleAdSdkInitializer.ensureStarted(
                         getApplicationContext(),
                         BuildConfig.DEBUG,
                         new PangleAdSdkInitializer.Callback() {
                             @Override
                             public void onSuccess() {
+                                if (!slot.complete()) {
+                                    return;
+                                }
+                                clearPangleInitializationSlot(slot);
                                 completion.onSuccess();
                             }
 
                             @Override
                             public void onFailure(int code, String message) {
+                                if (!slot.complete()) {
+                                    return;
+                                }
+                                clearPangleInitializationSlot(slot);
                                 completion.onFailure(code, "Pangle initialization failed");
                             }
                         });
+                slot.attach(registration);
             }
 
             @Override
@@ -281,6 +300,60 @@ public class MainActivity extends Activity {
                         });
             }
         });
+    }
+
+    private void clearPangleInitializationSlot(PangleInitializationRegistrationSlot slot) {
+        if (pangleInitializationSlot == slot) {
+            pangleInitializationSlot = null;
+        }
+    }
+
+    private void cancelPangleInitializationRegistration() {
+        PangleInitializationRegistrationSlot slot = pangleInitializationSlot;
+        pangleInitializationSlot = null;
+        if (slot != null) {
+            slot.cancel();
+        }
+    }
+
+    private static final class PangleInitializationRegistrationSlot {
+        private PangleAdSdkInitializer.Registration registration;
+        private boolean terminal;
+
+        synchronized void attach(PangleAdSdkInitializer.Registration value) {
+            if (value == null) {
+                throw new IllegalArgumentException("Pangle initialization registration is required");
+            }
+            if (terminal) {
+                value.cancel();
+                return;
+            }
+            registration = value;
+        }
+
+        synchronized boolean complete() {
+            if (terminal) {
+                return false;
+            }
+            terminal = true;
+            registration = null;
+            return true;
+        }
+
+        void cancel() {
+            PangleAdSdkInitializer.Registration value;
+            synchronized (this) {
+                if (terminal) {
+                    return;
+                }
+                terminal = true;
+                value = registration;
+                registration = null;
+            }
+            if (value != null) {
+                value.cancel();
+            }
+        }
     }
 
     private void openExternal(Uri uri) {

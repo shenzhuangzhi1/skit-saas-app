@@ -85,6 +85,9 @@ test('third-party SDK bootstrap is explicit-consent gated and Pangle always wins
   const pangleOwnership = read(
     'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/PangleBootstrapOwnership.java',
   );
+  const pangleCoordinator = read(
+    'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/PangleSdkInitializationCoordinator.java',
+  );
 
   const onCreateBody = main.slice(
     main.indexOf('protected void onCreate'),
@@ -92,9 +95,14 @@ test('third-party SDK bootstrap is explicit-consent gated and Pangle always wins
   );
   assert.doesNotMatch(onCreateBody, /TakuRewardedAdController\.initialize\s*\(/);
   assert.match(main, /new ThirdPartySdkBootstrap\s*\(/);
-  assert.match(pangleInitializer, /bootstrapOwnership\.request\(globalReady\)/);
-  assert.match(pangleInitializer, /REJECT_UNOWNED_READY/);
-  assert.match(pangleInitializer, /completeSuccess\(attempt\)/);
+  assert.match(pangleInitializer, /INITIALIZATION_TIMEOUT_MILLIS\s*=\s*15_000L/);
+  assert.match(pangleInitializer, /INITIALIZATION\.ensureStarted\(globalReady/);
+  assert.match(pangleInitializer, /MAIN_HANDLER\.postDelayed\(runnable, delayMillis\)/);
+  assert.match(pangleCoordinator, /ownership\.request\(globalReady\)/);
+  assert.match(pangleCoordinator, /REJECT_UNOWNED_READY/);
+  assert.match(pangleCoordinator, /completeSuccess\(attempt, scheduler\)/);
+  assert.match(pangleCoordinator, /TIMEOUT_CODE/);
+  assert.match(pangleCoordinator, /ownership\.completeFailure\(attempt\)/);
   assert.match(pangleOwnership, /globalReady[\s\S]*REJECT_UNOWNED_READY/);
   assert.doesNotMatch(
     pangleInitializer,
@@ -111,7 +119,8 @@ test('third-party SDK bootstrap is explicit-consent gated and Pangle always wins
   assert.doesNotMatch(pangleBridge, /PangleAdSdkInitializer\.ensureStarted\s*\(/);
   assert.match(takuBridge, /thirdPartySdkBootstrap\.whenRewardedAdReady\s*\(/);
   assert.match(takuBridge, /onReady\(\)[\s\S]*activity\.runOnUiThread[\s\S]*startRewardedVideo/);
-  assert.match(takuBridge, /destroyed \|\| !id\.equals\(pendingCallbackId\)/);
+  assert.match(takuBridge, /destroyed \|\| !requestOwnership\.isCurrent\(id\)/);
+  assert.match(takuBridge, /requestOwnership\.clearIfCurrent\(id\)/);
   assert.match(takuBridge, /rewardedAdController\.start\s*\(/);
   assert.match(privacyBridge, /payload\.has\("granted"\)/);
   assert.match(privacyBridge, /payload\.getBoolean\("granted"\)/);

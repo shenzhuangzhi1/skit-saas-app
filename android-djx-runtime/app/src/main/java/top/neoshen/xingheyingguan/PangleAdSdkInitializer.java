@@ -1,152 +1,119 @@
 package top.neoshen.xingheyingguan;
 
 import android.content.Context;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 
 import com.bytedance.sdk.openadsdk.TTAdConfig;
 import com.bytedance.sdk.openadsdk.TTAdSdk;
 import com.bytedance.sdk.openadsdk.mediation.init.MediationConfig;
 
-import java.util.ArrayList;
-import java.util.List;
-
 final class PangleAdSdkInitializer {
     private static final String TAG = "SkitPangleAdSdk";
     private static final String APP_NAME = "短剧 SaaS";
-    private static final int UNOWNED_READY_CODE = -101;
-    private static final int OWNED_STATE_LOST_CODE = -102;
+    private static final long INITIALIZATION_TIMEOUT_MILLIS = 15_000L;
+    private static final Handler MAIN_HANDLER = new Handler(Looper.getMainLooper());
+    private static final PangleSdkInitializationCoordinator INITIALIZATION =
+            new PangleSdkInitializationCoordinator();
+    private static final PangleSdkInitializationCoordinator.Scheduler MAIN_SCHEDULER =
+            new PangleSdkInitializationCoordinator.Scheduler() {
+                @Override
+                public PangleSdkInitializationCoordinator.Cancellable schedule(
+                        Runnable runnable, long delayMillis) {
+                    if (!MAIN_HANDLER.postDelayed(runnable, delayMillis)) {
+                        throw new IllegalStateException("Pangle timeout scheduling failed");
+                    }
+                    return () -> MAIN_HANDLER.removeCallbacks(runnable);
+                }
 
-    private static final List<Callback> pendingCallbacks = new ArrayList<>();
-    private static final PangleBootstrapOwnership bootstrapOwnership =
-            new PangleBootstrapOwnership();
+                @Override
+                public void execute(Runnable runnable) {
+                    if (Looper.myLooper() == Looper.getMainLooper()) {
+                        runnable.run();
+                    } else if (!MAIN_HANDLER.post(runnable)) {
+                        throw new IllegalStateException("Pangle main-thread dispatch failed");
+                    }
+                }
+            };
 
     private PangleAdSdkInitializer() {
     }
 
-    static void ensureStarted(Context context, boolean debug, Callback callback) {
-        if (callback == null) {
-            throw new IllegalArgumentException("Pangle callback is required");
+    static Registration ensureStarted(Context context, boolean debug, Callback callback) {
+        if (context == null || callback == null) {
+            throw new IllegalArgumentException("Pangle context and callback are required");
         }
 
-        PangleBootstrapOwnership.Request ownershipRequest = null;
-        Throwable readinessFailure = null;
-        synchronized (PangleAdSdkInitializer.class) {
-            try {
-                boolean globalReady = TTAdSdk.isInitSuccess() || TTAdSdk.isSdkReady();
-                ownershipRequest = bootstrapOwnership.request(globalReady);
-            } catch (Throwable error) {
-                readinessFailure = error;
-            }
-            if (ownershipRequest != null
-                    && (ownershipRequest.getDecision()
-                    == PangleBootstrapOwnership.Decision.START_OWNED
-                    || ownershipRequest.getDecision()
-                    == PangleBootstrapOwnership.Decision.JOIN_OWNED_START)) {
-                pendingCallbacks.add(callback);
-                if (ownershipRequest.getDecision()
-                        == PangleBootstrapOwnership.Decision.JOIN_OWNED_START) {
-                    return;
-                }
-            }
-        }
-
-        if (readinessFailure != null) {
+        final boolean globalReady;
+        try {
+            globalReady = TTAdSdk.isInitSuccess() || TTAdSdk.isSdkReady();
+        } catch (Throwable readinessFailure) {
             Log.e(TAG, "TTAdSdk readiness check failed type="
                     + safeThrowableType(readinessFailure));
             callback.onFailure(-100, "TTAdSdk readiness check failed");
-            return;
-        }
-        if (ownershipRequest == null) {
-            callback.onFailure(-100, "TTAdSdk ownership decision failed");
-            return;
+            return () -> { };
         }
 
-        if (ownershipRequest.getDecision() == PangleBootstrapOwnership.Decision.REUSE_OWNED) {
-            callback.onSuccess();
-            return;
-        }
-        if (ownershipRequest.getDecision()
-                == PangleBootstrapOwnership.Decision.REJECT_UNOWNED_READY) {
-            callback.onFailure(UNOWNED_READY_CODE, "TTAdSdk has no owned bootstrap identity");
-            return;
-        }
-        if (ownershipRequest.getDecision()
-                == PangleBootstrapOwnership.Decision.REJECT_OWNED_STATE_LOST) {
-            callback.onFailure(OWNED_STATE_LOST_CODE, "TTAdSdk owned state is unavailable");
-            return;
-        }
+        Context applicationContext = context.getApplicationContext();
+        PangleSdkInitializationCoordinator.Registration registration =
+                INITIALIZATION.ensureStarted(globalReady, completion -> {
+                    try {
+                        TTAdConfig config = new TTAdConfig.Builder()
+                                .appId(BuildConfig.PANGLE_APP_ID)
+                                .appName(APP_NAME)
+                                .useMediation(true)
+                                .setMediationConfig(new MediationConfig.Builder().build())
+                                .supportMultiProcess(false)
+                                .debug(debug)
+                                .build();
+                        boolean accepted = TTAdSdk.init(applicationContext, config);
+                        Log.i(TAG, "TTAdSdk init accepted=" + accepted
+                                + ", version=" + TTAdSdk.SDK_VERSION_NAME);
+                        if (!accepted) {
+                            completion.onFailure(-100, "TTAdSdk init was not accepted");
+                            return;
+                        }
+                        TTAdSdk.start(new TTAdSdk.Callback() {
+                            @Override
+                            public void success() {
+                                Log.i(TAG, "TTAdSdk start success");
+                                completion.onSuccess();
+                            }
 
-        final long attempt = ownershipRequest.getAttempt();
-        try {
-            TTAdConfig config = new TTAdConfig.Builder()
-                    .appId(BuildConfig.PANGLE_APP_ID)
-                    .appName(APP_NAME)
-                    .useMediation(true)
-                    .setMediationConfig(new MediationConfig.Builder().build())
-                    .supportMultiProcess(false)
-                    .debug(debug)
-                    .build();
-            boolean accepted = TTAdSdk.init(context.getApplicationContext(), config);
-            Log.i(TAG, "TTAdSdk init accepted=" + accepted + ", version=" + TTAdSdk.SDK_VERSION_NAME);
-            if (!accepted) {
-                completeFailure(attempt, UNOWNED_READY_CODE, "TTAdSdk init was not accepted");
-                return;
-            }
-            TTAdSdk.start(new TTAdSdk.Callback() {
-                @Override
-                public void success() {
-                    Log.i(TAG, "TTAdSdk start success");
-                    completeSuccess(attempt);
-                }
+                            @Override
+                            public void fail(int code, String ignoredProviderMessage) {
+                                Log.e(TAG, "TTAdSdk start failed code=" + code);
+                                completion.onFailure(code, "TTAdSdk start failed");
+                            }
+                        });
+                    } catch (Throwable error) {
+                        Log.e(TAG, "TTAdSdk init failed type=" + safeThrowableType(error));
+                        completion.onFailure(-100, "TTAdSdk init failed");
+                    }
+                }, MAIN_SCHEDULER, INITIALIZATION_TIMEOUT_MILLIS,
+                        new PangleSdkInitializationCoordinator.Callback() {
+                            @Override
+                            public void onSuccess() {
+                                callback.onSuccess();
+                            }
 
-                @Override
-                public void fail(int code, String message) {
-                    Log.e(TAG, "TTAdSdk start failed code=" + code);
-                    completeFailure(attempt, code, "TTAdSdk start failed");
-                }
-            });
-        } catch (Throwable error) {
-            Log.e(TAG, "TTAdSdk init failed type=" + safeThrowableType(error));
-            completeFailure(attempt, -100, "TTAdSdk init failed");
-        }
-    }
-
-    private static void completeSuccess(long attempt) {
-        List<Callback> callbacks;
-        synchronized (PangleAdSdkInitializer.class) {
-            if (!bootstrapOwnership.completeSuccess(attempt)) {
-                return;
-            }
-            callbacks = drainCallbacksLocked();
-        }
-        for (Callback callback : callbacks) {
-            callback.onSuccess();
-        }
-    }
-
-    private static void completeFailure(long attempt, int code, String message) {
-        List<Callback> callbacks;
-        synchronized (PangleAdSdkInitializer.class) {
-            if (!bootstrapOwnership.completeFailure(attempt)) {
-                return;
-            }
-            callbacks = drainCallbacksLocked();
-        }
-        for (Callback callback : callbacks) {
-            callback.onFailure(code, message == null ? "TTAdSdk init failed" : message);
-        }
-    }
-
-    private static List<Callback> drainCallbacksLocked() {
-        List<Callback> callbacks = new ArrayList<>(pendingCallbacks);
-        pendingCallbacks.clear();
-        return callbacks;
+                            @Override
+                            public void onFailure(int code, String message) {
+                                callback.onFailure(code, message);
+                            }
+                        });
+        return registration::cancel;
     }
 
     interface Callback {
         void onSuccess();
 
         void onFailure(int code, String message);
+    }
+
+    interface Registration {
+        void cancel();
     }
 
     private static String safeThrowableType(Throwable error) {

@@ -113,7 +113,10 @@ test('native Taku bridge terminates callbacks on protocol or startup errors', ()
     messageFlow,
     /catch \(Throwable error\)[\s\S]*?emitTerminalError\(callbackId, protocol\)/,
   );
-  assert.match(showFlow, /catch \(Throwable error\)[\s\S]*?emitTerminalError\(id, protocol\)/);
+  assert.match(
+    showFlow,
+    /catch \(Throwable error\)[\s\S]*?terminateRequestIfCurrent\(id, TakuFailureReason\.SDK_FAILURE\)/,
+  );
   assert.match(
     bridge,
     /private void emitTerminalError\(String id, AdSessionProtocol protocol\)\s*\{\s*emitTerminalError\(id, protocol, TakuFailureReason\.SDK_FAILURE\)/,
@@ -213,20 +216,25 @@ test('native Taku terminal fallback uses cached show identity instead of reparsi
   );
 });
 
-test('native Taku bridge clears its pending callback even if terminal delivery throws', () => {
+test('native Taku bridge claims terminal ownership before delivering the callback', () => {
   const bridge = read(
     'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/SkitTakuAdBridge.java',
   );
-  const showFlow = between(
+  const terminalFlow = between(
     bridge,
-    'private void showRewardedVideo',
-    'private void emitTerminalError',
+    'private void handleRewardedTelemetry',
+    'private boolean cancelBootstrapRegistration',
   );
 
-  assert.match(
-    showFlow,
-    /try\s*\{\s*emit\(id, telemetryJson\(telemetry\), terminal, telemetry\.getFailureReason\(\)\);\s*\}\s*finally\s*\{[\s\S]*?terminal[\s\S]*?pendingCallbackId = null;/,
-    'terminal callback ownership must be released in a finally block',
+  const claim = terminalFlow.indexOf('requestOwnership.clearIfCurrent(id)');
+  const delivery = terminalFlow.indexOf(
+    'emit(id, telemetryJson(telemetry), terminal, telemetry.getFailureReason())',
+  );
+  assert.notEqual(claim, -1, 'terminal callback ownership must be claimed');
+  assert.notEqual(delivery, -1, 'the claimed terminal event must still be delivered');
+  assert.ok(
+    claim < delivery,
+    'terminal ownership must be cleared before delivery can throw or re-enter',
   );
 });
 

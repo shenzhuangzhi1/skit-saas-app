@@ -28,7 +28,8 @@ public class SkitTakuAdBridge {
     private final BridgeOriginGuard originGuard;
     private final TakuRewardedAdController rewardedAdController;
     private final ThirdPartySdkBootstrap thirdPartySdkBootstrap;
-    private String pendingCallbackId;
+    private final RewardedRequestOwnership requestOwnership =
+            new RewardedRequestOwnership();
     private ThirdPartySdkBootstrap.Registration pendingBootstrapRegistration;
     private boolean destroyed;
 
@@ -56,7 +57,7 @@ public class SkitTakuAdBridge {
         destroyed = true;
         cancelBootstrapRegistration();
         rewardedAdController.destroy();
-        pendingCallbackId = null;
+        requestOwnership.clear();
     }
 
     private void handleMessage(String rawMessage) {
@@ -89,10 +90,22 @@ public class SkitTakuAdBridge {
     }
 
     private void cancelRewardedVideo(String id) {
-        boolean cancelled = cancelBootstrapRegistration();
-        cancelled = rewardedAdController.cancelPendingSession() || cancelled;
-        if (cancelled) {
-            pendingCallbackId = null;
+        boolean cancelled = false;
+        try {
+            boolean bootstrapCancelled = cancelBootstrapRegistration();
+            if (bootstrapCancelled) {
+                RewardedRequestOwnership.Request request = requestOwnership.clear();
+                if (request != null) {
+                    emitTerminalError(
+                            request.getCallbackId(), request.getProtocol(),
+                            TakuFailureReason.SDK_FAILURE);
+                }
+                cancelled = true;
+            } else {
+                cancelled = rewardedAdController.cancelPendingSession();
+            }
+        } catch (Throwable cancellationFailure) {
+            logInternalFailure("cancel", cancellationFailure);
         }
         JSONObject result = new JSONObject();
         put(result, "success", true);
@@ -101,13 +114,10 @@ public class SkitTakuAdBridge {
     }
 
     private void showRewardedVideo(String id, AdSessionProtocol protocol) {
-        if (pendingCallbackId != null) {
-            throw new IllegalStateException("A Taku session is already active");
-        }
-        pendingCallbackId = id;
-        String presentationUrl = webView.getUrl();
+        requestOwnership.begin(id, protocol);
         BootstrapRegistrationSlot registrationSlot = new BootstrapRegistrationSlot(id);
         try {
+            String presentationUrl = webView.getUrl();
             ThirdPartySdkBootstrap.Registration registration =
                     thirdPartySdkBootstrap.whenRewardedAdReady(
                             new ThirdPartySdkBootstrap.Callback() {
@@ -115,7 +125,7 @@ public class SkitTakuAdBridge {
                 public void onReady() {
                     activity.runOnUiThread(() -> {
                         registrationSlot.complete();
-                        if (destroyed || !id.equals(pendingCallbackId)) {
+                        if (destroyed || !requestOwnership.isCurrent(id)) {
                             return;
                         }
                         startRewardedVideo(id, protocol, presentationUrl);
@@ -126,50 +136,50 @@ public class SkitTakuAdBridge {
                 public void onBlocked(int code, String message) {
                     activity.runOnUiThread(() -> {
                         registrationSlot.complete();
-                        if (destroyed || !id.equals(pendingCallbackId)) {
+                        if (destroyed) {
                             return;
                         }
-                        pendingCallbackId = null;
-                        emitTerminalError(id, protocol, bootstrapFailureReason(code));
+                        terminateRequestIfCurrent(id, bootstrapFailureReason(code));
                     });
                 }
             });
             registrationSlot.attach(registration);
         } catch (Throwable error) {
             cancelBootstrapRegistration();
-            if (id.equals(pendingCallbackId)) {
-                pendingCallbackId = null;
-            }
             logInternalFailure("bootstrap", error);
-            emitTerminalError(id, protocol);
+            terminateRequestIfCurrent(id, TakuFailureReason.SDK_FAILURE);
         }
     }
 
     private void startRewardedVideo(String id, AdSessionProtocol protocol,
                                     String presentationUrl) {
         try {
-            rewardedAdController.start(protocol, telemetry -> {
-                boolean terminal = telemetry.getState() == TakuNativeState.CLOSED
-                        || telemetry.getState() == TakuNativeState.ERROR;
-                try {
-                    emit(id, telemetryJson(telemetry), terminal, telemetry.getFailureReason());
-                } finally {
-                    if (terminal && id.equals(pendingCallbackId)) {
-                        pendingCallbackId = null;
-                    }
-                }
-            }, () -> {
+            rewardedAdController.start(protocol,
+                    telemetry -> activity.runOnUiThread(
+                            () -> handleRewardedTelemetry(id, telemetry)), () -> {
                 originGuard.requireTrustedTopLevel();
                 return presentationUrl != null && presentationUrl.equals(webView.getUrl());
             });
         } catch (Throwable error) {
             rewardedAdController.cancelActiveSession();
-            if (id.equals(pendingCallbackId)) {
-                pendingCallbackId = null;
-            }
             logInternalFailure("startup", error);
-            emitTerminalError(id, protocol);
+            terminateRequestIfCurrent(id, TakuFailureReason.SDK_FAILURE);
         }
+    }
+
+    private void handleRewardedTelemetry(String id, TakuTelemetry telemetry) {
+        boolean terminal = telemetry.getState() == TakuNativeState.CLOSED
+                || telemetry.getState() == TakuNativeState.ERROR;
+        if (terminal) {
+            RewardedRequestOwnership.Request completed =
+                    requestOwnership.clearIfCurrent(id);
+            if (completed == null) {
+                return;
+            }
+        } else if (!requestOwnership.isCurrent(id)) {
+            return;
+        }
+        emit(id, telemetryJson(telemetry), terminal, telemetry.getFailureReason());
     }
 
     private boolean cancelBootstrapRegistration() {
@@ -178,7 +188,11 @@ public class SkitTakuAdBridge {
         if (registration == null) {
             return false;
         }
-        registration.cancel();
+        try {
+            registration.cancel();
+        } catch (Throwable cancellationFailure) {
+            logInternalFailure("bootstrap-cancel", cancellationFailure);
+        }
         return true;
     }
 
@@ -192,7 +206,7 @@ public class SkitTakuAdBridge {
         }
 
         private void attach(ThirdPartySdkBootstrap.Registration value) {
-            if (terminal || destroyed || !callbackId.equals(pendingCallbackId)) {
+            if (terminal || destroyed || !requestOwnership.isCurrent(callbackId)) {
                 value.cancel();
                 return;
             }
@@ -230,6 +244,14 @@ public class SkitTakuAdBridge {
             put(result, "success", false);
         }
         emit(id, result, true, failureReason);
+    }
+
+    private void terminateRequestIfCurrent(String id, TakuFailureReason failureReason) {
+        RewardedRequestOwnership.Request request = requestOwnership.clearIfCurrent(id);
+        if (request == null) {
+            return;
+        }
+        emitTerminalError(request.getCallbackId(), request.getProtocol(), failureReason);
     }
 
     private static TakuFailureReason bootstrapFailureReason(int code) {
