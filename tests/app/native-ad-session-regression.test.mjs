@@ -238,7 +238,7 @@ test('native player always leaves a terminal SDK-owned unlock state', () => {
   );
   assert.match(
     failureFlow,
-    /finally \{\s*if \(sdkOwnedUnlock\) \{\s*finish\(\);\s*\}\s*\}/,
+    /finally \{\s*if \(sdkOwnedUnlock\) \{\s*finishHostActivity\(\);\s*\}\s*\}/,
     'an SDK-owned failure must return to H5 even if the third-party callback throws',
   );
 });

@@ -40,6 +40,7 @@ import top.neoshen.xingheyingguan.ad.NativePlayerCallbackEpoch;
 import top.neoshen.xingheyingguan.ad.NativePlayerGrant;
 import top.neoshen.xingheyingguan.ad.NativeRewardGate;
 import top.neoshen.xingheyingguan.ad.NativeSdkUnlockResumePolicy;
+import top.neoshen.xingheyingguan.ad.NativeSdkUnlockTerminalEvidence;
 import top.neoshen.xingheyingguan.ad.PlaybackEvidenceScope;
 import top.neoshen.xingheyingguan.ad.TakuFailureReason;
 import top.neoshen.xingheyingguan.ad.TakuNativeState;
@@ -99,6 +100,22 @@ public class DramaPlayerActivity extends Activity {
     private int lastPlayingEpisode;
     private boolean terminatingSdkUnlock;
 
+    /** DJX may synchronously finish its host immediately after its terminal callback. */
+    @Override
+    public void finish() {
+        if (!destroyed && sdkUnlockResumePolicy.shouldSuppressTerminalFinish()) {
+            Log.i(TAG, "suppressed terminal finish while server-authorized SDK resume is pending");
+            return;
+        }
+        super.finish();
+    }
+
+    /** Our own fatal paths must never be hidden by the narrow SDK terminal-finish guard. */
+    private void finishHostActivity() {
+        sdkUnlockResumePolicy.cancel();
+        super.finish();
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -116,7 +133,7 @@ public class DramaPlayerActivity extends Activity {
 
         if (!DJXSdk.isStartSuccess()) {
             Log.w(TAG, "finishing player activity because DJX is not started");
-            finish();
+            finishHostActivity();
             return;
         }
         dramaId = getIntent().getLongExtra("dramaId", 0L);
@@ -124,7 +141,7 @@ public class DramaPlayerActivity extends Activity {
         int progress = getIntent().getIntExtra("progress", 0);
         if (dramaId <= 0L || initialEpisode <= 0) {
             Log.w(TAG, "finishing player activity because launch scope is invalid");
-            finish();
+            finishHostActivity();
             return;
         }
         try {
@@ -210,7 +227,7 @@ public class DramaPlayerActivity extends Activity {
                             return;
                         }
                         Log.i(TAG, "DJX detail widget closed");
-                        finish();
+                        finishHostActivity();
                     }
 
                     @Override
@@ -265,6 +282,7 @@ public class DramaPlayerActivity extends Activity {
                 .replace(playerContainer.getId(), playerFragment,
                         String.valueOf(playerContainer.getId()))
                 .commitNow();
+        sdkUnlockResumePolicy.consumePendingResumeForAttachment(episode);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     }
 
@@ -314,7 +332,7 @@ public class DramaPlayerActivity extends Activity {
             long activeGeneration = unlockGeneration;
             int activeEpisode = activeUnlockEpisode;
             failActiveUnlock(activeGeneration, activeEpisode, "剧集切换状态异常，请重试");
-            finish();
+            finishHostActivity();
             return false;
         }
 
@@ -445,6 +463,9 @@ public class DramaPlayerActivity extends Activity {
                 if (terminatingSdkUnlock) {
                     return;
                 }
+                if (sdkUnlockResumePolicy.hasOutstandingResumeScope()) {
+                    return;
+                }
                 if (!playerCallbackEpoch.isCurrent(callbackEpoch)) {
                     return;
                 }
@@ -469,15 +490,20 @@ public class DramaPlayerActivity extends Activity {
                 if (!playerCallbackEpoch.isCurrent(callbackEpoch)) {
                     return;
                 }
-                long completedDramaId = drama == null ? 0L : drama.id;
-                int completedEpisode = episodeFromEvidence(extra);
+                long completedDramaId = drama == null
+                        ? 0L : (drama.id > 0L ? drama.id : -1L);
+                int completedEpisode = NativeSdkUnlockTerminalEvidence.reportedEpisode(
+                        extra, dramaId);
                 int resumeEpisode = sdkUnlockResumePolicy.completeWithServerEntitlements(
                         callbackEpoch,
                         completedDramaId,
                         completedEpisode,
                         grantedEpisodes);
                 clearPendingSdkUnlockScope();
-                Log.i(TAG, "server-gated unlock flow ended status=" + status);
+                Log.i(TAG, "server-gated unlock flow ended status=" + status
+                        + " reportedDramaId=" + completedDramaId
+                        + " reportedEpisode=" + completedEpisode
+                        + " resumeEpisode=" + resumeEpisode);
                 if (resumeEpisode > 0) {
                     handler.post(() -> resumeAfterSdkUnlock(callbackEpoch, resumeEpisode));
                 }
@@ -487,6 +513,12 @@ public class DramaPlayerActivity extends Activity {
             public void showCustomAd(DJXDrama drama,
                                      IDJXDramaUnlockListener.CustomAdCallback callback) {
                 if (terminatingSdkUnlock) {
+                    return;
+                }
+                if (sdkUnlockResumePolicy.hasOutstandingResumeScope()) {
+                    if (callback != null) {
+                        callback.onError();
+                    }
                     return;
                 }
                 if (!playerCallbackEpoch.isCurrent(callbackEpoch)) {
@@ -1026,7 +1058,7 @@ public class DramaPlayerActivity extends Activity {
                 Log.w(TAG, "DJX unlock error callback failed", callbackFailure);
             } finally {
                 if (sdkOwnedUnlock) {
-                    finish();
+                    finishHostActivity();
                 }
             }
         }
@@ -1034,7 +1066,7 @@ public class DramaPlayerActivity extends Activity {
             if (fallbackEpisode > 0 && grantedEpisodes.contains(fallbackEpisode)) {
                 initializePlayer(fallbackEpisode, 0);
             } else {
-                finish();
+                finishHostActivity();
             }
         }
     }
@@ -1064,8 +1096,17 @@ public class DramaPlayerActivity extends Activity {
     }
 
     private void resumeAfterSdkUnlock(long callbackEpoch, int episode) {
-        if (destroyed || !playerCallbackEpoch.isCurrent(callbackEpoch)
+        if (!sdkUnlockResumePolicy.isPendingResume(callbackEpoch, episode)) {
+            return;
+        }
+        if (destroyed) {
+            sdkUnlockResumePolicy.cancel();
+            return;
+        }
+        if (!playerCallbackEpoch.isCurrent(callbackEpoch)
                 || hasActiveUnlock() || !grantedEpisodes.contains(episode)) {
+            Log.w(TAG, "cancelling invalid pending SDK resume");
+            finishHostActivity();
             return;
         }
         lastAuthorizedEpisode = episode;
@@ -1105,7 +1146,12 @@ public class DramaPlayerActivity extends Activity {
 
     private void failAndFinish(String message) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
-        finish();
+        finishHostActivity();
+    }
+
+    @Override
+    public void onBackPressed() {
+        finishHostActivity();
     }
 
     @Override

@@ -213,6 +213,31 @@ test('DJX unlock callbacks are bound to the current widget epoch and preserve SD
     /resumeAfterSdkUnlock[\s\S]*?playerCallbackEpoch\.isCurrent\(callbackEpoch\)[\s\S]*?grantedEpisodes\.contains\(episode\)[\s\S]*?initializePlayer\(episode, 0\)/,
     'resume must reject stale widgets and episodes without server entitlement',
   );
+  assert.match(
+    player,
+    /public void finish\(\)[\s\S]*?sdkUnlockResumePolicy\.shouldSuppressTerminalFinish\(\)[\s\S]*?suppressed terminal finish[\s\S]*?super\.finish\(\)/,
+    'a synchronous DJX terminal finish must not beat the queued server-authorized resume',
+  );
+  assert.match(
+    player,
+    /commitNow\(\)[\s\S]*?consumePendingResumeForAttachment\(episode\)/,
+    'terminal-finish suppression must remain armed until the replacement player is attached',
+  );
+  assert.match(
+    player,
+    /unlockFlowStart[\s\S]*?sdkUnlockResumePolicy\.hasOutstandingResumeScope\(\)[\s\S]*?return;/,
+    'a pending resume must not be overwritten by a re-entrant unlock start',
+  );
+  assert.match(
+    player,
+    /showCustomAd[\s\S]*?sdkUnlockResumePolicy\.hasOutstandingResumeScope\(\)[\s\S]*?callback\.onError\(\)/,
+    'a pending resume must reject a re-entrant custom ad',
+  );
+  assert.match(
+    player,
+    /unlockFlowEnd[\s\S]*?NativeSdkUnlockTerminalEvidence\.reportedEpisode\(\s*extra, dramaId\)/,
+    'missing terminal evidence must be distinguished from malformed or mismatched evidence',
+  );
 });
 
 test('DJX never receives reward verification without signed provider-show provenance', () => {
