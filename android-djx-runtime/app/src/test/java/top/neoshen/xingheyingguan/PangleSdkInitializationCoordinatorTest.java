@@ -115,6 +115,119 @@ public class PangleSdkInitializationCoordinatorTest {
     }
 
     @Test
+    public void timedOutOwnedAttemptCanReconcileALateGlobalReadySingleton() {
+        PangleSdkInitializationCoordinator coordinator =
+                new PangleSdkInitializationCoordinator();
+        FakeStarter starter = new FakeStarter();
+        ManualScheduler scheduler = new ManualScheduler();
+        RecordingCallback timedOut = new RecordingCallback();
+
+        coordinator.ensureStarted(false, starter, scheduler, 5_000L, timedOut);
+        scheduler.fireScheduled(0);
+        starter.success(0);
+
+        RecordingCallback recovered = new RecordingCallback();
+        coordinator.ensureStarted(true, starter, scheduler, 5_000L, recovered);
+
+        assertEquals(1, timedOut.failures);
+        assertEquals(1, recovered.successes);
+        assertEquals(0, recovered.failures);
+        assertEquals(1, starter.starts);
+    }
+
+    @Test
+    public void globalReadyWithoutTheTimedOutAttemptsSuccessFailsClosed() {
+        PangleSdkInitializationCoordinator coordinator =
+                new PangleSdkInitializationCoordinator();
+        FakeStarter starter = new FakeStarter();
+        ManualScheduler scheduler = new ManualScheduler();
+        RecordingCallback timedOut = new RecordingCallback();
+
+        coordinator.ensureStarted(false, starter, scheduler, 5_000L, timedOut);
+        scheduler.fireScheduled(0);
+
+        RecordingCallback rejected = new RecordingCallback();
+        coordinator.ensureStarted(true, starter, scheduler, 5_000L, rejected);
+
+        assertEquals(1, timedOut.failures);
+        assertEquals(1, rejected.failures);
+        assertEquals(PangleSdkInitializationCoordinator.UNOWNED_READY_CODE,
+                rejected.lastCode);
+        assertEquals(1, starter.starts);
+    }
+
+    @Test
+    public void lateFailureRevokesOnlyItsCredentialAndPreservesAnotherTimedOutSuccess() {
+        PangleSdkInitializationCoordinator coordinator =
+                new PangleSdkInitializationCoordinator();
+        FakeStarter starter = new FakeStarter();
+        ManualScheduler scheduler = new ManualScheduler();
+        RecordingCallback firstTimedOut = new RecordingCallback();
+        RecordingCallback secondTimedOut = new RecordingCallback();
+
+        coordinator.ensureStarted(false, starter, scheduler, 5_000L, firstTimedOut);
+        scheduler.fireScheduled(0);
+        coordinator.ensureStarted(false, starter, scheduler, 5_000L, secondTimedOut);
+        scheduler.fireScheduled(1);
+        starter.failure(0, 902);
+        starter.success(1);
+
+        RecordingCallback recovered = new RecordingCallback();
+        coordinator.ensureStarted(true, starter, scheduler, 5_000L, recovered);
+
+        assertEquals(1, firstTimedOut.failures);
+        assertEquals(1, secondTimedOut.failures);
+        assertEquals(1, recovered.successes);
+        assertEquals(0, recovered.failures);
+        assertEquals(2, starter.starts);
+    }
+
+    @Test
+    public void lateReadyObservationCannotCompleteANewerAttempt() {
+        PangleSdkInitializationCoordinator coordinator =
+                new PangleSdkInitializationCoordinator();
+        FakeStarter starter = new FakeStarter();
+        ManualScheduler scheduler = new ManualScheduler();
+        RecordingCallback timedOut = new RecordingCallback();
+
+        coordinator.ensureStarted(false, starter, scheduler, 5_000L, timedOut);
+        scheduler.fireScheduled(0);
+
+        RecordingCallback retry = new RecordingCallback();
+        coordinator.ensureStarted(false, starter, scheduler, 5_000L, retry);
+        starter.success(0);
+
+        assertEquals(0, retry.successes);
+        assertEquals(0, retry.failures);
+        starter.success(1);
+        assertEquals(1, retry.successes);
+    }
+
+    @Test
+    public void oldOwnedSuccessSurvivesANewerAttemptFailureWithoutCompletingItsWaiter() {
+        PangleSdkInitializationCoordinator coordinator =
+                new PangleSdkInitializationCoordinator();
+        FakeStarter starter = new FakeStarter();
+        ManualScheduler scheduler = new ManualScheduler();
+        RecordingCallback timedOut = new RecordingCallback();
+
+        coordinator.ensureStarted(false, starter, scheduler, 5_000L, timedOut);
+        scheduler.fireScheduled(0);
+
+        RecordingCallback retry = new RecordingCallback();
+        coordinator.ensureStarted(false, starter, scheduler, 5_000L, retry);
+        starter.success(0);
+        assertEquals(0, retry.successes);
+        starter.failure(1, 902);
+        assertEquals(1, retry.failures);
+
+        RecordingCallback recovered = new RecordingCallback();
+        coordinator.ensureStarted(true, starter, scheduler, 5_000L, recovered);
+        assertEquals(1, recovered.successes);
+        assertEquals(2, starter.starts);
+    }
+
+    @Test
     public void cancelledOnlyWaiterStillTimesOutAndTheNextActivityCanRetry() {
         PangleSdkInitializationCoordinator coordinator =
                 new PangleSdkInitializationCoordinator();

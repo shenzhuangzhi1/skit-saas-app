@@ -1,5 +1,9 @@
 package top.neoshen.xingheyingguan;
 
+import java.util.Iterator;
+import java.util.LinkedHashSet;
+import java.util.Set;
+
 /**
  * Process-scoped ownership state for the global TTAdSdk singleton.
  *
@@ -35,21 +39,24 @@ final class PangleBootstrapOwnership {
 
     private enum State {
         IDLE,
-        STARTING,
-        OWNED_READY
+        STARTING
     }
+
+    private static final int MAX_RECOVERABLE_TIMEOUTS = 16;
 
     private State state = State.IDLE;
     private long currentAttempt;
+    private boolean ownedReady;
+    private final Set<Long> timedOutOwnedAttempts = new LinkedHashSet<>();
 
     synchronized Request request(boolean globalReady) {
-        if (state == State.OWNED_READY) {
+        if (state == State.STARTING) {
+            return new Request(Decision.JOIN_OWNED_START, currentAttempt);
+        }
+        if (ownedReady) {
             return new Request(
                     globalReady ? Decision.REUSE_OWNED : Decision.REJECT_OWNED_STATE_LOST,
                     currentAttempt);
-        }
-        if (state == State.STARTING) {
-            return new Request(Decision.JOIN_OWNED_START, currentAttempt);
         }
         if (globalReady) {
             return new Request(Decision.REJECT_UNOWNED_READY, currentAttempt);
@@ -63,7 +70,9 @@ final class PangleBootstrapOwnership {
         if (state != State.STARTING || currentAttempt != attempt) {
             return false;
         }
-        state = State.OWNED_READY;
+        state = State.IDLE;
+        ownedReady = true;
+        timedOutOwnedAttempts.clear();
         return true;
     }
 
@@ -73,5 +82,32 @@ final class PangleBootstrapOwnership {
         }
         state = State.IDLE;
         return true;
+    }
+
+    synchronized boolean completeTimeout(long attempt) {
+        if (state != State.STARTING || currentAttempt != attempt) {
+            return false;
+        }
+        state = State.IDLE;
+        timedOutOwnedAttempts.add(attempt);
+        while (timedOutOwnedAttempts.size() > MAX_RECOVERABLE_TIMEOUTS) {
+            Iterator<Long> iterator = timedOutOwnedAttempts.iterator();
+            iterator.next();
+            iterator.remove();
+        }
+        return true;
+    }
+
+    synchronized boolean reconcileTimedOutSuccess(long attempt) {
+        if (!timedOutOwnedAttempts.remove(attempt)) {
+            return false;
+        }
+        ownedReady = true;
+        timedOutOwnedAttempts.clear();
+        return true;
+    }
+
+    synchronized boolean reconcileTimedOutFailure(long attempt) {
+        return timedOutOwnedAttempts.remove(attempt);
     }
 }

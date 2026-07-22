@@ -57,4 +57,56 @@ public class PangleBootstrapOwnershipTest {
                 PangleBootstrapOwnership.Decision.REJECT_OWNED_STATE_LOST,
                 ownership.request(false).getDecision());
     }
+
+    @Test
+    public void timedOutAttemptRequiresItsExactLateSuccessBeforeReuse() {
+        PangleBootstrapOwnership ownership = new PangleBootstrapOwnership();
+
+        PangleBootstrapOwnership.Request timedOut = ownership.request(false);
+        assertTrue(ownership.completeTimeout(timedOut.getAttempt()));
+        assertEquals(
+                PangleBootstrapOwnership.Decision.REJECT_UNOWNED_READY,
+                ownership.request(true).getDecision());
+        assertTrue(ownership.reconcileTimedOutSuccess(timedOut.getAttempt()));
+        assertEquals(
+                PangleBootstrapOwnership.Decision.REUSE_OWNED,
+                ownership.request(true).getDecision());
+    }
+
+    @Test
+    public void evictsOnlyTheOldestWhenTheSeventeenthTimeoutIsRecorded() {
+        PangleBootstrapOwnership ownership = new PangleBootstrapOwnership();
+        long oldestAttempt = 0L;
+        long secondOldestAttempt = 0L;
+
+        for (int index = 0; index < 17; index += 1) {
+            PangleBootstrapOwnership.Request request = ownership.request(false);
+            if (index == 0) {
+                oldestAttempt = request.getAttempt();
+            }
+            if (index == 1) {
+                secondOldestAttempt = request.getAttempt();
+            }
+            assertTrue(ownership.completeTimeout(request.getAttempt()));
+        }
+
+        assertFalse(ownership.reconcileTimedOutSuccess(oldestAttempt));
+        assertTrue(ownership.reconcileTimedOutSuccess(secondOldestAttempt));
+    }
+
+    @Test
+    public void timedOutAttemptCanRetryButCannotCompleteTheReplacement() {
+        PangleBootstrapOwnership ownership = new PangleBootstrapOwnership();
+
+        PangleBootstrapOwnership.Request timedOut = ownership.request(false);
+        assertTrue(ownership.completeTimeout(timedOut.getAttempt()));
+        PangleBootstrapOwnership.Request retry = ownership.request(false);
+
+        assertEquals(PangleBootstrapOwnership.Decision.START_OWNED, retry.getDecision());
+        assertTrue(ownership.reconcileTimedOutSuccess(timedOut.getAttempt()));
+        assertEquals(
+                PangleBootstrapOwnership.Decision.JOIN_OWNED_START,
+                ownership.request(true).getDecision());
+        assertTrue(ownership.completeSuccess(retry.getAttempt()));
+    }
 }

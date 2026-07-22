@@ -94,7 +94,7 @@ final class PangleSdkInitializationCoordinator {
         long attempt = request.getAttempt();
         try {
             Cancellable scheduled = scheduler.schedule(
-                    () -> completeFailure(attempt, scheduler, TIMEOUT_CODE, TIMEOUT_MESSAGE),
+                    () -> completeTimeout(attempt, scheduler),
                     timeoutMillis);
             if (scheduled == null) {
                 throw new IllegalStateException("Pangle timeout scheduling returned null");
@@ -143,7 +143,11 @@ final class PangleSdkInitializationCoordinator {
         List<Pending> drained;
         Cancellable timeoutToCancel;
         synchronized (this) {
-            if (activeAttempt != attempt || !ownership.completeSuccess(attempt)) {
+            if (activeAttempt != attempt) {
+                ownership.reconcileTimedOutSuccess(attempt);
+                return;
+            }
+            if (!ownership.completeSuccess(attempt)) {
                 return;
             }
             activeAttempt = 0L;
@@ -157,11 +161,33 @@ final class PangleSdkInitializationCoordinator {
         }
     }
 
+    private void completeTimeout(long attempt, Scheduler scheduler) {
+        List<Pending> drained;
+        Cancellable timeoutToCancel;
+        synchronized (this) {
+            if (activeAttempt != attempt || !ownership.completeTimeout(attempt)) {
+                return;
+            }
+            activeAttempt = 0L;
+            timeoutToCancel = timeout;
+            timeout = null;
+            drained = drainCallbacksLocked();
+        }
+        cancelTimeout(timeoutToCancel);
+        for (Pending pending : drained) {
+            dispatchFailure(scheduler, pending, TIMEOUT_CODE, TIMEOUT_MESSAGE);
+        }
+    }
+
     private void completeFailure(long attempt, Scheduler scheduler, int code, String message) {
         List<Pending> drained;
         Cancellable timeoutToCancel;
         synchronized (this) {
-            if (activeAttempt != attempt || !ownership.completeFailure(attempt)) {
+            if (activeAttempt != attempt) {
+                ownership.reconcileTimedOutFailure(attempt);
+                return;
+            }
+            if (!ownership.completeFailure(attempt)) {
                 return;
             }
             activeAttempt = 0L;
