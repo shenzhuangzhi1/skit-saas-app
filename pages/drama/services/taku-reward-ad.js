@@ -91,7 +91,7 @@ export function showRewardedVideoAd(serverProtocol, options = {}) {
     let settled = false;
     let delivery = Promise.resolve();
     let deliveryError = null;
-    const timer = setTimeout(() => {
+    const loadWatchdog = setTimeout(() => {
       if (deliveryError) {
         finishWithError(
           flowError(
@@ -110,7 +110,7 @@ export function showRewardedVideoAd(serverProtocol, options = {}) {
         return;
       }
       settled = true;
-      clearTimeout(timer);
+      clearTimeout(loadWatchdog);
       reject(
         error instanceof Error
           ? error
@@ -172,7 +172,7 @@ export function showRewardedVideoAd(serverProtocol, options = {}) {
           return;
         }
         settled = true;
-        clearTimeout(timer);
+        clearTimeout(loadWatchdog);
         const rewardObserved = telemetry.clientRewardObserved === true;
         resolve(
           Object.freeze({
@@ -196,6 +196,9 @@ export function showRewardedVideoAd(serverProtocol, options = {}) {
           flowError('NATIVE_PROTOCOL_INVALID', error?.message || '原生广告回调无效', error),
         );
         return;
+      }
+      if (telemetry.nativeState === 'SHOWING') {
+        clearTimeout(loadWatchdog);
       }
       const clientEvent = nativeTelemetryToClientEvent(telemetry);
       if (clientEvent) {

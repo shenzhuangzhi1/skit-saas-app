@@ -332,6 +332,113 @@ test('Taku bridge exposes no-fill as a structured error after recording FAILED',
   }
 });
 
+test('a shown rewarded ad survives the loading timeout until its native terminal callback', async () => {
+  const originalUni = globalThis.uni;
+  let emitTelemetry;
+  globalThis.uni = {
+    requireNativePlugin() {
+      return {
+        showRewardedVideo(_payload, callback) {
+          emitTelemetry = callback;
+          callback(event());
+          callback(event({ callbackSequence: 1, nativeState: 'LOADED' }));
+          callback(
+            event({
+              callbackSequence: 2,
+              nativeState: 'SHOWING',
+              providerShowId: 'show-after-background',
+              networkFirmId: 66,
+              adsourceId: 'source-1',
+            }),
+          );
+        },
+      };
+    },
+  };
+  try {
+    const taku = await importTakuSource();
+    const clientEvents = [];
+    let settledBeforeNativeTerminal = false;
+    const resultPromise = taku
+      .showRewardedVideoAd(serverProtocol, {
+        onClientEvent: async (clientEvent) => clientEvents.push(clientEvent),
+        timeoutMs: 30,
+        telemetryRetryDelaysMs: [],
+      })
+      .then(
+        (value) => ({ value }),
+        (error) => ({ error }),
+      )
+      .finally(() => {
+        settledBeforeNativeTerminal = true;
+      });
+
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 60));
+    assert.equal(
+      settledBeforeNativeTerminal,
+      false,
+      'SHOWING and REWARD_OBSERVED are non-terminal until native CLOSED or ERROR',
+    );
+    emitTelemetry(
+      event({
+        callbackSequence: 3,
+        nativeState: 'SHOWING',
+        providerShowId: 'show-after-background',
+        networkFirmId: 66,
+        adsourceId: 'source-1',
+        clientRewardObserved: true,
+      }),
+    );
+    emitTelemetry(
+      event({
+        callbackSequence: 4,
+        nativeState: 'CLOSED',
+        providerShowId: 'show-after-background',
+        networkFirmId: 66,
+        adsourceId: 'source-1',
+        clientRewardObserved: true,
+        closed: true,
+      }),
+    );
+
+    const result = await resultPromise;
+    assert.equal(result.error, undefined);
+    assert.equal(result.value?.outcome, 'REWARD_OBSERVED');
+    assert.deepEqual(
+      clientEvents.map((clientEvent) => clientEvent.eventType),
+      ['LOAD_STARTED', 'SHOWN', 'REWARD_OBSERVED', 'CLOSED'],
+    );
+  } finally {
+    globalThis.uni = originalUni;
+  }
+});
+
+test('a rewarded ad that never reaches SHOWING still fails at the loading timeout', async () => {
+  const originalUni = globalThis.uni;
+  globalThis.uni = {
+    requireNativePlugin() {
+      return {
+        showRewardedVideo(_payload, callback) {
+          callback(event());
+        },
+      };
+    },
+  };
+  try {
+    const taku = await importTakuSource();
+    await assert.rejects(
+      () =>
+        taku.showRewardedVideoAd(serverProtocol, {
+          timeoutMs: 20,
+          telemetryRetryDelaysMs: [],
+        }),
+      (error) => error?.code === 'NATIVE_AD_TIMEOUT',
+    );
+  } finally {
+    globalThis.uni = originalUni;
+  }
+});
+
 test('maps bounded bootstrap failure hints to stable H5 errors without widening telemetry', async () => {
   const originalUni = globalThis.uni;
   const mappings = [
