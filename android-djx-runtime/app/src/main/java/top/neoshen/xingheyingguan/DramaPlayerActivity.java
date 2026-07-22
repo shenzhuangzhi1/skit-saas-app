@@ -552,6 +552,9 @@ public class DramaPlayerActivity extends Activity {
                     adSessionRecoveryPolicy.begin(unlockGeneration);
                     sdkUnlockResumePolicy.begin(
                             callbackEpoch, targetDramaId, targetEpisode);
+                    Log.i(TAG, "SDK_UNLOCK_SCOPE_BEGIN dramaId=" + targetDramaId
+                            + " episode=" + targetEpisode
+                            + " callbackEpoch=" + callbackEpoch);
                 } catch (IllegalArgumentException | IllegalStateException invalidScope) {
                     sdkUnlockResumePolicy.cancel();
                     adSessionRecoveryPolicy.cancel(unlockGeneration);
@@ -606,12 +609,17 @@ public class DramaPlayerActivity extends Activity {
         if (destroyed || !playerCallbackEpoch.isCurrent(callbackEpoch)) {
             return;
         }
+        boolean hadSdkOwnedScope = sdkUnlockResumePolicy.hasOutstandingResumeScope();
         int resumeEpisode = sdkUnlockResumePolicy.observeTerminal(
                 callbackEpoch, completedDramaId, completedEpisode);
         Log.i(TAG, "server-gated unlock flow ended status=" + terminalStatus
                 + " reportedDramaId=" + completedDramaId
                 + " reportedEpisode=" + completedEpisode
                 + " resumeEpisode=" + resumeEpisode);
+        if (!hadSdkOwnedScope) {
+            Log.i(TAG, "ignored DJX terminal callback without an SDK-owned unlock scope");
+            return;
+        }
         if (resumeEpisode == NativeSdkUnlockResumePolicy.REJECTED_EPISODE) {
             cancelSdkUnlockRendezvousTimeout();
             if (hasActiveUnlock()) {
@@ -1062,6 +1070,9 @@ public class DramaPlayerActivity extends Activity {
         long callbackEpoch = activeUnlockCallbackEpoch;
         boolean pageGateUnlock = activePageGateUnlock;
         int resumeProgress = activePageGateProgress;
+        Log.i(TAG, "UNLOCK_COMPLETION_OWNER sdk=" + (callback != null)
+                + " pageGate=" + pageGateUnlock
+                + " episode=" + targetEpisode);
         HashMap<String, Object> rewardPayload = new HashMap<>();
         rewardPayload.put("authority", "signed_reward_provenance");
         rewardPayload.put("dramaId", dramaId);

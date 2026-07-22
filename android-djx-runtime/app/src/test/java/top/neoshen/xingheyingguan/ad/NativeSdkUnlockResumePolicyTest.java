@@ -139,8 +139,18 @@ public class NativeSdkUnlockResumePolicyTest {
         assertTrue((Boolean) consumeForAttachment.invoke(policy, targetEpisode));
         assertFalse((Boolean) shouldSuppressTerminalFinish.invoke(policy));
         assertFalse((Boolean) hasOutstandingResumeScope.invoke(policy));
-        assertEquals(-1, observeTerminal.invoke(
+        assertEquals(
+                "an unrelated DJX terminal callback has no scope to reject",
+                0, observeTerminal.invoke(
                 policy, callbackEpoch, dramaId, targetEpisode));
+    }
+
+    @Test
+    public void ignoresTerminalCallbacksThatHaveNoSdkOwnedScope() {
+        NativeSdkUnlockResumePolicy policy = new NativeSdkUnlockResumePolicy();
+
+        assertEquals(0, policy.observeTerminal(7L, 1286L, 0));
+        assertFalse(policy.hasOutstandingResumeScope());
     }
 
     @Test

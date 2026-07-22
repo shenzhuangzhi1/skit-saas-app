@@ -38,7 +38,7 @@ public final class NativeSdkUnlockResumePolicy {
     public synchronized int observeTerminal(
             long callbackEpoch, long reportedDramaId, int reportedEpisode) {
         if (this.callbackEpoch == 0L) {
-            return REJECTED_EPISODE;
+            return 0;
         }
         if (this.callbackEpoch != callbackEpoch) {
             return 0;

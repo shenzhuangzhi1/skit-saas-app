@@ -7,6 +7,14 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const read = (path) => readFileSync(resolve(root, path), 'utf8');
 
+function between(source, start, end) {
+  const startIndex = source.indexOf(start);
+  const endIndex = source.indexOf(end, startIndex + start.length);
+  assert.notEqual(startIndex, -1, `missing source marker: ${start}`);
+  assert.notEqual(endIndex, -1, `missing source marker: ${end}`);
+  return source.slice(startIndex, endIndex);
+}
+
 function sourceUrl(source) {
   return `data:text/javascript;base64,${Buffer.from(source).toString(
     'base64',
@@ -212,6 +220,36 @@ test('DJX unlock callbacks are bound to the current widget epoch and preserve SD
     player,
     /handleSdkUnlockTerminal[\s\S]*?sdkUnlockResumePolicy\.observeTerminal\([\s\S]*?queueSdkUnlockResume/,
     'the terminal callback must join the exact registered episode even when DJX reports an ad error',
+  );
+  const terminalHandler = between(
+    player,
+    'private void handleSdkUnlockTerminal',
+    'private void verifyExistingEntitlementOrStartAd',
+  );
+  const scopeSnapshot = terminalHandler.indexOf(
+    'boolean hadSdkOwnedScope = sdkUnlockResumePolicy.hasOutstandingResumeScope()',
+  );
+  const terminalObservation = terminalHandler.indexOf(
+    'sdkUnlockResumePolicy.observeTerminal(',
+  );
+  const unownedGuard = terminalHandler.indexOf('if (!hadSdkOwnedScope)');
+  const unownedReturn = terminalHandler.indexOf('return;', unownedGuard);
+  const mismatchGuard = terminalHandler.indexOf(
+    'resumeEpisode == NativeSdkUnlockResumePolicy.REJECTED_EPISODE',
+  );
+  const mismatchFailure = terminalHandler.indexOf('failActiveUnlock(', mismatchGuard);
+  const mismatchFinish = terminalHandler.indexOf('finishHostActivity()', mismatchGuard);
+  assert.ok(
+    scopeSnapshot !== -1 &&
+      terminalObservation > scopeSnapshot &&
+      unownedGuard > terminalObservation &&
+      unownedReturn > unownedGuard &&
+      mismatchGuard > unownedReturn,
+    'a terminal without an SDK-owned scope must return before any fatal mismatch handling',
+  );
+  assert.ok(
+    mismatchFailure > mismatchGuard && mismatchFinish > mismatchFailure,
+    'an explicit mismatch in a current SDK-owned scope must still fail the unlock or host',
   );
   assert.doesNotMatch(
     player,
