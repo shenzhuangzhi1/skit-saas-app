@@ -188,6 +188,61 @@ test('native player ends an unrewarded close without entering reward verificatio
   );
 });
 
+test('native player always leaves a terminal SDK-owned unlock state', () => {
+  const player = read(
+    'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/DramaPlayerActivity.java',
+  );
+  const unlockListener = between(
+    player,
+    'private IDJXDramaUnlockListener createUnlockListener',
+    'private void verifyExistingEntitlementOrStartAd',
+  );
+  const failureFlow = between(
+    player,
+    'private void failActiveUnlock',
+    'private void clearActiveUnlock',
+  );
+
+  assert.match(
+    unlockListener,
+    /completeWithServerEntitlements\([\s\S]*?completedEpisode[\s\S]*?grantedEpisodes\)/,
+    'a signed server entitlement must survive a DJX error callback that omits its episode field',
+  );
+  assert.match(
+    failureFlow,
+    /boolean sdkOwnedUnlock = callback != null && !pageGateUnlock/,
+    'the failure path must remember whether DJX owns the terminal UI state',
+  );
+  const terminalGuard = failureFlow.indexOf('terminatingSdkUnlock = true');
+  const externalErrorCallback = failureFlow.indexOf('callback.onError()');
+  assert.notEqual(terminalGuard, -1, 'SDK-owned failure must enter a terminal guard');
+  assert.notEqual(externalErrorCallback, -1, 'DJX must receive its terminal error callback');
+  assert.ok(
+    terminalGuard < externalErrorCallback,
+    'terminal ownership must be established before the external DJX callback can re-enter',
+  );
+  assert.match(
+    unlockListener,
+    /unlockFlowStart[\s\S]*?if \(terminatingSdkUnlock\) \{\s*return;\s*\}/,
+    'terminal callback re-entry must not start another SDK unlock flow',
+  );
+  assert.match(
+    unlockListener,
+    /showCustomAd[\s\S]*?if \(terminatingSdkUnlock\) \{\s*return;\s*\}/,
+    'terminal callback re-entry must not create another ad session',
+  );
+  assert.match(
+    failureFlow,
+    /if \(callback != null\) \{\s*try \{\s*callback\.onError\(\);\s*\} catch \(Throwable callbackFailure\)/,
+    'a third-party callback exception must not prevent terminal cleanup',
+  );
+  assert.match(
+    failureFlow,
+    /finally \{\s*if \(sdkOwnedUnlock\) \{\s*finish\(\);\s*\}\s*\}/,
+    'an SDK-owned failure must return to H5 even if the third-party callback throws',
+  );
+});
+
 test('native Taku terminal fallback uses cached show identity instead of reparsing bad adInfo', () => {
   const controller = read(
     'android-djx-runtime/app/src/main/java/top/neoshen/xingheyingguan/TakuRewardedAdController.java',

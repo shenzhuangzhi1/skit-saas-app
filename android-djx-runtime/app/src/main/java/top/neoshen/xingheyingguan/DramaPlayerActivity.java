@@ -97,6 +97,7 @@ public class DramaPlayerActivity extends Activity {
     private int pendingResumeEpisode;
     private int pendingResumeProgress;
     private int lastPlayingEpisode;
+    private boolean terminatingSdkUnlock;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -285,6 +286,9 @@ public class DramaPlayerActivity extends Activity {
     }
 
     private boolean enforceEpisodeAccess(int episode, int progress) {
+        if (terminatingSdkUnlock) {
+            return false;
+        }
         NativeEpisodeUnlockPolicy.AccessRequest access;
         try {
             access = unlockPolicy.request(dramaId, episode, grantedEpisodes);
@@ -438,6 +442,9 @@ public class DramaPlayerActivity extends Activity {
             public void unlockFlowStart(DJXDrama drama,
                                         IDJXDramaUnlockListener.UnlockCallback callback,
                                         Map<String, ? extends Object> extra) {
+                if (terminatingSdkUnlock) {
+                    return;
+                }
                 if (!playerCallbackEpoch.isCurrent(callbackEpoch)) {
                     return;
                 }
@@ -464,11 +471,11 @@ public class DramaPlayerActivity extends Activity {
                 }
                 long completedDramaId = drama == null ? 0L : drama.id;
                 int completedEpisode = episodeFromEvidence(extra);
-                int resumeEpisode = sdkUnlockResumePolicy.completeWithServerEntitlement(
+                int resumeEpisode = sdkUnlockResumePolicy.completeWithServerEntitlements(
                         callbackEpoch,
                         completedDramaId,
                         completedEpisode,
-                        grantedEpisodes.contains(completedEpisode));
+                        grantedEpisodes);
                 clearPendingSdkUnlockScope();
                 Log.i(TAG, "server-gated unlock flow ended status=" + status);
                 if (resumeEpisode > 0) {
@@ -479,6 +486,9 @@ public class DramaPlayerActivity extends Activity {
             @Override
             public void showCustomAd(DJXDrama drama,
                                      IDJXDramaUnlockListener.CustomAdCallback callback) {
+                if (terminatingSdkUnlock) {
+                    return;
+                }
                 if (!playerCallbackEpoch.isCurrent(callbackEpoch)) {
                     if (callback != null) {
                         callback.onError();
@@ -998,16 +1008,28 @@ public class DramaPlayerActivity extends Activity {
         }
         IDJXDramaUnlockListener.CustomAdCallback callback = activeUnlockCallback;
         boolean pageGateUnlock = activePageGateUnlock;
+        boolean sdkOwnedUnlock = callback != null && !pageGateUnlock;
         int fallbackEpisode = lastAuthorizedEpisode;
+        if (sdkOwnedUnlock) {
+            terminatingSdkUnlock = true;
+        }
         sdkUnlockResumePolicy.cancel();
         clearActiveUnlock();
         if (destroyed) {
             return;
         }
-        if (callback != null) {
-            callback.onError();
-        }
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
+        if (callback != null) {
+            try {
+                callback.onError();
+            } catch (Throwable callbackFailure) {
+                Log.w(TAG, "DJX unlock error callback failed", callbackFailure);
+            } finally {
+                if (sdkOwnedUnlock) {
+                    finish();
+                }
+            }
+        }
         if (pageGateUnlock) {
             if (fallbackEpisode > 0 && grantedEpisodes.contains(fallbackEpisode)) {
                 initializePlayer(fallbackEpisode, 0);

@@ -200,7 +200,7 @@ test('DJX unlock callbacks are bound to the current widget epoch and preserve SD
   );
   assert.match(
     player,
-    /unlockFlowEnd[\s\S]*?sdkUnlockResumePolicy\.completeWithServerEntitlement\([\s\S]*?grantedEpisodes\.contains\(completedEpisode\)[\s\S]*?resumeAfterSdkUnlock/,
+    /unlockFlowEnd[\s\S]*?sdkUnlockResumePolicy\.completeWithServerEntitlements\([\s\S]*?completedEpisode[\s\S]*?grantedEpisodes\)[\s\S]*?resumeAfterSdkUnlock/,
     'server entitlement must resume the exact episode even when DJX reports a custom-ad error',
   );
   assert.doesNotMatch(

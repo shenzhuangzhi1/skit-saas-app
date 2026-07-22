@@ -3,6 +3,8 @@ package top.neoshen.xingheyingguan.ad;
 import org.junit.Test;
 
 import java.lang.reflect.Method;
+import java.util.Collection;
+import java.util.Collections;
 
 import static org.junit.Assert.assertEquals;
 
@@ -22,8 +24,8 @@ public class NativeSdkUnlockResumePolicyTest {
         Object policy = type.getConstructor().newInstance();
         Method arm = type.getMethod("arm", long.class, long.class, int.class);
         Method complete = type.getMethod(
-                "completeWithServerEntitlement",
-                long.class, long.class, int.class, boolean.class);
+                "completeWithServerEntitlements",
+                long.class, long.class, int.class, Collection.class);
 
         long callbackEpoch = 7L;
         long dramaId = 1346L;
@@ -31,16 +33,27 @@ public class NativeSdkUnlockResumePolicyTest {
         arm.invoke(policy, callbackEpoch, dramaId, targetEpisode);
 
         assertEquals(0, complete.invoke(
-                policy, callbackEpoch, dramaId, targetEpisode, false));
+                policy, callbackEpoch, dramaId, targetEpisode, Collections.emptyList()));
 
         arm.invoke(policy, callbackEpoch, dramaId, targetEpisode);
         assertEquals(0, complete.invoke(
-                policy, callbackEpoch, dramaId, targetEpisode + 1, true));
+                policy, callbackEpoch, dramaId, targetEpisode + 1,
+                Collections.singletonList(targetEpisode)));
+
+        arm.invoke(policy, callbackEpoch, dramaId, targetEpisode);
+        assertEquals(
+                "DJX may omit the episode when its advisory status reports an ad error; "
+                        + "the exact armed episode must still resume from server entitlement",
+                targetEpisode,
+                complete.invoke(policy, callbackEpoch, dramaId, 0,
+                        Collections.singletonList(targetEpisode)));
 
         arm.invoke(policy, callbackEpoch, dramaId, targetEpisode);
         assertEquals(targetEpisode, complete.invoke(
-                policy, callbackEpoch, dramaId, targetEpisode, true));
+                policy, callbackEpoch, dramaId, targetEpisode,
+                Collections.singletonList(targetEpisode)));
         assertEquals(0, complete.invoke(
-                policy, callbackEpoch, dramaId, targetEpisode, true));
+                policy, callbackEpoch, dramaId, targetEpisode,
+                Collections.singletonList(targetEpisode)));
     }
 }
