@@ -106,7 +106,12 @@ http.interceptors.request.use(
 
     config.header['Accept'] = '*/*';
     if (config.custom.tenant !== false) {
-      config.header['tenant-id'] = getTenantId();
+      const requestTenantId = getTenantId();
+      if (String(requestTenantId ?? '').trim()) {
+        config.header['tenant-id'] = requestTenantId;
+      } else {
+        delete config.header['tenant-id'];
+      }
     } else {
       delete config.header['tenant-id'];
     }
@@ -337,7 +342,12 @@ const getAuthorizationHeader = (token) => {
 
 /** 获得租户编号 */
 export const getTenantId = () => {
-  return uni.getStorageSync('tenant-id') || tenantId;
+  const storedTenantId = uni.getStorageSync('tenant-id');
+  const BUILT_AGENT_CODE = String(import.meta.env?.VITE_SKIT_AGENT_CODE || '').trim();
+  if (BUILT_AGENT_CODE) {
+    return storedTenantId || undefined;
+  }
+  return storedTenantId || tenantId;
 };
 
 const request = (config) => {

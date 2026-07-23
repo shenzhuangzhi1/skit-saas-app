@@ -6,7 +6,7 @@
       </view>
       <view>
         <view class="title">我的追剧</view>
-        <view class="subtitle">同步参考项目的追剧入口</view>
+        <view class="subtitle">当前账号在本设备的追剧记录</view>
       </view>
     </view>
 

@@ -2,18 +2,12 @@ import request from '@/sheep/request';
 
 const PointApi = {
   // 获得用户积分记录分页
-  getPointRecordPage: (params) => {
-    if (params.addStatus === undefined) {
-      delete params.addStatus
-    }
-    const queryString = Object.keys(params)
-      .map((key) => encodeURIComponent(key) + '=' + params[key])
-      .join('&');
-    return request({
-      url: `/member/point/record/page?${queryString}`,
+  getPointRecordPage: (params = {}) =>
+    request({
+      url: '/skit/member/point-records',
       method: 'GET',
-    });
-  }
+      params,
+    }),
 };
 
 export default PointApi;

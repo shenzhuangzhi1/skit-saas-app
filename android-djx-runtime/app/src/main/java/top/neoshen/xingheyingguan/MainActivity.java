@@ -7,12 +7,16 @@ import android.content.res.AssetManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.util.Log;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
 import android.webkit.ConsoleMessage;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.FrameLayout;
 
 import androidx.webkit.JavaScriptReplyProxy;
 import androidx.webkit.WebMessageCompat;
@@ -53,6 +57,9 @@ public class MainActivity extends Activity {
     private static final String TAG = "SkitDjxRuntime";
     private static final String ASSET_HOST = "127.0.0.1";
     private static final int ASSET_PORT = 18765;
+    private static final int BOTTOM_NAV_HEIGHT_DP = 56;
+    private FrameLayout rootContainer;
+    private FrameLayout bannerHost;
     private WebView webView;
     private LocalAssetServer assetServer;
     private BridgeOriginGuard originGuard;
@@ -72,8 +79,20 @@ public class MainActivity extends Activity {
         assetServer.start();
 
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
+        rootContainer = new FrameLayout(this);
         webView = new WebView(this);
-        setContentView(webView);
+        rootContainer.addView(webView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        bannerHost = new FrameLayout(this);
+        bannerHost.setVisibility(View.GONE);
+        FrameLayout.LayoutParams bannerLayout = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        bannerLayout.gravity = Gravity.BOTTOM;
+        bannerLayout.bottomMargin = dpToPx(BOTTOM_NAV_HEIGHT_DP);
+        rootContainer.addView(bannerHost, bannerLayout);
+        setContentView(rootContainer);
         originGuard = new BridgeOriginGuard(assetServer.getBaseUrl());
 
         WebSettings settings = webView.getSettings();
@@ -157,6 +176,11 @@ public class MainActivity extends Activity {
             webView.destroy();
             webView = null;
         }
+        if (rootContainer != null) {
+            rootContainer.removeAllViews();
+            rootContainer = null;
+        }
+        bannerHost = null;
         if (assetServer != null) {
             assetServer.close();
             assetServer = null;
@@ -178,7 +202,7 @@ public class MainActivity extends Activity {
         pangleDramaBridge = new SkitPangleDramaBridge(
                 this, webView, originGuard, thirdPartySdkBootstrap);
         takuAdBridge = new SkitTakuAdBridge(
-                this, webView, originGuard, thirdPartySdkBootstrap);
+                this, webView, originGuard, thirdPartySdkBootstrap, bannerHost);
         privacyConsentBridge = new SkitPrivacyConsentBridge(
                 this, webView, originGuard, thirdPartySdkBootstrap);
         runtimeUpdateBridge = new SkitRuntimeUpdateBridge(this, webView, originGuard);
@@ -245,6 +269,10 @@ public class MainActivity extends Activity {
         privacyConsentBridge = null;
         runtimeUpdateBridge = null;
         nativeMessageListenerAttached = false;
+    }
+
+    private int dpToPx(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
     private ThirdPartySdkBootstrap createThirdPartySdkBootstrap() {

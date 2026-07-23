@@ -25,8 +25,8 @@
           <view class="stat-label">观看</view>
         </view>
         <view class="stat-item">
-          <view class="stat-value">{{ isLogin ? '已登录' : '游客' }}</view>
-          <view class="stat-label">账号状态</view>
+          <view class="stat-value">{{ isLogin ? userInfo.pointBalance || 0 : '-' }}</view>
+          <view class="stat-label">积分</view>
         </view>
       </view>
 
@@ -74,6 +74,20 @@
       </view>
 
       <view class="panel menu-panel">
+        <view v-if="isLogin" class="menu-item" @tap="goSignIn">
+          <view class="menu-left">
+            <uni-icons type="calendar-filled" size="21" color="#ff7b32" />
+            <text>签到打卡</text>
+          </view>
+          <uni-icons type="right" size="18" color="#b0b0b0" />
+        </view>
+        <view v-if="isLogin" class="menu-item" @tap="goPointRecords">
+          <view class="menu-left">
+            <uni-icons type="wallet-filled" size="21" color="#20a66a" />
+            <text>积分记录</text>
+          </view>
+          <uni-icons type="right" size="18" color="#b0b0b0" />
+        </view>
         <view v-if="isLogin" class="menu-item" @tap="goTeam">
           <view class="menu-left">
             <uni-icons type="staff-filled" size="21" color="#7b61ff" />
@@ -88,26 +102,12 @@
           </view>
           <uni-icons type="right" size="18" color="#b0b0b0" />
         </view>
-        <view class="menu-item" @tap="goVip">
-          <view class="menu-left">
-            <uni-icons type="star-filled" size="21" color="#ffb423" />
-            <text>VIP 权益</text>
-          </view>
-          <uni-icons type="right" size="18" color="#b0b0b0" />
-        </view>
         <view class="menu-item" @tap="goAbout">
           <view class="menu-left">
             <uni-icons type="info-filled" size="21" color="#3d8bff" />
             <text>关于短剧 SaaS</text>
           </view>
           <uni-icons type="right" size="18" color="#b0b0b0" />
-        </view>
-      </view>
-
-      <view class="panel service-card">
-        <view class="service-title">内容能力</view>
-        <view class="service-desc">
-          推荐短剧、剧场分类、播放选集、看广告解锁、追剧与观看历史已按参考项目完成前端闭环。
         </view>
       </view>
 
@@ -192,6 +192,18 @@
     });
   }
 
+  function goSignIn() {
+    uni.navigateTo({
+      url: '/pages/app/sign',
+    });
+  }
+
+  function goPointRecords() {
+    uni.navigateTo({
+      url: '/pages/user/wallet/score',
+    });
+  }
+
   function copyInviteCode() {
     if (!inviteCode.value) {
       return;
@@ -227,12 +239,6 @@
   function goFollow() {
     uni.navigateTo({
       url: '/pages/drama/follow',
-    });
-  }
-
-  function goVip() {
-    uni.navigateTo({
-      url: '/pages/drama/vip',
     });
   }
 

@@ -24,7 +24,11 @@
     </view>
 
     <scroll-view scroll-y class="content-scroll">
-      <view v-if="activeTab === 'recommend'" class="content">
+      <view
+        v-if="activeTab === 'recommend'"
+        class="content"
+        :class="{ 'banner-active': homeBannerVisible }"
+      >
         <view v-if="contentLoading" class="content-state">
           <uni-icons type="spinner-cycle" size="28" color="#ff5a1f" />
           <view class="state-title">正在加载真实剧单</view>
@@ -112,7 +116,11 @@
         </template>
       </view>
 
-      <view v-else class="content history-content">
+      <view
+        v-else
+        class="content history-content"
+        :class="{ 'banner-active': homeBannerVisible }"
+      >
         <view v-if="historyList.length > 0" class="history-grid">
           <DramaCard
             v-for="item in historyList"
@@ -135,21 +143,25 @@
 </template>
 
 <script setup>
-  import { computed, ref } from 'vue';
-  import { onPullDownRefresh, onShow } from '@dcloudio/uni-app';
+  import { computed, onMounted, onUnmounted, ref } from 'vue';
+  import { onHide, onPullDownRefresh, onShow } from '@dcloudio/uni-app';
+  import sheep from '@/sheep';
   import DramaCard from '@/pages/drama/components/DramaCard.vue';
   import DramaTabbar from '@/pages/drama/components/DramaTabbar.vue';
   import {
-    DRAMA_CATEGORIES,
-    DRAMAS,
     cacheExternalDramas,
     getHistoryList,
-    getRecommendDrama,
     isFollowed,
     saveHistory,
     toggleFollow,
   } from '@/pages/drama/data';
   import { getPangleDramaList, openDirectDramaPlayer } from '@/pages/drama/services/pangle-content';
+  import {
+    createPageVisitGuard,
+    DISPLAY_AD_SCENES,
+    displayAdFlow,
+    resolveDisplayPlacements,
+  } from '@/pages/drama/services/display-ad-flow.mjs';
 
   uni.hideTabBar({
     fail: () => {},
@@ -160,22 +172,24 @@
     { key: 'recommend', text: '推荐' },
   ];
   const activeTab = ref('recommend');
-  const requireRealContent = import.meta.env?.VITE_DRAMA_REAL_CONTENT_REQUIRED === 'true';
-  const featured = ref(requireRealContent ? null : getRecommendDrama());
+  const featured = ref(null);
   const historyList = ref([]);
-  const featuredFollowed = ref(featured.value ? isFollowed(featured.value.id) : false);
-  const recommendList = ref(requireRealContent ? [] : DRAMAS.slice(1));
-  const contentLoading = ref(requireRealContent);
+  const featuredFollowed = ref(false);
+  const recommendList = ref([]);
+  const contentLoading = ref(true);
   const contentError = ref('');
-  const categories = computed(() => {
-    if (!requireRealContent) {
-      return DRAMA_CATEGORIES.filter((item) => item !== '全部' && item !== '热播');
-    }
-    return [featured.value, ...recommendList.value]
+  const homeBannerVisible = ref(false);
+  const homeVisible = ref(false);
+  const bannerEpoch = ref(0);
+  const BANNER_LIFECYCLE_EVENT = 'skit:taku-banner-lifecycle';
+  const homeVisitGuard = createPageVisitGuard();
+  const userStore = sheep.$store('user');
+  const categories = computed(() =>
+    [featured.value, ...recommendList.value]
       .map((item) => item?.category)
       .filter((item, index, list) => item && list.indexOf(item) === index)
-      .slice(0, 6);
-  });
+      .slice(0, 6),
+  );
 
   const latestHistory = computed(() => historyList.value[0]);
 
@@ -191,29 +205,61 @@
     try {
       const result = await getPangleDramaList({ page: 1, pageSize: 72 });
       if (result.skipped || result.list.length === 0) {
-        if (requireRealContent) {
-          throw new Error(result.skipped ? '短剧内容服务暂不可用' : '暂未返回可用剧目');
-        }
-        return;
+        throw new Error(result.skipped ? '短剧内容服务暂不可用' : '暂未返回可用剧目');
       }
       cacheExternalDramas(result.list);
       featured.value = result.list[0];
       recommendList.value = result.list.slice(1);
     } catch (error) {
       console.warn('[drama] Pangle drama list unavailable:', error);
-      if (requireRealContent) {
-        featured.value = null;
-        recommendList.value = [];
-        contentError.value = error?.message || '请检查内容授权和网络后重试';
-      }
+      featured.value = null;
+      recommendList.value = [];
+      contentError.value = error?.message || '请检查内容授权和网络后重试';
     } finally {
       contentLoading.value = false;
     }
   }
 
-  function goPlay(drama, episode = 1) {
-    saveHistory(drama.id, episode);
-    openDirectDramaPlayer(drama, episode, 'home_direct');
+  async function loadDisplayAdConfig() {
+    try {
+      await userStore.getAdConfig();
+    } catch (error) {
+      console.warn('[display-ad] public placement config unavailable', error);
+    }
+    return resolveDisplayPlacements(userStore.adConfig);
+  }
+
+  async function showHomeBanner() {
+    const requestEpoch = bannerEpoch.value;
+    const placements = await loadDisplayAdConfig();
+    if (!homeVisible.value || requestEpoch !== bannerEpoch.value) {
+      await displayAdFlow.hideHomeBanner();
+      return;
+    }
+    const result = await displayAdFlow.showHomeBanner(placements.homeBanner);
+    if (!homeVisible.value || requestEpoch !== bannerEpoch.value) {
+      homeBannerVisible.value = false;
+      await displayAdFlow.hideHomeBanner();
+      return;
+    }
+    homeBannerVisible.value = result.shown === true;
+  }
+
+  async function hideHomeBanner() {
+    bannerEpoch.value += 1;
+    homeBannerVisible.value = false;
+    await displayAdFlow.hideHomeBanner();
+  }
+
+  async function goPlay(drama, episode = 1) {
+    const visitEpoch = homeVisitGuard.capture();
+    const opened = await openDirectDramaPlayer(drama, episode, 'home_direct', {
+      beforePlay: hideHomeBanner,
+      canOpenPlayer: () => homeVisitGuard.isCurrent(visitEpoch),
+    });
+    if (opened) {
+      saveHistory(drama.id, episode);
+    }
   }
 
   function followFeatured() {
@@ -240,11 +286,53 @@
     });
   }
 
-  onShow(refresh);
+  function handleBannerLifecycle(event) {
+    const detail = event?.detail;
+    if (
+      detail?.state === 'CLOSED' &&
+      detail?.scene === DISPLAY_AD_SCENES.HOME_BANNER
+    ) {
+      homeBannerVisible.value = false;
+    }
+  }
 
-  onPullDownRefresh(() => {
-    refresh();
-    setTimeout(() => uni.stopPullDownRefresh(), 300);
+  onMounted(() => {
+    if (typeof window !== 'undefined') {
+      window.addEventListener(BANNER_LIFECYCLE_EVENT, handleBannerLifecycle);
+    }
+  });
+
+  onUnmounted(() => {
+    if (typeof window !== 'undefined') {
+      window.removeEventListener(BANNER_LIFECYCLE_EVENT, handleBannerLifecycle);
+    }
+  });
+
+  onShow(async () => {
+    homeVisible.value = true;
+    homeVisitGuard.enter();
+    bannerEpoch.value += 1;
+    await refresh();
+    if (!homeVisible.value) {
+      return;
+    }
+    await showHomeBanner();
+  });
+
+  onHide(() => {
+    homeVisible.value = false;
+    homeVisitGuard.leave();
+    bannerEpoch.value += 1;
+    homeBannerVisible.value = false;
+    void displayAdFlow.hideHomeBanner();
+  });
+
+  onPullDownRefresh(async () => {
+    await refresh();
+    if (homeVisible.value) {
+      await showHomeBanner();
+    }
+    uni.stopPullDownRefresh();
   });
 </script>
 
@@ -331,6 +419,10 @@
 
   .content {
     padding: 24rpx 24rpx 150rpx;
+  }
+
+  .content.banner-active {
+    padding-bottom: 282rpx;
   }
 
   .content-state {

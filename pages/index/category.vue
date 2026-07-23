@@ -76,28 +76,19 @@
   import { onShow } from '@dcloudio/uni-app';
   import DramaCard from '@/pages/drama/components/DramaCard.vue';
   import DramaTabbar from '@/pages/drama/components/DramaTabbar.vue';
-  import {
-    DRAMA_CATEGORIES,
-    getDramasByCategory,
-    getHotDramas,
-    saveHistory,
-  } from '@/pages/drama/data';
+  import { saveHistory } from '@/pages/drama/data';
   import { getPangleDramaList, openDirectDramaPlayer } from '@/pages/drama/services/pangle-content';
 
   uni.hideTabBar({
     fail: () => {},
   });
 
-  const requireRealContent = import.meta.env?.VITE_DRAMA_REAL_CONTENT_REQUIRED === 'true';
   const activeCategory = ref('全部');
   const sdkList = ref([]);
-  const hotList = ref(requireRealContent ? [] : getHotDramas(6));
-  const contentLoading = ref(requireRealContent);
+  const hotList = ref([]);
+  const contentLoading = ref(true);
   const contentError = ref('');
   const categories = computed(() => {
-    if (!requireRealContent) {
-      return DRAMA_CATEGORIES;
-    }
     const sdkCategories = sdkList.value.map((item) => item.category).filter(Boolean);
     return ['全部', '热播', ...new Set(sdkCategories)];
   });
@@ -112,7 +103,7 @@
       }
       return sdkList.value.filter((item) => item.category === activeCategory.value);
     }
-    return requireRealContent ? [] : getDramasByCategory(activeCategory.value);
+    return [];
   });
 
   async function refreshPangleContent() {
@@ -124,20 +115,15 @@
         pageSize: 72,
       });
       if (result.skipped || result.list.length === 0) {
-        if (requireRealContent) {
-          throw new Error(result.skipped ? '短剧内容服务暂不可用' : '暂未返回可用剧目');
-        }
-        return;
+        throw new Error(result.skipped ? '短剧内容服务暂不可用' : '暂未返回可用剧目');
       }
       sdkList.value = result.list;
       hotList.value = result.list.slice(0, 6);
     } catch (error) {
       console.warn('[drama] Pangle theater list unavailable:', error);
-      if (requireRealContent) {
-        sdkList.value = [];
-        hotList.value = [];
-        contentError.value = error?.message || '请检查内容授权和网络后重试';
-      }
+      sdkList.value = [];
+      hotList.value = [];
+      contentError.value = error?.message || '请检查内容授权和网络后重试';
     } finally {
       contentLoading.value = false;
     }

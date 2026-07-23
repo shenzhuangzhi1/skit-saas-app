@@ -25,12 +25,15 @@ const trackedFiles = execFileSync('git', ['ls-files'], { encoding: 'utf8' })
   .split('\n')
   .filter(Boolean)
   .filter((file) => file !== 'scripts/check-member-identity-boundary.mjs')
+  // Generated fallback assets are verified by the Android package gates after a fresh H5 build.
+  .filter((file) => !file.startsWith('android-djx-runtime/static-www/'))
   .filter((file) => sourceExtensions.has(extname(file)))
   .filter((file) => existsSync(file));
 
 const forbiddenPatterns = [
   ['/member/auth/', /(?<!\/skit)\/member\/auth\//],
   ['/member/user/', /(?<!\/skit)\/member\/user\//],
+  ['/member/(sign-in|point)/', /(?<!\/skit)\/member\/(?:sign-in|point)\//],
   [
     'legacy AuthUtil identity method',
     /AuthUtil\.(?:smsLogin|sendSmsCode|socialAuthRedirect|socialLogin|weixinMiniAppLogin|createWeixinMpJsapiSignature)\b/,
@@ -85,11 +88,15 @@ const requiredEndpoints = [
   '/skit/member/auth/logout',
   '/skit/member/auth/refresh-token',
   '/skit/member/user/profile',
+  '/skit/member/check-ins',
+  '/skit/member/point-records',
 ];
 
 const apiSources = [
   readFileSync('sheep/api/member/auth.js', 'utf8'),
   readFileSync('sheep/api/member/user.js', 'utf8'),
+  readFileSync('sheep/api/member/signin.js', 'utf8'),
+  readFileSync('sheep/api/member/point.js', 'utf8'),
 ].join('\n');
 for (const endpoint of requiredEndpoints) {
   if (!apiSources.includes(endpoint)) {

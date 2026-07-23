@@ -33,10 +33,28 @@ async function importPangleContent(plugin) {
   `);
   const dramaDataUrl = sourceUrl('export function cacheExternalDramas() {}');
   const privacyUrl = sourceUrl('export async function ensureAdPrivacyConsent() { return true; }');
+  const sheepUrl = sourceUrl(`
+    const userStore = { userInfo: {}, adConfig: {}, async getAdConfig() {} };
+    export default { $store() { return userStore; } };
+  `);
+  const displayAdUrl = sourceUrl(`
+    export function chinaDate() { return '2026-07-24'; }
+    export function resolveDisplayPlacements() {
+      return { postCheckInDramaInterstitial: '' };
+    }
+    export const displayAdFlow = {
+      runBeforeDramaPlay(options) { return options.openPlayer(); },
+    };
+  `);
   const source = read('pages/drama/services/pangle-content.js')
     .replace("from './native-bridge';", `from ${JSON.stringify(nativeBridgeUrl)};`)
     .replace("from '@/pages/drama/data';", `from ${JSON.stringify(dramaDataUrl)};`)
-    .replace("from './privacy-consent';", `from ${JSON.stringify(privacyUrl)};`);
+    .replace("from './privacy-consent';", `from ${JSON.stringify(privacyUrl)};`)
+    .replace("from '@/sheep';", `from ${JSON.stringify(sheepUrl)};`)
+    .replace(
+      "from '@/pages/drama/services/display-ad-flow.mjs';",
+      `from ${JSON.stringify(displayAdUrl)};`,
+    );
   return import(sourceUrl(source));
 }
 

@@ -3,6 +3,7 @@
   import sheep, { ShoproInit } from './sheep';
   import safeUni from './sheep/helper/uni';
   import { checkAndInstallUpdate } from './sheep/services/app-update';
+  import { resolveMemberAppContext } from './sheep/services/member-app-context';
   import { recoverPendingAdSessions } from './pages/drama/services/ad-session-runtime';
 
   const builtAgentCode = String(import.meta.env?.VITE_SKIT_AGENT_CODE || '')
@@ -39,14 +40,27 @@
     });
   }
 
-  onLaunch(() => {
+  onLaunch(async () => {
     // 隐藏原生导航栏 使用自定义底部导航
     safeUni.hideTabBar({
       fail: () => {},
     });
 
-    // 加载Shopro底层依赖
-    ShoproInit();
+    if (builtAgentCode) {
+      const previousTenantId = String(safeUni.getStorageSync('tenant-id') ?? '').trim();
+      try {
+        const context = await resolveMemberAppContext(builtAgentCode);
+        if (previousTenantId && previousTenantId !== String(context.tenantId)) {
+          sheep.$store('user').resetUserData();
+        }
+      } catch (error) {
+        sheep.$store('user').clearDisplayAdConfig();
+        console.warn('[tenant] white-label bootstrap unavailable', error);
+      }
+    }
+
+    // 租户解析完成后再加载 Shopro 底层依赖。
+    await ShoproInit();
   });
 
   onShow(() => {

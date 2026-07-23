@@ -103,7 +103,7 @@ const app = defineStore('app', {
         const sysStore = sys();
         sysStore.setTheme();
 
-        // 模拟用户登录
+        // 恢复已登录用户的真实资料
         const userStore = user();
         if (userStore.isLogin) {
           userStore.loginAfter();
@@ -166,9 +166,9 @@ const adaptTenant = async () => {
     // 3. 如果是新租户（不相等），则进行切换
     // noinspection EqualityComparisonWithCoercionJS
     if (newTenantId && newTenantId != oldTenantId) {
-      // 清理掉登录用户的 token
+      // 清理身份、广告配置和签到后广告标记，避免跨租户复用。
       const userStore = user();
-      userStore.setToken();
+      userStore.resetUserData();
 
       // 设置新的 tenantId 到本地存储
       uni.setStorageSync('tenant-id', newTenantId);

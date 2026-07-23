@@ -1,5 +1,15 @@
 <template>
-  <view class="play-page" :style="{ background: drama.cover }">
+  <view v-if="!drama" class="play-page unavailable-page">
+    <view class="header">
+      <view class="back" @tap="goBack">
+        <uni-icons type="back" size="24" color="#fff" />
+      </view>
+      <view class="header-title">剧目不可用</view>
+    </view>
+    <view class="unavailable-copy">当前剧目不在真实内容列表中，请返回后刷新剧单。</view>
+  </view>
+
+  <view v-else class="play-page" :style="{ background: drama.cover }">
     <view class="page-mask"></view>
 
     <view class="header">
@@ -10,7 +20,7 @@
     </view>
 
     <view class="video-stage">
-      <view class="fake-video">
+      <view class="video-surface">
         <video
           v-if="currentVideoUrl && !videoErrored"
           :key="`${drama.id}-${currentEpisode}`"
@@ -61,10 +71,6 @@
         <view class="action" @tap="toggleDramaFollow">
           <uni-icons :type="followed ? 'heart-filled' : 'heart'" size="27" color="#fff" />
           <text>{{ followed ? '已追' : '追剧' }}</text>
-        </view>
-        <view class="action" @tap="shareDrama">
-          <uni-icons type="paperplane" size="27" color="#fff" />
-          <text>分享</text>
         </view>
         <view class="action" @tap="showEpisodePanel = true">
           <uni-icons type="list" size="27" color="#fff" />
@@ -956,15 +962,16 @@
     });
   }
 
-  function shareDrama() {
-    uni.showToast({
-      title: '分享暂不可用',
-      icon: 'none',
-    });
-  }
-
   onLoad((options) => {
-    drama.value = getDramaById(options.id);
+    const resolvedDrama = getDramaById(options.id);
+    if (!resolvedDrama) {
+      uni.showToast({
+        title: '当前剧目不可用，请刷新剧单',
+        icon: 'none',
+      });
+      return;
+    }
+    drama.value = resolvedDrama;
     currentEpisode.value = Math.max(1, Math.min(Number(options.episode) || 1, drama.value.total));
     const pages = getCurrentPages();
     pageInstance = pages[pages.length - 1] || null;
@@ -981,6 +988,9 @@
   });
 
   onShow(() => {
+    if (!drama.value) {
+      return;
+    }
     pageAsyncGuard.activate();
     pageAsyncGuard.setVisible(true);
     if (!pageHasShown) {
@@ -1105,7 +1115,7 @@
     padding: 0 24rpx;
   }
 
-  .fake-video {
+  .video-surface {
     position: relative;
     width: 100%;
     height: 100%;

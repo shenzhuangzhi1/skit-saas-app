@@ -11,22 +11,28 @@
       <view class="logo">短</view>
       <view class="app-name">短剧 SaaS</view>
       <view class="app-desc">精彩短剧尽在短剧 SaaS</view>
-      <view class="version">v2026.06</view>
-    </view>
-
-    <view class="info-panel">
-      <view class="info-row">用户协议</view>
-      <view class="info-row">隐私政策</view>
-      <view class="info-row">收集个人信息明示清单</view>
-      <view class="info-row">个人信息第三方共享清单</view>
+      <view v-if="appVersion" class="version">v{{ appVersion }}</view>
     </view>
   </view>
 </template>
 
 <script setup>
+  import { ref } from 'vue';
+  import { onLoad } from '@dcloudio/uni-app';
+
+  const appVersion = ref('');
+
   function goBack() {
     uni.navigateBack();
   }
+
+  onLoad(() => {
+    if (typeof uni.getAppBaseInfo !== 'function') {
+      return;
+    }
+    const appInfo = uni.getAppBaseInfo() || {};
+    appVersion.value = String(appInfo.appVersion || appInfo.version || '').trim();
+  });
 </script>
 
 <style lang="scss" scoped>
@@ -99,22 +105,4 @@
     margin-top: 8rpx;
   }
 
-  .info-panel {
-    margin: 24rpx;
-    padding: 0 24rpx;
-    border-radius: 18rpx;
-    background: #fff;
-  }
-
-  .info-row {
-    min-height: 92rpx;
-    border-bottom: 1rpx solid #f0f0f0;
-    color: #2989e3;
-    font-size: 28rpx;
-    line-height: 92rpx;
-  }
-
-  .info-row:last-child {
-    border-bottom: 0;
-  }
 </style>

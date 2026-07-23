@@ -1,89 +1,62 @@
 <!-- 签到界面  -->
 <template>
   <s-layout title="签到有礼">
-    <s-empty v-if="state.loading" icon="/static/data-empty.png" text="签到活动还未开始" />
-    <view v-if="state.loading" />
-    <view class="sign-wrap" v-else-if="!state.loading">
-      <!-- 签到日历 -->
+    <view v-if="state.loading" class="loading-box">正在加载签到记录...</view>
+    <view v-else class="sign-wrap">
       <view class="content-box calendar">
         <view class="sign-everyday ss-flex ss-col-center ss-row-between ss-p-x-30">
-          <text class="sign-everyday-title">签到日历</text>
+          <text class="sign-everyday-title">每日签到</text>
           <view class="sign-num-box">
             已连续签到 <text class="sign-num">{{ state.signInfo.continuousDay }}</text> 天
           </view>
         </view>
-        <view
-          class="list acea-row row-between-wrapper"
-          style="
-            padding: 0 30rpx;
-            height: 240rpx;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-          "
-        >
-          <view class="item" v-for="(item, index) in state.signConfigList" :key="index">
-            <view
-              :class="
-                (index === state.signConfigList.length ? 'reward' : '') +
-                ' ' +
-                (state.signInfo.continuousDay >= item.day ? 'rewardTxt' : '')
-              "
-            >
-              第{{ item.day }}天
-            </view>
-            <view
-              class="venus"
-              :class="
-                (index + 1 === state.signConfigList.length ? 'reward' : '') +
-                ' ' +
-                (state.signInfo.continuousDay >= item.day ? 'venusSelect' : '')
-              "
-            >
-            </view>
-            <view class="num" :class="state.signInfo.continuousDay >= item.day ? 'on' : ''">
-              + {{ item.point }}
-            </view>
+        <view class="summary-grid">
+          <view class="summary-item">
+            <view class="summary-value">+1</view>
+            <view class="summary-label">每次签到积分</view>
+          </view>
+          <view class="summary-item">
+            <view class="summary-value">{{ state.signInfo.totalDay || 0 }}</view>
+            <view class="summary-label">累计签到天数</view>
+          </view>
+          <view class="summary-item">
+            <view class="summary-value">{{ state.signInfo.pointBalance || 0 }}</view>
+            <view class="summary-label">当前积分</view>
           </view>
         </view>
 
-        <!-- 签到按钮 -->
         <view class="myDateTable">
           <view class="ss-flex ss-col-center ss-row-center sign-box ss-m-y-40">
             <button
               class="ss-reset-button sign-btn"
               v-if="!state.signInfo.todaySignIn"
+              :disabled="state.signing"
               @tap="onSign"
             >
-              签到
+              {{ state.signing ? '签到中...' : '签到并领取 1 积分' }}
             </button>
             <button class="ss-reset-button already-btn" v-else disabled> 已签到 </button>
           </view>
         </view>
       </view>
 
-      <!-- 签到说明 -->
       <view class="bg-white ss-m-t-16 ss-p-t-30 ss-p-b-60 ss-p-x-40">
         <view class="activity-title ss-m-b-30">签到说明</view>
-        <view class="activity-des">1.已累计签到{{ state.signInfo.totalDay }}天</view>
-        <view class="activity-des">
-          2.据说连续签到第 {{ state.maxDay }} 天可获得超额积分，要坚持签到哦~~
-        </view>
-        <view class="activity-des"> 3.积分可以在购物时抵现金结算的哦 ~~</view>
+        <view class="activity-des">1. 每个账号每天可以签到一次。</view>
+        <view class="activity-des">2. 每次签到固定获得 1 积分。</view>
+        <view class="activity-des">3. 积分余额和每笔流水仅当前账号可查看。</view>
       </view>
     </view>
 
-    <!-- 签到结果弹窗 -->
     <su-popup :show="state.showModel" type="center" round="10" :isMaskClick="false">
       <view class="model-box ss-flex-col">
         <view class="ss-m-t-56 ss-flex-col ss-col-center">
           <text class="cicon-check-round"></text>
           <view class="score-title">
-            <text v-if="state.signResult.point">{{ state.signResult.point }} 积分 </text>
-            <text v-if="state.signResult.experience"> {{ state.signResult.experience }} 经验</text>
+            <text>获得 {{ state.signResult.awardedPoints }} 积分</text>
           </view>
           <view class="model-title ss-flex ss-col-center ss-m-t-22 ss-m-b-30">
-            已连续打卡 {{ state.signResult.day }} 天
+            已连续打卡 {{ state.signResult.continuousDay }} 天
           </view>
         </view>
         <view class="model-bg ss-flex-col ss-col-center ss-row-right">
@@ -99,70 +72,162 @@
 
 <script setup>
   import sheep from '@/sheep';
-  import { onReady } from '@dcloudio/uni-app';
+  import { onHide, onReady, onShow, onUnload } from '@dcloudio/uni-app';
   import { reactive } from 'vue';
   import SignInApi from '@/sheep/api/member/signin';
-
-  const headerBg = sheep.$url.css('/static/img/shop/app/sign.png');
+  import {
+    createPageVisitGuard,
+    displayAdFlow,
+    resolveDisplayPlacements,
+  } from '@/pages/drama/services/display-ad-flow.mjs';
 
   const state = reactive({
     loading: true,
-
-    signInfo: {}, // 签到信息
-
-    signConfigList: [], // 签到配置列表
-    maxDay: 0, // 最大的签到天数
-
-    showModel: false, // 签到弹框
-    signResult: {}, // 签到结果
+    signing: false,
+    signInfo: {},
+    showModel: false,
+    signResult: {},
   });
+  const userStore = sheep.$store('user');
+  const signPageVisitGuard = createPageVisitGuard();
+  let pageReady = false;
+  let scheduledEntryAdEpoch = 0;
 
-  // 发起签到
   async function onSign() {
-    const { code, data } = await SignInApi.createSignInRecord();
-    if (code !== 0) {
+    if (state.signing) {
       return;
     }
-    state.showModel = true;
-    state.signResult = data;
-    // 重新获得签到信息
-    await getSignInfo();
+    state.signing = true;
+    try {
+      const { code, data } = await SignInApi.createSignInRecord();
+      if (code !== 0 || data?.awardedPoints !== 1) {
+        return;
+      }
+      state.showModel = true;
+      state.signResult = data;
+      const markerStored = markPostCheckIn(data.signInDate);
+      const refreshResults = await Promise.allSettled([
+        getSignInfo(),
+        userStore.updateUserData(true),
+      ]);
+      if (!markerStored) {
+        markPostCheckIn(data.signInDate);
+      }
+      if (refreshResults.some((result) => result.status === 'rejected')) {
+        console.warn('[check-in] post-sign-in refresh incomplete');
+      }
+    } finally {
+      state.signing = false;
+    }
   }
 
-  // 签到确认刷新页面
   function onConfirm() {
     state.showModel = false;
+    uni.switchTab({
+      url: '/pages/index/index',
+    });
   }
 
-  // 获得个人签到统计
   async function getSignInfo() {
-    const { code, data } = await SignInApi.getSignInRecordSummary();
-    if (code !== 0) {
-      return;
+    try {
+      const { code, data } = await SignInApi.getSignInRecordSummary();
+      if (code !== 0) {
+        return;
+      }
+      state.signInfo = data;
+    } finally {
+      state.loading = false;
     }
-    state.signInfo = data;
-    state.loading = false;
   }
 
-  // 获取签到配置
-  async function getSignConfigList() {
-    const { code, data } = await SignInApi.getSignInConfigList();
-    if (code !== 0) {
+  function markPostCheckIn(signInDate) {
+    const profile = userStore.userInfo || {};
+    return displayAdFlow.markPostCheckIn({
+      tenantId: profile.tenantId,
+      memberId: profile.userId || profile.id,
+      signInDate,
+    });
+  }
+
+  async function showCheckInEntryInterstitial(visitEpoch) {
+    try {
+      await userStore.getAdConfig();
+    } catch (error) {
+      console.warn('[display-ad] check-in placement config unavailable', error);
+    }
+    if (!signPageVisitGuard.isCurrent(visitEpoch)) {
       return;
     }
-    state.signConfigList = data;
-    if (data.length > 0) {
-      state.maxDay = data[data.length - 1].day;
-    }
+    const placements = resolveDisplayPlacements(userStore.adConfig);
+    await displayAdFlow.showCheckInEntryInterstitial(placements.checkInEntryInterstitial);
   }
+
+  function scheduleCheckInEntryInterstitial() {
+    const visitEpoch = signPageVisitGuard.capture();
+    if (
+      !pageReady ||
+      !signPageVisitGuard.isCurrent(visitEpoch) ||
+      scheduledEntryAdEpoch === visitEpoch
+    ) {
+      return;
+    }
+    scheduledEntryAdEpoch = visitEpoch;
+    void showCheckInEntryInterstitial(visitEpoch);
+  }
+
+  onShow(() => {
+    signPageVisitGuard.enter();
+    scheduleCheckInEntryInterstitial();
+  });
+
+  onHide(() => {
+    signPageVisitGuard.leave();
+  });
+
+  onUnload(() => {
+    signPageVisitGuard.leave();
+  });
 
   onReady(() => {
-    getSignInfo();
-    getSignConfigList();
+    pageReady = true;
+    void getSignInfo();
+    scheduleCheckInEntryInterstitial();
   });
 </script>
 
 <style lang="scss" scoped>
+  .loading-box {
+    padding: 120rpx 40rpx;
+    color: #999;
+    text-align: center;
+  }
+
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16rpx;
+    padding: 44rpx 30rpx 8rpx;
+
+    .summary-item {
+      padding: 28rpx 12rpx;
+      border-radius: 18rpx;
+      background: #fff7f1;
+      text-align: center;
+    }
+
+    .summary-value {
+      color: #ff6000;
+      font-size: 40rpx;
+      font-weight: 700;
+    }
+
+    .summary-label {
+      margin-top: 10rpx;
+      color: #777;
+      font-size: 22rpx;
+    }
+  }
+
   .header-box {
     border-top: 2rpx solid rgba(#dfdfdf, 0.5);
   }

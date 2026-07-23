@@ -17,7 +17,7 @@
         <view class="ss-m-b-30">
           <text class="all-title ss-m-r-8">当前积分</text>
         </view>
-        <text class="all-num">{{ userInfo.point || 0 }}</text>
+        <text class="all-num">{{ userInfo.pointBalance || 0 }}</text>
       </view>
     </view>
     <!-- tab -->
@@ -35,12 +35,6 @@
             <text class="cicon-drop-down ss-seldate-icon"></text>
           </button>
         </uni-datetime-picker>
-
-        <!-- TODO 芋艿：【钱包-可优化】展示一下 -->
-        <!--				<view class="total-box">-->
-        <!--					<view class="ss-m-b-10">总收入￥{{ state.pagination.income }}</view>-->
-        <!--					<view>总支出￥{{ -state.pagination.expense }}</view>-->
-        <!--				</view>-->
       </view>
       <su-tabs
         :list="tabMaps"
@@ -66,8 +60,8 @@
               sheep.$helper.timeFormat(item.createTime, 'yyyy-mm-dd hh:MM:ss')
             }}</view>
           </view>
-          <view class="add" v-if="item.point > 0">+{{ item.point }}</view>
-          <view class="minus" v-else>{{ item.point }}</view>
+          <view class="add" v-if="item.pointDelta > 0">+{{ item.pointDelta }}</view>
+          <view class="minus" v-else>{{ item.pointDelta }}</view>
         </view>
       </view>
       <s-empty v-else text="暂无数据" icon="/static/data-empty.png" />
@@ -92,15 +86,17 @@
   import dayjs from 'dayjs';
   import PointApi from '@/sheep/api/member/point';
   import { resetPagination } from '@/sheep/helper/utils';
+  import { createPointRecordQueryGate } from './point-record-query.mjs';
 
   const statusBarHeight = sheep.$platform.device.statusBarHeight * 2;
   const userInfo = computed(() => sheep.$store('user').userInfo);
   const sys_navBar = sheep.$platform.navbar;
+  const pointQueryGate = createPointRecordQueryGate();
 
   const state = reactive({
     currentTab: 0,
     pagination: {
-      list: 0,
+      list: [],
       total: 0,
       pageSize: 6,
       pageNo: 1,
@@ -126,6 +122,9 @@
   ];
 
   const dateFilterText = computed(() => {
+    if (!state.date.length) {
+      return '全部日期';
+    }
     if (state.date[0] === state.date[1]) {
       return state.date[0];
     } else {
@@ -133,48 +132,109 @@
     }
   });
 
-  async function getLogList() {
-    state.loadStatus = 'loading';
-    let { code, data } = await PointApi.getPointRecordPage({
-      pageNo: state.pagination.pageNo,
-      pageSize: state.pagination.pageSize,
-      addStatus: state.currentTab > 0 ? tabMaps[state.currentTab].value : undefined,
-      'createTime[0]': state.date[0] + ' 00:00:00',
-      'createTime[1]': state.date[1] + ' 23:59:59',
+  function currentFilterSignature() {
+    return JSON.stringify({
+      currentTab: state.currentTab,
+      date: [...state.date],
     });
-    if (code !== 0) {
-      return;
-    }
-    state.pagination.list = concat(state.pagination.list, data.list);
-    state.pagination.total = data.total;
-    state.loadStatus = state.pagination.list.length < state.pagination.total ? 'more' : 'noMore';
   }
 
-  onLoad(() => {
+  async function getLogList() {
+    if (state.loadStatus === 'loading' || pointQueryGate.isLoading()) {
+      return;
+    }
+    const request = pointQueryGate.tryStart({
+      pageNo: state.pagination.pageNo,
+      filterSignature: currentFilterSignature(),
+    });
+    if (!request) {
+      return;
+    }
+    const params = {
+      pageNo: request.pageNo,
+      pageSize: state.pagination.pageSize,
+      addStatus: state.currentTab > 0 ? tabMaps[state.currentTab].value : undefined,
+    };
+    if (state.date.length === 2) {
+      params['createTime[0]'] = `${state.date[0]} 00:00:00`;
+      params['createTime[1]'] = `${state.date[1]} 23:59:59`;
+    }
+    state.loadStatus = 'loading';
+    try {
+      const { code, data } = await PointApi.getPointRecordPage(params);
+      if (
+        !pointQueryGate.isCurrent(request) ||
+        request.filterSignature !== currentFilterSignature() ||
+        request.pageNo !== state.pagination.pageNo
+      ) {
+        return;
+      }
+      if (code !== 0) {
+        if (request.pageNo > 1) {
+          state.pagination.pageNo = request.pageNo - 1;
+        }
+        state.loadStatus = state.pagination.list.length > 0 ? 'more' : 'noMore';
+        return;
+      }
+      const rows = Array.isArray(data?.list) ? data.list : [];
+      state.pagination.list =
+        request.pageNo === 1 ? rows : concat(state.pagination.list, rows);
+      state.pagination.total = Number(data?.total) || 0;
+      state.loadStatus =
+        state.pagination.list.length < state.pagination.total ? 'more' : 'noMore';
+    } catch (error) {
+      if (pointQueryGate.isCurrent(request)) {
+        if (request.pageNo > 1) {
+          state.pagination.pageNo = request.pageNo - 1;
+        }
+        state.loadStatus = state.pagination.list.length > 0 ? 'more' : 'noMore';
+        console.warn('[points] point record page unavailable', error);
+      }
+    } finally {
+      if (pointQueryGate.finish(request) && state.loadStatus === 'loading') {
+        state.loadStatus = state.pagination.list.length > 0 ? 'more' : 'noMore';
+      }
+    }
+  }
+
+  function reloadLogList() {
+    pointQueryGate.invalidate();
+    resetPagination(state.pagination);
+    state.loadStatus = '';
+    void getLogList();
+  }
+
+  onLoad(async () => {
     state.today = dayjs().format('YYYY-MM-DD');
-    state.date = [state.today, state.today];
-    getLogList();
+    try {
+      await sheep.$store('user').updateUserData(true);
+    } catch (error) {
+      console.warn('[points] member profile refresh unavailable', error);
+    }
+    await getLogList();
   });
 
   function onChange(e) {
     state.currentTab = e.index;
-    resetPagination(state.pagination);
-    getLogList();
+    reloadLogList();
   }
 
   function onChangeTime(e) {
     state.date[0] = e[0];
     state.date[1] = e[e.length - 1];
-    resetPagination(state.pagination);
-    getLogList();
+    reloadLogList();
   }
 
   function onLoadMore() {
-    if (state.loadStatus === 'noMore') {
+    if (
+      state.loadStatus === 'noMore' ||
+      state.loadStatus === 'loading' ||
+      pointQueryGate.isLoading()
+    ) {
       return;
     }
     state.pagination.pageNo++;
-    getLogList();
+    void getLogList();
   }
 
   onReachBottom(() => {

@@ -47,8 +47,8 @@
           </button>
         </view>
 
-        <view class="section-title recommend-title">热门搜索</view>
-        <view class="history-list">
+        <view v-if="hotKeywords.length > 0" class="section-title recommend-title">热门搜索</view>
+        <view v-if="hotKeywords.length > 0" class="history-list">
           <button
             v-for="item in hotKeywords"
             :key="item"
@@ -66,24 +66,28 @@
 <script setup>
   import { computed, ref } from 'vue';
   import { onLoad } from '@dcloudio/uni-app';
-  import { DRAMAS, getExternalDramas, saveHistory } from '@/pages/drama/data';
+  import { getExternalDramas, saveHistory } from '@/pages/drama/data';
   import { openDirectDramaPlayer } from '@/pages/drama/services/pangle-content';
 
   const STORAGE_KEY = 'skit_drama_search_history_v1';
-  const requireRealContent = import.meta.env?.VITE_DRAMA_REAL_CONTENT_REQUIRED === 'true';
   const keyword = ref('');
   const historyList = ref([]);
-  const hotKeywords = ['重生', '甜宠', '商战', '悬疑', '古装'];
+  const hotKeywords = computed(() =>
+    getExternalDramas()
+      .flatMap((drama) => [drama.category, ...(Array.isArray(drama.tags) ? drama.tags : [])])
+      .filter((item, index, list) => item && list.indexOf(item) === index)
+      .slice(0, 5),
+  );
 
   const resultList = computed(() => {
     const word = keyword.value.trim().toLowerCase();
     if (!word) {
       return [];
     }
-    const source = requireRealContent ? getExternalDramas() : DRAMAS;
-    return source.filter((drama) => {
-      const text = `${drama.title} ${drama.category} ${drama.tags.join(' ')} ${
-        drama.desc
+    return getExternalDramas().filter((drama) => {
+      const tags = Array.isArray(drama.tags) ? drama.tags.join(' ') : '';
+      const text = `${drama.title || ''} ${drama.category || ''} ${tags} ${
+        drama.desc || ''
       }`.toLowerCase();
       return text.includes(word);
     });

@@ -578,17 +578,6 @@
           }
         },
         {
-          "path": "vip",
-          "style": {
-            "navigationBarTitleText": "VIP 权益"
-          },
-          "meta": {
-            "sync": true,
-            "title": "VIP 权益",
-            "group": "短剧"
-          }
-        },
-        {
           "path": "about",
           "style": {
             "navigationBarTitleText": "关于"

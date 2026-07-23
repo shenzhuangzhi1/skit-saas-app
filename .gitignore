@@ -15,6 +15,7 @@ dist/
 output/
 android-djx-runtime/.gradle-dist/
 android-djx-runtime/.gradle/
+android-djx-runtime/build/
 android-djx-runtime/app/build/
 android-djx-runtime/app/src/main/assets/
 android-djx-runtime/build-djx-apk.log

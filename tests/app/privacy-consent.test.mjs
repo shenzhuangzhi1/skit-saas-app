@@ -45,10 +45,28 @@ async function importPangleContent({ plugin, ensureConsent }) {
       return globalThis.__skitEnsurePangleConsent(identity);
     }
   `);
+  const sheepUrl = sourceUrl(`
+    const userStore = { userInfo: {}, adConfig: {}, async getAdConfig() {} };
+    export default { $store() { return userStore; } };
+  `);
+  const displayAdUrl = sourceUrl(`
+    export function chinaDate() { return '2026-07-24'; }
+    export function resolveDisplayPlacements() {
+      return { postCheckInDramaInterstitial: '' };
+    }
+    export const displayAdFlow = {
+      runBeforeDramaPlay(options) { return options.openPlayer(); },
+    };
+  `);
   const source = readFileSync(resolve(root, 'pages/drama/services/pangle-content.js'), 'utf8')
     .replace("from './native-bridge';", `from ${JSON.stringify(nativeBridgeUrl)};`)
     .replace("from '@/pages/drama/data';", `from ${JSON.stringify(dataUrl)};`)
-    .replace("from './privacy-consent';", `from ${JSON.stringify(privacyUrl)};`);
+    .replace("from './privacy-consent';", `from ${JSON.stringify(privacyUrl)};`)
+    .replace("from '@/sheep';", `from ${JSON.stringify(sheepUrl)};`)
+    .replace(
+      "from '@/pages/drama/services/display-ad-flow.mjs';",
+      `from ${JSON.stringify(displayAdUrl)};`,
+    );
   return import(sourceUrl(source));
 }
 

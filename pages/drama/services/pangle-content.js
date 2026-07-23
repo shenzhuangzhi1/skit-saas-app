@@ -1,6 +1,12 @@
 import { callNativeMethod, getNativePlugin } from './native-bridge';
 import { cacheExternalDramas } from '@/pages/drama/data';
 import { ensureAdPrivacyConsent } from './privacy-consent';
+import sheep from '@/sheep';
+import {
+  chinaDate,
+  displayAdFlow,
+  resolveDisplayPlacements,
+} from '@/pages/drama/services/display-ad-flow.mjs';
 
 const PANGLE_PLUGIN_NAME = 'SkitPangleDrama';
 const DEFAULT_SETTING_FILE = import.meta.env?.VITE_PANGLE_DRAMA_SETTING_FILE || 'SDK_Setting.json';
@@ -155,35 +161,38 @@ export function normalizePangleDrama(raw = {}) {
   const total = getPositiveInteger(raw.total ?? raw.episodeCount ?? raw.count);
   const freeEpisodes = getNonNegativeInteger(raw.freeSet ?? raw.free_set ?? raw.freeEpisodes);
   const unlockSize = getPositiveInteger(raw.lockSet ?? raw.lock_set ?? raw.unlockSize);
-  if (!total || freeEpisodes === null || freeEpisodes > total || !unlockSize) {
+  const title = String(raw.title || raw.scriptName || '').trim();
+  if (!title || !total || freeEpisodes === null || freeEpisodes > total || !unlockSize) {
     return null;
   }
-  const category = raw.type || raw.category || '热播';
+  const category = raw.type || raw.category || '';
   const coverImage = raw.coverImage || raw.cover_image || raw.cover || raw.poster || '';
+  const contentStatus = raw.status ?? '';
+  const description = raw.desc || raw.description || '';
 
   return {
     id: String(rawId),
     pangleDramaId: rawId,
     contentId: rawId,
     source: 'pangle-drama-sdk',
-    title: raw.title || raw.scriptName || '热门短剧',
+    title,
     category,
     tags: [category].filter(Boolean),
     total,
     freeEpisodes,
     unlockSize,
-    contentStatus: raw.status ?? '',
-    status: Number(raw.status) === 1 ? '连载中' : '已完结',
-    heat: raw.heat || raw.hot || '内容更新中',
-    follows: raw.follows || '',
-    score: raw.score || '9.0',
+    contentStatus,
+    status: contentStatus === '' ? '' : Number(contentStatus) === 1 ? '连载中' : '已完结',
+    heat: raw.heat || raw.hot || '',
+    follows: raw.follows ?? raw.favoriteCount ?? '',
+    score: raw.score ?? '',
     updateText: '',
     cover: coverImage
       ? `url("${coverImage}") center/cover`
       : 'linear-gradient(155deg, #111827 0%, #374151 52%, #f97316 100%)',
     accent: '#ff5a1f',
-    desc: raw.desc || raw.description || '',
-    lines: [raw.desc || raw.description || ''],
+    desc: description,
+    lines: description ? [description] : [],
     episodes: makeEpisodes(total),
     raw,
   };
@@ -230,7 +239,28 @@ export async function openPangleDramaPlayer(options = {}) {
   return result;
 }
 
-export async function openDirectDramaPlayer(drama, episode = 1, source = 'drama_card') {
+function captureNavigationOrigin() {
+  if (typeof getCurrentPages !== 'function') {
+    return null;
+  }
+  const pages = getCurrentPages();
+  return pages[pages.length - 1] || null;
+}
+
+function isNavigationOriginCurrent(origin) {
+  if (!origin || typeof getCurrentPages !== 'function') {
+    return true;
+  }
+  const pages = getCurrentPages();
+  return pages[pages.length - 1] === origin;
+}
+
+export async function openDirectDramaPlayer(
+  drama,
+  episode = 1,
+  source = 'drama_card',
+  options = {},
+) {
   if (!hasPangleDramaId(drama)) {
     uni.showToast({
       title: '真实播放器暂不可用',
@@ -238,13 +268,38 @@ export async function openDirectDramaPlayer(drama, episode = 1, source = 'drama_
     });
     return false;
   }
-  uni.navigateTo({
-    url: `/pages/drama/play?id=${encodeURIComponent(String(drama.id))}&episode=${Math.max(
-      1,
-      Number(episode) || 1,
-    )}&source=${encodeURIComponent(source)}`,
+  const userStore = sheep.$store('user');
+  const profile = userStore.userInfo || {};
+  const identity = {
+    tenantId: profile.tenantId,
+    memberId: profile.userId || profile.id,
+    signInDate: chinaDate(),
+  };
+  const navigationOrigin = captureNavigationOrigin();
+  return displayAdFlow.runBeforeDramaPlay({
+    ...identity,
+    beforePlay: options.beforePlay,
+    resolvePlacement: async () => {
+      try {
+        await userStore.getAdConfig();
+      } catch (error) {
+        console.warn('[display-ad] post-check-in placement config unavailable', error);
+      }
+      return resolveDisplayPlacements(userStore.adConfig).postCheckInDramaInterstitial;
+    },
+    canOpenPlayer: () =>
+      isNavigationOriginCurrent(navigationOrigin) &&
+      (typeof options.canOpenPlayer !== 'function' || options.canOpenPlayer() === true),
+    openPlayer: () => {
+      uni.navigateTo({
+        url: `/pages/drama/play?id=${encodeURIComponent(String(drama.id))}&episode=${Math.max(
+          1,
+          Number(episode) || 1,
+        )}&source=${encodeURIComponent(source)}`,
+      });
+      return true;
+    },
   });
-  return true;
 }
 
 export async function getPangleDramaList(params = {}) {

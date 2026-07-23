@@ -6,14 +6,32 @@ import PayWalletApi from '@/sheep/api/pay/wallet';
 import OrderApi from '@/sheep/api/trade/order';
 import CouponApi from '@/sheep/api/promotion/coupon';
 import safeUni from '@/sheep/helper/uni';
+import { displayAdFlow } from '@/pages/drama/services/display-ad-flow.mjs';
+import { clearDramaMemberScope, setDramaMemberScope } from '@/pages/drama/data';
 
 const SKIT_AUTH_DOMAIN = 'skit_member';
+const DEFAULT_TENANT_SCOPE = '__default__';
+const BUILT_AGENT_CODE = String(import.meta.env?.VITE_SKIT_AGENT_CODE || '')
+  .trim()
+  .toUpperCase();
 const persistedToken = safeUni.getStorageSync('token');
 const persistedAuthDomain = safeUni.getStorageSync('auth-domain');
 if (persistedToken && persistedAuthDomain !== SKIT_AUTH_DOMAIN) {
   safeUni.removeStorageSync('token');
   safeUni.removeStorageSync('refresh-token');
   safeUni.removeStorageSync('token-expires-time');
+}
+
+function activeTenantScope() {
+  const tenantId = String(safeUni.getStorageSync('tenant-id') ?? '').trim();
+  return tenantId || DEFAULT_TENANT_SCOPE;
+}
+
+function identityOf(value = {}) {
+  return {
+    tenantId: String(value.tenantId ?? '').trim(),
+    memberId: String(value.userId ?? value.id ?? '').trim(),
+  };
 }
 
 // 默认用户信息
@@ -24,7 +42,7 @@ const defaultUserInfo = {
   nickname: '', // 昵称
   gender: 0, // 性别
   mobile: '', // 手机号
-  point: 0, // 积分
+  pointBalance: 0, // 当前 Skit 会员积分
   tenantId: undefined,
   tenantCode: '',
   tenantName: '',
@@ -53,6 +71,7 @@ const user = defineStore('user', {
   state: () => ({
     userInfo: clone(defaultUserInfo), // 用户信息
     adConfig: {}, // 当前代理商公开的广告配置
+    adConfigTenantId: '', // 广告配置必须绑定到发起请求时的租户
     userWallet: clone(defaultUserWallet),
     numData: cloneDeep(defaultNumData),
     expiresTime: safeUni.getStorageSync('token-expires-time') || 0,
@@ -75,17 +94,49 @@ const user = defineStore('user', {
         ...this.userInfo,
         ...data,
       };
+      setDramaMemberScope(this.userInfo);
       return Promise.resolve(this.userInfo);
     },
 
     // 获取当前代理商广告配置（前端仅消费公开字段）
     async getAdConfig() {
+      const tenantScopeBeforeBootstrap = activeTenantScope();
+      if (BUILT_AGENT_CODE) {
+        try {
+          const { ensureMemberAppContext } = await import('@/sheep/services/member-app-context');
+          await ensureMemberAppContext(BUILT_AGENT_CODE);
+        } catch (error) {
+          this.clearDisplayAdConfig();
+          throw error;
+        }
+      }
+      const requestTenantScope = activeTenantScope();
+      if (
+        tenantScopeBeforeBootstrap !== DEFAULT_TENANT_SCOPE &&
+        tenantScopeBeforeBootstrap !== requestTenantScope &&
+        this.isLogin
+      ) {
+        this.resetUserData();
+      }
+      if (this.adConfigTenantId !== requestTenantScope) {
+        this.clearDisplayAdConfig();
+      }
       const result = await AdConfigApi.getAdConfig();
+      // 租户切换可能发生在请求途中，迟到响应不可污染新租户。
+      if (activeTenantScope() !== requestTenantScope) {
+        return;
+      }
       if (result?.code !== 0) {
         return;
       }
       this.adConfig = result.data || {};
+      this.adConfigTenantId = requestTenantScope;
       return this.adConfig;
+    },
+
+    clearDisplayAdConfig() {
+      this.adConfig = {};
+      this.adConfigTenantId = '';
     },
 
     // 旧商城页面的按需兼容方法；短剧主流程不会主动调用。
@@ -111,8 +162,25 @@ const user = defineStore('user', {
 
     // 暂存登录/注册响应中的身份信息，随后 profile 会补齐完整资料
     applyAuthResult(data = {}) {
-      // 新登录和令牌刷新都先丢弃旧租户的公开配置，避免网络失败时继续使用旧广告账号。
-      this.adConfig = {};
+      const previousIdentity = identityOf(this.userInfo);
+      const nextIdentity = identityOf({
+        tenantId: data.tenantId,
+        userId: data.userId,
+      });
+      const identityChanged =
+        !previousIdentity.tenantId ||
+        !previousIdentity.memberId ||
+        previousIdentity.tenantId !== nextIdentity.tenantId ||
+        previousIdentity.memberId !== nextIdentity.memberId;
+      if (identityChanged) {
+        displayAdFlow.clearPostCheckInMarker();
+      }
+      if (
+        previousIdentity.tenantId &&
+        previousIdentity.tenantId !== nextIdentity.tenantId
+      ) {
+        this.clearDisplayAdConfig();
+      }
       if (data.expiresTime !== undefined && data.expiresTime !== null) {
         this.expiresTime = data.expiresTime;
         uni.setStorageSync('token-expires-time', data.expiresTime);
@@ -124,6 +192,7 @@ const user = defineStore('user', {
         tenantId: data.tenantId,
         inviteCode: data.inviteCode || '',
       };
+      setDramaMemberScope(nextIdentity);
     },
 
     // 设置 token
@@ -171,7 +240,9 @@ const user = defineStore('user', {
       this.setToken();
       // 清空用户相关的缓存
       this.userInfo = clone(defaultUserInfo);
-      this.adConfig = {};
+      this.clearDisplayAdConfig();
+      displayAdFlow.clearPostCheckInMarker();
+      clearDramaMemberScope();
       this.userWallet = clone(defaultUserWallet);
       this.numData = cloneDeep(defaultNumData);
       this.expiresTime = 0;

@@ -6,7 +6,7 @@ const AdConfigApi = {
       url: '/skit/member/ad-config',
       method: 'GET',
       custom: {
-        auth: true,
+        auth: false,
         showLoading: false,
       },
     });

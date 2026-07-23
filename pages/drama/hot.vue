@@ -38,12 +38,11 @@
 <script setup>
   import { ref } from 'vue';
   import { onLoad } from '@dcloudio/uni-app';
-  import { getHotDramas, saveHistory } from '@/pages/drama/data';
+  import { saveHistory } from '@/pages/drama/data';
   import { getPangleDramaList, openDirectDramaPlayer } from '@/pages/drama/services/pangle-content';
 
-  const requireRealContent = import.meta.env?.VITE_DRAMA_REAL_CONTENT_REQUIRED === 'true';
-  const list = ref(requireRealContent ? [] : getHotDramas());
-  const loading = ref(requireRealContent);
+  const list = ref([]);
+  const loading = ref(true);
   const errorMessage = ref('');
 
   async function refresh() {
@@ -52,17 +51,12 @@
     try {
       const result = await getPangleDramaList({ page: 1, pageSize: 72 });
       if (result.skipped || result.list.length === 0) {
-        if (requireRealContent) {
-          throw new Error(result.skipped ? '短剧内容服务暂不可用' : '暂未返回可用剧目');
-        }
-        return;
+        throw new Error(result.skipped ? '短剧内容服务暂不可用' : '暂未返回可用剧目');
       }
       list.value = result.list;
     } catch (error) {
-      if (requireRealContent) {
-        list.value = [];
-        errorMessage.value = error?.message || '真实榜单加载失败';
-      }
+      list.value = [];
+      errorMessage.value = error?.message || '真实榜单加载失败';
     } finally {
       loading.value = false;
     }
