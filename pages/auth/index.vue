@@ -113,14 +113,17 @@
 <script setup>
   import { reactive } from 'vue';
   import { onLoad } from '@dcloudio/uni-app';
+  import sheep from '@/sheep';
   import AuthUtil from '@/sheep/api/member/auth';
   import InvitationApi from '@/sheep/api/member/invitation';
   import { ensureMemberAppContext } from '@/sheep/services/member-app-context';
+  import { completeMemberAuth, formatAuthFailure } from './auth-completion.mjs';
   import { resolveAuthExit } from './auth-navigation.mjs';
 
   const builtAgentCode = String(import.meta.env?.VITE_SKIT_AGENT_CODE || '')
     .trim()
     .toUpperCase();
+  const userStore = sheep.$store('user');
 
   const state = reactive({
     mode: 'login',
@@ -187,15 +190,36 @@
     }
 
     state.submitting = true;
+    let submittedSession;
     try {
       const contextToken = await requireContextToken();
       if (!contextToken) {
         return;
       }
-      const result = await AuthUtil.login({ mobile, password, contextToken });
-      if (result?.code === 0) {
+      const authAttemptEpoch = userStore.claimAuthAttempt();
+      const completion = await completeMemberAuth({
+        authenticate: () => AuthUtil.login({ mobile, password, contextToken }, authAttemptEpoch),
+        captureSession: () => (submittedSession = userStore.getAuthSessionSnapshot()),
+        hydrateProfile: (session) => userStore.loginAfter(session),
+        validateSession: (session) => userStore.isAuthSessionCurrent(session),
+      });
+      if (completion.ok) {
+        toast('登录成功');
         finishAuth();
       }
+    } catch (error) {
+      console.warn(
+        formatAuthFailure({
+          stage: 'session-verification',
+          httpStatus: error?.statusCode,
+          code: error?.code ?? error?.statusCode,
+          url: '/skit/member/user/profile',
+        }),
+      );
+      if (submittedSession && userStore.isAuthSessionCurrent(submittedSession)) {
+        userStore.resetUserData();
+      }
+      toast('登录会话校验失败，请重试');
     } finally {
       state.submitting = false;
     }
@@ -281,17 +305,42 @@
       return;
     }
     state.submitting = true;
+    let submittedSession;
     try {
-      const result = await AuthUtil.register({
-        mobile,
-        password,
-        nickname,
-        inviteCode,
-        contextToken,
+      const authAttemptEpoch = userStore.claimAuthAttempt();
+      const completion = await completeMemberAuth({
+        authenticate: () =>
+          AuthUtil.register(
+            {
+              mobile,
+              password,
+              nickname,
+              inviteCode,
+              contextToken,
+            },
+            authAttemptEpoch,
+          ),
+        captureSession: () => (submittedSession = userStore.getAuthSessionSnapshot()),
+        hydrateProfile: (session) => userStore.loginAfter(session),
+        validateSession: (session) => userStore.isAuthSessionCurrent(session),
       });
-      if (result?.code === 0) {
+      if (completion.ok) {
+        toast('注册成功');
         finishAuth();
       }
+    } catch (error) {
+      console.warn(
+        formatAuthFailure({
+          stage: 'session-verification',
+          httpStatus: error?.statusCode,
+          code: error?.code ?? error?.statusCode,
+          url: '/skit/member/user/profile',
+        }),
+      );
+      if (submittedSession && userStore.isAuthSessionCurrent(submittedSession)) {
+        userStore.resetUserData();
+      }
+      toast('注册会话校验失败，请重试');
     } finally {
       state.submitting = false;
     }

@@ -109,7 +109,13 @@ public class MainActivity extends Activity {
                 new WebChromeClient() {
                     @Override
                     public boolean onConsoleMessage(ConsoleMessage consoleMessage) {
-                        Log.d(TAG, "web console level=" + consoleMessage.messageLevel());
+                        String authDiagnostic =
+                                AuthConsoleMessageFilter.forLog(consoleMessage.message());
+                        if (authDiagnostic != null) {
+                            Log.w(TAG, authDiagnostic);
+                        } else {
+                            Log.d(TAG, "web console level=" + consoleMessage.messageLevel());
+                        }
                         return true;
                     }
                 });

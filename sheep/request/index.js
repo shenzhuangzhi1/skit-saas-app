@@ -11,6 +11,7 @@ import { showAuthModal } from '@/sheep/hooks/useModal';
 import AuthUtil from '@/sheep/api/member/auth';
 import { getTerminal } from '@/sheep/helper/const';
 import { buildClientRuntimeHeaders, getClientRuntimeInfo } from '@/sheep/services/client-runtime';
+import { formatAuthFailure } from '@/pages/auth/auth-completion.mjs';
 
 const CLIENT_RUNTIME_PATH_PATTERN =
   /\/skit\/member\/(?:player-grants|entitlements|ad-sessions(?:\/|$))/;
@@ -78,8 +79,13 @@ const http = new Request({
  */
 http.interceptors.request.use(
   async (config) => {
+    const userStore = $store('user');
+    config.custom = { ...config.custom };
+    if (config.custom.authSessionEpoch === undefined) {
+      config.custom.authSessionEpoch = userStore.authSessionEpoch;
+    }
     // 自定义处理【auth 授权】：必须登录的接口，则跳出 AuthModal 登录弹窗
-    if (config.custom.auth && !$store('user').isLogin) {
+    if (config.custom.auth && !userStore.isLogin) {
       showAuthModal();
       return Promise.reject();
     }
@@ -132,29 +138,47 @@ http.interceptors.request.use(
  */
 http.interceptors.response.use(
   (response) => {
-    // 约定：如果是 /auth/ 下的 URL 地址，并且返回了 accessToken 说明是登录相关的接口，则自动设置登陆令牌
+    // 先结束本次 loading；即使后续判定为迟到会话也不能把遮罩留在页面上。
+    response.config.custom.showLoading && closeLoading();
+
+    // 登录/注册会开启新会话；刷新只能更新发起它的原会话。
     if (
       response.config.url.indexOf('/skit/member/auth/') >= 0 &&
       response.data?.data?.accessToken
     ) {
       const authData = response.data.data;
       const userStore = $store('user');
-
-      // 登录结果决定实际租户。必须先切换租户，再保存 token；setToken 会立即拉取用户资料。
-      if (authData.tenantId !== undefined && authData.tenantId !== null) {
-        uni.setStorageSync('tenant-id', authData.tenantId);
+      if (response.config.url.indexOf('/skit/member/auth/refresh-token') >= 0) {
+        const applied = userStore.applyRefreshResult(
+          authData,
+          response.config.custom?.authSessionEpoch,
+        );
+        if (!applied) {
+          return Promise.reject(staleAuthSessionError());
+        }
+      } else {
+        const applied = userStore.beginAuthSession(
+          authData,
+          response.config.custom?.authSessionEpoch,
+        );
+        if (!applied) {
+          return Promise.reject(staleAuthSessionError());
+        }
       }
-      userStore.applyAuthResult(authData);
-      userStore.setToken(authData.accessToken, authData.refreshToken);
     }
-
-    // 自定处理【loading 加载中】：如果需要显示 loading，则关闭 loading
-    response.config.custom.showLoading && closeLoading();
 
     // 自定义处理【error 错误提示】：如果需要显示错误提示，则显示错误提示
     if (response.data.code !== 0) {
       // 特殊：如果 401 错误码，则跳转到登录页 or 刷新令牌
       if (response.data.code === 401) {
+        console.warn(
+          formatAuthFailure({
+            stage: 'business-response',
+            httpStatus: response.statusCode,
+            code: response.data.code,
+            url: response.config.url,
+          }),
+        );
         return refreshToken(response.config);
       }
       // 特殊：处理分销用户绑定失败的提示
@@ -197,6 +221,14 @@ http.interceptors.response.use(
             errorMessage = '您的登陆已过期';
             break;
           }
+          console.warn(
+            formatAuthFailure({
+              stage: 'transport-response',
+              httpStatus: error.statusCode,
+              code: error.data?.code ?? error.statusCode,
+              url: error.config.url,
+            }),
+          );
           error.config.custom?.showLoading && closeLoading();
           return refreshToken(error.config);
         case 403:
@@ -252,71 +284,96 @@ http.interceptors.response.use(
   },
 );
 
-// Axios 无感知刷新令牌，参考 https://www.dashingdog.cn/article/11 与 https://segmentfault.com/a/1190000020210980 实现
-let requestList = []; // 请求队列
-let isRefreshToken = false; // 是否正在刷新中
-const refreshToken = async (config) => {
-  // 如果当前已经是 refresh-token 的 URL 地址，并且还是 401 错误，说明是刷新令牌失败了，直接返回 Promise.reject(error)
-  if (config.url.indexOf('/skit/member/auth/refresh-token') >= 0) {
-    return Promise.reject('error');
+// 每个登录世代只允许一个刷新请求；旧世代完成后不能写入、重放或清理新会话。
+const refreshFlights = new Map();
+
+const staleAuthSessionError = () => ({
+  code: 'AUTH_SESSION_STALE',
+  msg: '登录会话已更新',
+});
+
+const rejectStaleAuthSession = () => Promise.reject(staleAuthSessionError());
+
+const getRefreshFlight = (expectedEpoch, refreshTokenValue) => {
+  const currentFlight = refreshFlights.get(expectedEpoch);
+  if (currentFlight) {
+    return currentFlight;
   }
 
-  // 如果未认证，并且未进行刷新令牌，说明可能是访问令牌过期了
-  if (!isRefreshToken) {
-    // 1. 如果获取不到刷新令牌，则只能执行登出操作
-    const refreshToken = getRefreshToken();
-    if (!refreshToken) {
-      return handleAuthorized();
-    }
-    // 只有真正发起刷新时才标记刷新中，避免无刷新令牌时状态一直卡住，后续 401 不再弹登录框
-    // https://github.com/yudaocode/yudao-mall-uniapp/issues/38
-    isRefreshToken = true;
-    // 2. 进行刷新访问令牌
+  let flight;
+  flight = (async () => {
     try {
-      const refreshTokenResult = await AuthUtil.refreshToken(refreshToken);
-      if (refreshTokenResult.code !== 0) {
-        // 如果刷新不成功，直接抛出 e 触发 2.2 的逻辑
-        // noinspection ExceptionCaughtLocallyJS
-        throw new Error('刷新令牌失败');
+      const refreshTokenResult = await AuthUtil.refreshToken(refreshTokenValue, expectedEpoch);
+      const userStore = $store('user');
+      if (
+        !userStore.isAuthEpochCurrent(expectedEpoch) ||
+        refreshTokenResult?.code !== 0 ||
+        !userStore.isLogin
+      ) {
+        throw staleAuthSessionError();
       }
-      // 2.1 刷新成功，则回放队列的请求 + 当前请求
-      config.header.Authorization = getAuthorizationHeader(getAccessToken());
-      requestList.forEach((cb) => {
-        cb();
-      });
-      requestList = [];
-      return request(config);
-    } catch (e) {
-      // 为什么需要 catch 异常呢？刷新失败时，请求因为 Promise.reject 触发异常。
-      // 2.2 刷新失败，只回放队列的请求
-      requestList.forEach((cb) => {
-        cb();
-      });
-      // 提示是否要登出。即不回放当前请求！不然会形成递归
-      return handleAuthorized();
+      return getAccessToken();
     } finally {
-      requestList = [];
-      isRefreshToken = false;
+      if (refreshFlights.get(expectedEpoch) === flight) {
+        refreshFlights.delete(expectedEpoch);
+      }
     }
-  } else {
-    // 添加到队列，等待刷新获取到新的令牌
-    return new Promise((resolve) => {
-      requestList.push(() => {
-        config.header.Authorization = getAuthorizationHeader(getAccessToken());
-        resolve(request(config));
-      });
-    });
+  })();
+  refreshFlights.set(expectedEpoch, flight);
+  return flight;
+};
+
+const refreshToken = async (config) => {
+  // 刷新接口自身失败时不能递归刷新。
+  if (config.url.indexOf('/skit/member/auth/refresh-token') >= 0) {
+    return Promise.reject(staleAuthSessionError());
+  }
+
+  const userStore = $store('user');
+  const expectedEpoch = config.custom?.authSessionEpoch;
+  if (!userStore.isAuthEpochCurrent(expectedEpoch)) {
+    return rejectStaleAuthSession();
+  }
+  if (Number(config.custom?.authRefreshAttempts || 0) >= 1) {
+    return handleAuthorized(expectedEpoch);
+  }
+
+  const refreshTokenValue = getRefreshToken();
+  if (!refreshTokenValue) {
+    return handleAuthorized(expectedEpoch);
+  }
+
+  try {
+    const accessToken = await getRefreshFlight(expectedEpoch, refreshTokenValue);
+    if (!userStore.isAuthEpochCurrent(expectedEpoch) || !accessToken) {
+      return rejectStaleAuthSession();
+    }
+    config.header.Authorization = getAuthorizationHeader(accessToken);
+    config.custom.authRefreshAttempts = 1;
+    const replayResult = await request(config);
+    if (!userStore.isAuthEpochCurrent(expectedEpoch)) {
+      return rejectStaleAuthSession();
+    }
+    return replayResult;
+  } catch {
+    if (!userStore.isAuthEpochCurrent(expectedEpoch)) {
+      return rejectStaleAuthSession();
+    }
+    return handleAuthorized(expectedEpoch);
   }
 };
 
 /**
  * 处理 401 未登录的错误
  */
-const handleAuthorized = () => {
+const handleAuthorized = (expectedEpoch) => {
   const userStore = $store('user');
+  if (!userStore.isAuthEpochCurrent(expectedEpoch)) {
+    return rejectStaleAuthSession();
+  }
   const wasLogin = userStore.isLogin;
   // Token 已失效时只清理本地状态，避免 logout 接口再次 401 形成递归刷新。
-  userStore.logout(false);
+  userStore.resetUserData();
   showAuthModal();
   // 登录超时
   return Promise.reject({

@@ -16,7 +16,7 @@ const AuthUtil = {
     });
   },
   // 使用手机 + 密码登录
-  login: (data) => {
+  login: (data, authSessionEpoch) => {
     return request({
       url: '/skit/member/auth/login',
       method: 'POST',
@@ -25,14 +25,13 @@ const AuthUtil = {
         isToken: false,
         // 租户由短时 App 上下文令牌确定，不能携带旧租户请求头。
         tenant: false,
-        showSuccess: true,
         loadingMsg: '登录中',
-        successMsg: '登录成功',
+        authSessionEpoch,
       },
     });
   },
   // 使用邀请码注册账号
-  register: (data) => {
+  register: (data, authSessionEpoch) => {
     return request({
       url: '/skit/member/auth/register',
       method: 'POST',
@@ -40,9 +39,8 @@ const AuthUtil = {
       custom: {
         isToken: false,
         tenant: false,
-        showSuccess: true,
         loadingMsg: '注册中',
-        successMsg: '注册成功',
+        authSessionEpoch,
       },
     });
   },
@@ -58,7 +56,7 @@ const AuthUtil = {
     });
   },
   // 刷新令牌
-  refreshToken: (refreshToken) => {
+  refreshToken: (refreshToken, authSessionEpoch) => {
     return request({
       url: '/skit/member/auth/refresh-token',
       method: 'POST',
@@ -69,6 +67,7 @@ const AuthUtil = {
         isToken: false,
         showLoading: false, // 不用加载中
         showError: false, // 不展示错误提示
+        authSessionEpoch,
       },
     });
   },

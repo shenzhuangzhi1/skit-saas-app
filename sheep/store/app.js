@@ -106,7 +106,11 @@ const app = defineStore('app', {
         // 恢复已登录用户的真实资料
         const userStore = user();
         if (userStore.isLogin) {
-          userStore.loginAfter();
+          try {
+            await userStore.loginAfter(userStore.getAuthSessionSnapshot());
+          } catch {
+            // 401 由请求层按会话世代处理；初始化只等待旧会话恢复结束。
+          }
         }
         return Promise.resolve(true);
       } else {

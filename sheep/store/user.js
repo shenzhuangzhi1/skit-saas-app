@@ -6,6 +6,11 @@ import PayWalletApi from '@/sheep/api/pay/wallet';
 import OrderApi from '@/sheep/api/trade/order';
 import CouponApi from '@/sheep/api/promotion/coupon';
 import safeUni from '@/sheep/helper/uni';
+import {
+  authEpochMatches,
+  authIdentityMatches,
+  nextAuthSessionEpoch,
+} from '@/sheep/services/auth-session-state.mjs';
 import { displayAdFlow } from '@/pages/drama/services/display-ad-flow.mjs';
 import { clearDramaMemberScope, setDramaMemberScope } from '@/pages/drama/data';
 
@@ -32,6 +37,21 @@ function identityOf(value = {}) {
     tenantId: String(value.tenantId ?? '').trim(),
     memberId: String(value.userId ?? value.id ?? '').trim(),
   };
+}
+
+function persistAuthTokens(store, token = '', refreshToken = '') {
+  if (!token) {
+    store.isLogin = false;
+    safeUni.removeStorageSync('token');
+    safeUni.removeStorageSync('refresh-token');
+    safeUni.removeStorageSync('auth-domain');
+    return false;
+  }
+  store.isLogin = true;
+  safeUni.setStorageSync('token', token);
+  safeUni.setStorageSync('refresh-token', refreshToken);
+  safeUni.setStorageSync('auth-domain', SKIT_AUTH_DOMAIN);
+  return true;
 }
 
 // 默认用户信息
@@ -78,17 +98,21 @@ const user = defineStore('user', {
     isLogin:
       !!safeUni.getStorageSync('token') &&
       safeUni.getStorageSync('auth-domain') === SKIT_AUTH_DOMAIN, // 登录状态
+    authSessionEpoch: 0, // 每次登录或退出都会轮换；迟到请求只能操作其发起时的会话
     lastUpdateTime: 0, // 上次更新时间
   }),
 
   actions: {
     // 获取用户信息
-    async getInfo() {
+    async getInfo(session = this.getAuthSessionSnapshot()) {
       const result = await UserApi.getUserInfo();
       if (!result || result.code !== 0) {
         return;
       }
       const { data } = result;
+      if (!this.isAuthSessionCurrent(session) || !authIdentityMatches(session, data)) {
+        return;
+      }
       this.userInfo = {
         ...clone(defaultUserInfo),
         ...this.userInfo,
@@ -175,10 +199,7 @@ const user = defineStore('user', {
       if (identityChanged) {
         displayAdFlow.clearPostCheckInMarker();
       }
-      if (
-        previousIdentity.tenantId &&
-        previousIdentity.tenantId !== nextIdentity.tenantId
-      ) {
+      if (previousIdentity.tenantId && previousIdentity.tenantId !== nextIdentity.tenantId) {
         this.clearDisplayAdConfig();
       }
       if (data.expiresTime !== undefined && data.expiresTime !== null) {
@@ -195,21 +216,72 @@ const user = defineStore('user', {
       setDramaMemberScope(nextIdentity);
     },
 
+    advanceAuthSession() {
+      this.authSessionEpoch = nextAuthSessionEpoch(this.authSessionEpoch);
+      return this.authSessionEpoch;
+    },
+
+    getAuthSessionSnapshot() {
+      const identity = identityOf(this.userInfo);
+      return {
+        epoch: this.authSessionEpoch,
+        tenantId: identity.tenantId,
+        memberId: identity.memberId,
+      };
+    },
+
+    isAuthEpochCurrent(expectedEpoch) {
+      return authEpochMatches(expectedEpoch, this.authSessionEpoch);
+    },
+
+    isAuthSessionCurrent(session) {
+      return (
+        this.isLogin &&
+        this.isAuthEpochCurrent(session?.epoch) &&
+        authIdentityMatches(session, this.userInfo)
+      );
+    },
+
+    claimAuthAttempt() {
+      this.resetUserData();
+      return this.authSessionEpoch;
+    },
+
+    beginAuthSession(data = {}, expectedEpoch) {
+      if (
+        !this.isAuthEpochCurrent(expectedEpoch) ||
+        !data.accessToken ||
+        !authIdentityMatches(data, data)
+      ) {
+        return false;
+      }
+      if (data.tenantId !== undefined && data.tenantId !== null) {
+        safeUni.setStorageSync('tenant-id', data.tenantId);
+      }
+      this.applyAuthResult(data);
+      persistAuthTokens(this, data.accessToken, data.refreshToken);
+      return this.isAuthSessionCurrent(this.getAuthSessionSnapshot());
+    },
+
+    applyRefreshResult(data = {}, expectedEpoch) {
+      if (!this.isAuthEpochCurrent(expectedEpoch) || !authIdentityMatches(this.userInfo, data)) {
+        return false;
+      }
+      if (data.expiresTime !== undefined && data.expiresTime !== null) {
+        this.expiresTime = data.expiresTime;
+        safeUni.setStorageSync('token-expires-time', data.expiresTime);
+      }
+      if (data.inviteCode) {
+        this.userInfo.inviteCode = data.inviteCode;
+      }
+      persistAuthTokens(this, data.accessToken, data.refreshToken);
+      return this.isAuthSessionCurrent(this.getAuthSessionSnapshot());
+    },
+
     // 设置 token
     setToken(token = '', refreshToken = '') {
-      if (token === '') {
-        this.isLogin = false;
-        uni.removeStorageSync('token');
-        uni.removeStorageSync('refresh-token');
-        uni.removeStorageSync('auth-domain');
-      } else {
-        this.isLogin = true;
-        uni.setStorageSync('token', token);
-        uni.setStorageSync('refresh-token', refreshToken);
-        uni.setStorageSync('auth-domain', SKIT_AUTH_DOMAIN);
-        this.loginAfter();
-      }
-      return this.isLogin;
+      this.advanceAuthSession();
+      return persistAuthTokens(this, token, refreshToken);
     },
 
     // 更新用户相关信息 (手动限流，5 秒之内不刷新)
@@ -218,6 +290,7 @@ const user = defineStore('user', {
         this.resetUserData();
         return;
       }
+      const session = this.getAuthSessionSnapshot();
       // 防抖，5 秒之内不刷新
       const nowTime = new Date().getTime();
       if (!force && this.lastUpdateTime + 5000 > nowTime) {
@@ -226,12 +299,12 @@ const user = defineStore('user', {
       this.lastUpdateTime = nowTime;
 
       // 获取最新信息
-      await this.getInfo();
-      if (!this.isLogin) {
+      await this.getInfo(session);
+      if (!this.isAuthSessionCurrent(session)) {
         return;
       }
       await this.getAdConfig();
-      return this.userInfo;
+      return this.isAuthSessionCurrent(session) ? this.userInfo : undefined;
     },
 
     // 重置用户默认数据
@@ -250,9 +323,16 @@ const user = defineStore('user', {
     },
 
     // 登录后，加载各种信息
-    async loginAfter() {
-      this.lastUpdateTime = 0;
-      await this.updateUserData(true);
+    async loginAfter(session = this.getAuthSessionSnapshot()) {
+      if (!this.isAuthSessionCurrent(session)) {
+        return;
+      }
+      this.lastUpdateTime = new Date().getTime();
+      const profile = await this.getInfo(session);
+      if (!profile || !this.isAuthSessionCurrent(session)) {
+        return;
+      }
+      return profile;
     },
 
     // 登出系统
