@@ -142,6 +142,7 @@
   import { computed, ref, watch } from 'vue';
   import { onHide, onLoad, onShow, onUnload } from '@dcloudio/uni-app';
   import sheep from '@/sheep';
+  import { showAuthModal } from '@/sheep/hooks/useModal';
   import {
     getDramaById,
     isEpisodeUnlocked,
@@ -661,9 +662,7 @@
       }
       if (!userStore.isLogin) {
         if (source !== 'page_load') {
-          uni.navigateTo({
-            url: '/pages/auth/index?mode=login',
-          });
+          showAuthModal();
         }
         return;
       }
@@ -775,9 +774,7 @@
       return;
     }
     if (!userStore.isLogin) {
-      uni.navigateTo({
-        url: '/pages/auth/index?mode=login',
-      });
+      showAuthModal();
       return;
     }
     const unlockEpisode = currentEpisode.value;

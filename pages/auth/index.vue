@@ -116,6 +116,7 @@
   import AuthUtil from '@/sheep/api/member/auth';
   import InvitationApi from '@/sheep/api/member/invitation';
   import { ensureMemberAppContext } from '@/sheep/services/member-app-context';
+  import { resolveAuthExit } from './auth-navigation.mjs';
 
   const builtAgentCode = String(import.meta.env?.VITE_SKIT_AGENT_CODE || '')
     .trim()
@@ -185,12 +186,12 @@
       return;
     }
 
-    const contextToken = await requireContextToken();
-    if (!contextToken) {
-      return;
-    }
     state.submitting = true;
     try {
+      const contextToken = await requireContextToken();
+      if (!contextToken) {
+        return;
+      }
       const result = await AuthUtil.login({ mobile, password, contextToken });
       if (result?.code === 0) {
         finishAuth();
@@ -297,12 +298,12 @@
   }
 
   function finishAuth() {
-    const pages = getCurrentPages();
-    if (pages.length > 1) {
-      uni.navigateBack();
+    const exit = resolveAuthExit(getCurrentPages());
+    if (exit.action === 'back') {
+      uni.navigateBack({ delta: exit.delta });
       return;
     }
-    uni.switchTab({ url: '/pages/index/user' });
+    uni.switchTab({ url: exit.url });
   }
 
   function goBack() {
