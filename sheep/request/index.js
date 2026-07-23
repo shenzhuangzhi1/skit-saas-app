@@ -10,6 +10,7 @@ import $platform from '@/sheep/platform';
 import { showAuthModal } from '@/sheep/hooks/useModal';
 import AuthUtil from '@/sheep/api/member/auth';
 import { getTerminal } from '@/sheep/helper/const';
+import safeUni from '@/sheep/helper/uni';
 import { buildClientRuntimeHeaders, getClientRuntimeInfo } from '@/sheep/services/client-runtime';
 import { formatAuthFailure } from '@/pages/auth/auth-completion.mjs';
 
@@ -384,12 +385,12 @@ const handleAuthorized = (expectedEpoch) => {
 
 /** 获得访问令牌 */
 export const getAccessToken = () => {
-  return uni.getStorageSync('token');
+  return safeUni.getStorageSync('token');
 };
 
 /** 获得刷新令牌 */
 export const getRefreshToken = () => {
-  return uni.getStorageSync('refresh-token');
+  return safeUni.getStorageSync('refresh-token');
 };
 
 const getAuthorizationHeader = (token) => {
@@ -399,7 +400,7 @@ const getAuthorizationHeader = (token) => {
 
 /** 获得租户编号 */
 export const getTenantId = () => {
-  const storedTenantId = uni.getStorageSync('tenant-id');
+  const storedTenantId = safeUni.getStorageSync('tenant-id');
   const BUILT_AGENT_CODE = String(import.meta.env?.VITE_SKIT_AGENT_CODE || '').trim();
   if (BUILT_AGENT_CODE) {
     return storedTenantId || undefined;
