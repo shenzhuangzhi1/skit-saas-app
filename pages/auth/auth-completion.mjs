@@ -3,6 +3,17 @@ import {
   normalizeAuthIdentity,
 } from '../../sheep/services/auth-session-state.mjs';
 
+const SAFE_AUTH_STAGES = new Set([
+  'business-response',
+  'transport-response',
+  'session-verification',
+]);
+const SAFE_AUTH_CODES = new Set([
+  'AUTH_IDENTITY_MISMATCH',
+  'AUTH_SESSION_STALE',
+  'AUTH_SESSION_UNVERIFIED',
+]);
+
 function sanitizePath(url) {
   const queryFreeUrl = String(url || '-').split(/[?#]/, 1)[0];
   const path = queryFreeUrl.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]+/i, '');
@@ -17,13 +28,19 @@ function sanitizePath(url) {
 }
 
 export function formatAuthFailure({ stage, httpStatus, code, url }) {
-  const safeStage = String(stage || 'unknown').replace(/[^a-z0-9-]/gi, '-');
-  const safeHttpStatus = String(httpStatus ?? 'unknown').replace(/[^a-z0-9_-]/gi, '');
-  const safeCode = String(code ?? 'unknown').replace(/[^a-z0-9_-]/gi, '');
+  const stageCandidate = String(stage || '').trim();
+  const httpStatusCandidate = String(httpStatus ?? '').trim();
+  const codeCandidate = String(code ?? '').trim();
+  const safeStage = SAFE_AUTH_STAGES.has(stageCandidate) ? stageCandidate : 'unknown';
+  const safeHttpStatus = /^[1-5][0-9]{2}$/.test(httpStatusCandidate)
+    ? httpStatusCandidate
+    : 'unknown';
+  const safeCode =
+    SAFE_AUTH_CODES.has(codeCandidate) || /^[1-5][0-9]{2}$/.test(codeCandidate)
+      ? codeCandidate
+      : 'unknown';
   const path = sanitizePath(url);
-  return `[auth] ${safeStage} http=${safeHttpStatus || 'unknown'} code=${
-    safeCode || 'unknown'
-  } path=${path}`;
+  return `[auth] ${safeStage} http=${safeHttpStatus} code=${safeCode} path=${path}`;
 }
 
 function authCompletionError(code) {

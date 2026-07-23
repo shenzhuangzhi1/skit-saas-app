@@ -122,6 +122,7 @@
   import { computed, ref } from 'vue';
   import { onPullDownRefresh, onShow } from '@dcloudio/uni-app';
   import sheep from '@/sheep';
+  import { showAuthPage } from '@/sheep/hooks/useModal';
   import DramaCard from '@/pages/drama/components/DramaCard.vue';
   import DramaTabbar from '@/pages/drama/components/DramaTabbar.vue';
   import { getFollowList, getHistoryList, saveHistory } from '@/pages/drama/data';
@@ -177,9 +178,7 @@
   }
 
   function goAuth(mode) {
-    uni.navigateTo({
-      url: `/pages/auth/index?mode=${mode}`,
-    });
+    showAuthPage(mode);
   }
 
   function goTeam() {

@@ -7,6 +7,7 @@ import {
   displayAdFlow,
   resolveDisplayPlacements,
 } from '@/pages/drama/services/display-ad-flow.mjs';
+import { normalizeDramaScore } from './drama-score.mjs';
 
 const PANGLE_PLUGIN_NAME = 'SkitPangleDrama';
 const DEFAULT_SETTING_FILE = import.meta.env?.VITE_PANGLE_DRAMA_SETTING_FILE || 'SDK_Setting.json';
@@ -185,7 +186,7 @@ export function normalizePangleDrama(raw = {}) {
     status: contentStatus === '' ? '' : Number(contentStatus) === 1 ? '连载中' : '已完结',
     heat: raw.heat || raw.hot || '',
     follows: raw.follows ?? raw.favoriteCount ?? '',
-    score: raw.score ?? '',
+    score: normalizeDramaScore(raw.score),
     updateText: '',
     cover: coverImage
       ? `url("${coverImage}") center/cover`

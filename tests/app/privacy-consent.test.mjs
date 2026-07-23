@@ -8,7 +8,9 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const servicePath = resolve(root, 'pages/drama/services/privacy-consent.js');
 
 function sourceUrl(source) {
-  return `data:text/javascript;base64,${Buffer.from(source).toString('base64')}#${Date.now()}-${Math.random()}`;
+  return `data:text/javascript;base64,${Buffer.from(source).toString(
+    'base64',
+  )}#${Date.now()}-${Math.random()}`;
 }
 
 async function importConsentService() {
@@ -58,6 +60,9 @@ async function importPangleContent({ plugin, ensureConsent }) {
       runBeforeDramaPlay(options) { return options.openPlayer(); },
     };
   `);
+  const dramaScoreUrl = sourceUrl(
+    readFileSync(resolve(root, 'pages/drama/services/drama-score.mjs'), 'utf8'),
+  );
   const source = readFileSync(resolve(root, 'pages/drama/services/pangle-content.js'), 'utf8')
     .replace("from './native-bridge';", `from ${JSON.stringify(nativeBridgeUrl)};`)
     .replace("from '@/pages/drama/data';", `from ${JSON.stringify(dataUrl)};`)
@@ -66,7 +71,8 @@ async function importPangleContent({ plugin, ensureConsent }) {
     .replace(
       "from '@/pages/drama/services/display-ad-flow.mjs';",
       `from ${JSON.stringify(displayAdUrl)};`,
-    );
+    )
+    .replace("from './drama-score.mjs';", `from ${JSON.stringify(dramaScoreUrl)};`);
   return import(sourceUrl(source));
 }
 

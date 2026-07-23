@@ -7,6 +7,23 @@ function routeOf(page) {
     .split('?')[0];
 }
 
+function normalizeAuthMode(mode) {
+  return mode === 'register' ? 'register' : 'login';
+}
+
+export function canSwitchAuthMode(submitting) {
+  return submitting !== true;
+}
+
+export function resolveAuthEntry(options = {}) {
+  const inviteCode = String(options.inviteCode || '').trim();
+  const hasExplicitMode = options.mode === 'login' || options.mode === 'register';
+  return {
+    mode: hasExplicitMode ? options.mode : inviteCode ? 'register' : 'login',
+    inviteCode,
+  };
+}
+
 export function resolveAuthExit(pages = []) {
   let delta = 0;
   for (let index = pages.length - 1; index >= 0; index -= 1) {
@@ -23,7 +40,7 @@ export function resolveAuthExit(pages = []) {
 
 export function createAuthNavigationGate({ getPages, navigateTo }) {
   let pending = false;
-  return function openMemberLogin() {
+  function openMemberAuth(mode = 'login') {
     const pages = getPages() || [];
     if (pending || routeOf(pages[pages.length - 1]) === AUTH_ROUTE) {
       return false;
@@ -31,8 +48,8 @@ export function createAuthNavigationGate({ getPages, navigateTo }) {
     pending = true;
     try {
       navigateTo({
-        url: `/${AUTH_ROUTE}?mode=login`,
-        complete() {
+        url: `/${AUTH_ROUTE}?mode=${normalizeAuthMode(mode)}`,
+        fail() {
           pending = false;
         },
       });
@@ -41,5 +58,9 @@ export function createAuthNavigationGate({ getPages, navigateTo }) {
       pending = false;
       throw error;
     }
+  }
+  openMemberAuth.markReady = () => {
+    pending = false;
   };
+  return openMemberAuth;
 }

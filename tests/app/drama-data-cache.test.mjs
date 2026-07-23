@@ -7,7 +7,9 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
 function sourceUrl(source) {
-  return `data:text/javascript;base64,${Buffer.from(source).toString('base64')}#${Date.now()}-${Math.random()}`;
+  return `data:text/javascript;base64,${Buffer.from(source).toString(
+    'base64',
+  )}#${Date.now()}-${Math.random()}`;
 }
 
 async function importDramaData(initialCache) {
@@ -21,7 +23,13 @@ async function importDramaData(initialCache) {
     setStorageSync: (key, value) => storage.set(key, value),
     removeStorageSync: (key) => storage.delete(key),
   };
-  const source = readFileSync(resolve(root, 'pages/drama/data.js'), 'utf8');
+  const dramaScoreUrl = sourceUrl(
+    readFileSync(resolve(root, 'pages/drama/services/drama-score.mjs'), 'utf8'),
+  );
+  const source = readFileSync(resolve(root, 'pages/drama/data.js'), 'utf8').replace(
+    "from './services/drama-score.mjs';",
+    `from ${JSON.stringify(dramaScoreUrl)};`,
+  );
   return { data: await import(sourceUrl(source)), storage };
 }
 

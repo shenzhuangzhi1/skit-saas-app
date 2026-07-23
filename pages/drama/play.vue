@@ -170,6 +170,10 @@
     showDramaRewardedVideoAd,
   } from '@/pages/drama/services/reward-ad';
   import { ensureAdPrivacyConsent } from '@/pages/drama/services/privacy-consent';
+  import {
+    formatUnlockFailure,
+    rewardErrorTitle,
+  } from '@/pages/drama/services/ad-unlock-error.mjs';
 
   const drama = ref(getDramaById());
   const currentEpisode = ref(1);
@@ -597,51 +601,6 @@
     return '暂时无法播放，请稍后重试';
   }
 
-  function rewardErrorTitle(error) {
-    const message = String(error?.message || '').trim();
-    if (
-      message.includes('CLIENT_RUNTIME_HEADERS_INVALID') ||
-      message.includes('CLIENT_VERSION_REVOKED')
-    ) {
-      return '请更新到最新版本后重试';
-    }
-    if (
-      Number(error?.code) === 1030007007 ||
-      Number(error?.code) === 1030007008 ||
-      Number(error?.code) === 1030007009
-    ) {
-      return '当前剧目正在准备，请稍后重试';
-    }
-    if (Number(error?.code) === 1030007010) {
-      return '当前代理商内容授权未配置，请联系代理商';
-    }
-    if (Number(error?.code) === 1030007011) {
-      return '当前剧目不在本代理商内容库，请选择其他剧目';
-    }
-    if (Number(error?.code) === 1030007012) {
-      return '当前代理商内容授权失效，请联系代理商';
-    }
-    if (error?.code === 'TELEMETRY_DELIVERY_FAILED') {
-      return '广告状态同步失败，请稍后重试';
-    }
-    if (error?.code === 'NATIVE_AD_NO_FILL') {
-      return '当前广告库存不足，请稍后再试';
-    }
-    if (error?.code === 'PRIVACY_CONSENT_REQUIRED') {
-      return '请先同意隐私与广告服务后再观看广告';
-    }
-    if (error?.code === 'PANGLE_INIT_FAILED') {
-      return '内容与广告服务初始化失败，请重启应用后重试';
-    }
-    if (error?.code === 'TAKU_INIT_FAILED') {
-      return '广告服务初始化失败，请稍后重试';
-    }
-    if (error?.code === 'REWARD_REJECTED' || error?.code === 'REWARD_VERIFY_TIMEOUT') {
-      return '本次奖励未到账，请重新观看广告';
-    }
-    return '广告暂不可用，请稍后重试';
-  }
-
   function hasTerminalRewardEvidence(error) {
     const telemetry = error?.terminalTelemetry;
     return (
@@ -781,16 +740,19 @@
     unlocking.value = true;
     let releaseUnlockOwnership;
     let unlockRequest;
+    let unlockStage = 'identity';
     try {
       const identity = currentIdentity();
       const dramaId = resolveServerDramaId();
       unlockRequest = beginPageRequest('unlock', identity, dramaId);
+      unlockStage = 'consent';
       const consentGranted = await ensureAdPrivacyConsent(identity);
       assertPageRequestCurrent(unlockRequest);
       if (!consentGranted) {
         uni.showToast({ title: '未同意隐私与广告服务，本集仍保持锁定', icon: 'none' });
         return;
       }
+      unlockStage = 'ownership';
       releaseUnlockOwnership = await acquireAdSessionOwnership({
         ...identity,
         dramaId,
@@ -802,6 +764,7 @@
         return;
       }
       if (isUnlocked(unlockEpisode)) {
+        unlockStage = 'entitlements';
         const snapshot = await refreshAuthoritativeEntitlements(identity);
         assertPageRequestCurrent(unlockRequest);
         if (snapshot.grantedEpisodeNos.includes(unlockEpisode)) {
@@ -814,6 +777,7 @@
         }
       }
       let result;
+      unlockStage = 'session';
       const prepared = await adSessionOrchestrator.prepareUnlockSession(identity, {
         dramaId,
         episodeNo: unlockEpisode,
@@ -824,6 +788,7 @@
       } else {
         const created = prepared.created;
         if (created.outcome === 'ALREADY_ENTITLED') {
+          unlockStage = 'entitlements';
           const snapshot = await refreshAuthoritativeEntitlements(identity);
           assertPageRequestCurrent(unlockRequest);
           if (!snapshot.grantedEpisodeNos.includes(unlockEpisode)) {
@@ -840,6 +805,7 @@
           if (created.nativeProtocol) {
             throw new Error('待确认记录不得携带原生播放协议');
           }
+          unlockStage = 'verification';
           result = await adSessionOrchestrator.pollSession(identity, created.sessionId);
           assertPageRequestCurrent(unlockRequest);
         } else if (!created.requiresVerificationPoll) {
@@ -848,6 +814,7 @@
           }
           let adPlayback;
           try {
+            unlockStage = 'native';
             adPlayback = await runNativeActivityPresentation(() =>
               showDramaRewardedVideoAd({
                 protocol: created.nativeProtocol,
@@ -863,11 +830,13 @@
             if (!hasTerminalRewardEvidence(error)) {
               throw error;
             }
+            unlockStage = 'verification';
             result = await adSessionOrchestrator.pollSession(identity, created.sessionId);
             assertPageRequestCurrent(unlockRequest);
           }
           if (!result) {
             assertPageRequestCurrent(unlockRequest);
+            unlockStage = 'verification';
             result = await adSessionOrchestrator.pollSession(identity, created.sessionId);
             assertPageRequestCurrent(unlockRequest);
             if (adPlayback.outcome === 'INCOMPLETE' && result.resolution !== 'GRANTED') {
@@ -878,6 +847,7 @@
             }
           }
         } else {
+          unlockStage = 'verification';
           result = await adSessionOrchestrator.pollSession(identity, created.sessionId);
           assertPageRequestCurrent(unlockRequest);
         }
@@ -898,6 +868,7 @@
         if (currentEpisode.value !== unlockEpisode) {
           return;
         }
+        unlockStage = 'playback';
         await playCurrentEpisode(
           'server_verified_reward',
           {
@@ -936,6 +907,7 @@
       ) {
         return;
       }
+      console.warn(formatUnlockFailure({ stage: unlockStage, error }));
       uni.showToast({
         title: rewardErrorTitle(error),
         icon: 'none',

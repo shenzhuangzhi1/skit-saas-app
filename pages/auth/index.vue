@@ -13,12 +13,16 @@
 
     <view class="auth-card">
       <view class="mode-tabs">
-        <view class="mode-tab" :class="{ active: state.mode === 'login' }" @tap="setMode('login')">
+        <view
+          class="mode-tab"
+          :class="{ active: state.mode === 'login', disabled: state.submitting }"
+          @tap="setMode('login')"
+        >
           登录
         </view>
         <view
           class="mode-tab"
-          :class="{ active: state.mode === 'register' }"
+          :class="{ active: state.mode === 'register', disabled: state.submitting }"
           @tap="setMode('register')"
         >
           注册
@@ -46,7 +50,9 @@
           />
         </view>
         <button class="submit-button" :loading="state.submitting" @tap="submitLogin"> 登录 </button>
-        <view class="form-tip" @tap="setMode('register')">没有账号？使用邀请码注册</view>
+        <view class="form-tip" :class="{ disabled: state.submitting }" @tap="setMode('register')">
+          没有账号？使用邀请码注册
+        </view>
       </view>
 
       <view v-else class="form-body">
@@ -104,7 +110,9 @@
         <button class="submit-button" :loading="state.submitting" @tap="submitRegister">
           注册并登录
         </button>
-        <view class="form-tip" @tap="setMode('login')">已有账号？返回登录</view>
+        <view class="form-tip" :class="{ disabled: state.submitting }" @tap="setMode('login')">
+          已有账号？返回登录
+        </view>
       </view>
     </view>
   </view>
@@ -116,9 +124,10 @@
   import sheep from '@/sheep';
   import AuthUtil from '@/sheep/api/member/auth';
   import InvitationApi from '@/sheep/api/member/invitation';
+  import { markAuthPageReady } from '@/sheep/hooks/useModal';
   import { ensureMemberAppContext } from '@/sheep/services/member-app-context';
   import { completeMemberAuth, formatAuthFailure } from './auth-completion.mjs';
-  import { resolveAuthExit } from './auth-navigation.mjs';
+  import { canSwitchAuthMode, resolveAuthEntry, resolveAuthExit } from './auth-navigation.mjs';
 
   const builtAgentCode = String(import.meta.env?.VITE_SKIT_AGENT_CODE || '')
     .trim()
@@ -145,6 +154,9 @@
   });
 
   function setMode(mode) {
+    if (!canSwitchAuthMode(state.submitting)) {
+      return;
+    }
     state.mode = mode;
   }
 
@@ -296,17 +308,16 @@
       toast('注册必须填写邀请码');
       return;
     }
-    if (!(await resolveInvitation())) {
-      return;
-    }
-
-    const contextToken = await requireContextToken();
-    if (!contextToken) {
-      return;
-    }
     state.submitting = true;
     let submittedSession;
     try {
+      if (!(await resolveInvitation())) {
+        return;
+      }
+      const contextToken = await requireContextToken();
+      if (!contextToken) {
+        return;
+      }
       const authAttemptEpoch = userStore.claimAuthAttempt();
       const completion = await completeMemberAuth({
         authenticate: () =>
@@ -365,14 +376,13 @@
   }
 
   onLoad((options = {}) => {
+    markAuthPageReady();
     // 深链代码只在未内置白标代码的通用壳中作为回退，不会覆盖已编译的代理商身份。
     state.linkedAgentCode = String(options.agentCode || options.tenantCode || '')
       .trim()
       .toUpperCase();
-    const inviteCode = options.inviteCode || options.code || '';
-    if (options.mode === 'register' || inviteCode) {
-      state.mode = 'register';
-    }
+    const { mode, inviteCode } = resolveAuthEntry(options);
+    state.mode = mode;
     if (inviteCode) {
       state.register.inviteCode = inviteCode;
       resolveInvitation();
@@ -449,6 +459,11 @@
   .mode-tab.active {
     color: #191919;
     font-weight: 800;
+  }
+
+  .mode-tab.disabled,
+  .form-tip.disabled {
+    pointer-events: none;
   }
 
   .mode-tab.active::after {

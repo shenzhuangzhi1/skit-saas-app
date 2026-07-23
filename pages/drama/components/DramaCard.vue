@@ -2,7 +2,7 @@
   <view class="drama-card" :class="mode" @tap="$emit('select', drama)">
     <view class="poster" :style="{ background: drama.cover }">
       <view class="poster-shade"></view>
-      <view class="poster-score">{{ drama.score }}</view>
+      <view v-if="drama.score" class="poster-score">{{ drama.score }}</view>
       <view class="poster-title">{{ drama.title }}</view>
     </view>
     <view class="info">

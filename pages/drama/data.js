@@ -1,3 +1,5 @@
+import { normalizeDramaRecordScore } from './services/drama-score.mjs';
+
 const HISTORY_KEY = 'skit_drama_history_v1';
 const FOLLOW_KEY = 'skit_drama_follow_v1';
 const EXTERNAL_DRAMA_CACHE_KEY = 'skit_external_drama_cache_v1';
@@ -68,7 +70,7 @@ export function clearDramaMemberScope() {
 
 export function getExternalDramas() {
   const list = readStorage(tenantStorageKey(EXTERNAL_DRAMA_CACHE_KEY), []);
-  return Array.isArray(list) ? list : [];
+  return Array.isArray(list) ? list.map(normalizeDramaRecordScore) : [];
 }
 
 export function cacheExternalDramas(list = []) {

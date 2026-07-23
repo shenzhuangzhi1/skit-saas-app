@@ -306,6 +306,33 @@ test('auth diagnostics retain only status, code and a redacted query-free path',
     }),
     '[auth] transport-response http=401 code=401 path=/app-api/skit/member/user/redacted/profile',
   );
+  assert.equal(
+    formatAuthFailure?.({
+      stage: 'session-verification',
+      httpStatus: 200,
+      code: 'AUTH_SESSION_STALE',
+      url: '/skit/member/user/profile',
+    }),
+    '[auth] session-verification http=200 code=AUTH_SESSION_STALE path=/skit/member/user/profile',
+  );
+  assert.equal(
+    formatAuthFailure?.({
+      stage: 'session-verification',
+      httpStatus: 200,
+      code: '13800000000',
+      url: '/skit/member/user/profile',
+    }),
+    '[auth] session-verification http=200 code=unknown path=/skit/member/user/profile',
+  );
+  assert.equal(
+    formatAuthFailure?.({
+      stage: 'session-verification',
+      httpStatus: 'TOKEN_SECRET_ABC123',
+      code: 'TOKEN_SECRET_ABC123',
+      url: '/skit/member/user/profile',
+    }),
+    '[auth] session-verification http=unknown code=unknown path=/skit/member/user/profile',
+  );
 });
 
 test('both business and transport 401 responses emit sanitized auth diagnostics', () => {

@@ -44,6 +44,7 @@
   import { onLoad, onPullDownRefresh, onReachBottom } from '@dcloudio/uni-app';
   import sheep from '@/sheep';
   import InvitationApi from '@/sheep/api/member/invitation';
+  import { showAuthPage } from '@/sheep/hooks/useModal';
 
   const state = reactive({
     pageNo: 1,
@@ -89,7 +90,7 @@
 
   onLoad(() => {
     if (!sheep.$store('user').isLogin) {
-      uni.redirectTo({ url: '/pages/auth/index' });
+      showAuthPage('login');
       return;
     }
     loadChildren(true);

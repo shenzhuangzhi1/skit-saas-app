@@ -1,14 +1,22 @@
 import $store from '@/sheep/store';
 import { createAuthNavigationGate } from '@/pages/auth/auth-navigation.mjs';
 
-const openMemberLogin = createAuthNavigationGate({
+const openMemberAuth = createAuthNavigationGate({
   getPages: () => getCurrentPages(),
   navigateTo: (options) => uni.navigateTo(options),
 });
 
 // 短剧会员只有一个身份入口：邀请制手机号登录与注册页面。
+export function showAuthPage(mode = 'login') {
+  return openMemberAuth(mode);
+}
+
+export function markAuthPageReady() {
+  openMemberAuth.markReady();
+}
+
 export function showAuthModal() {
-  return openMemberLogin();
+  return showAuthPage('login');
 }
 
 // 打开分享弹框

@@ -46,6 +46,7 @@ async function importPangleContent(plugin) {
       runBeforeDramaPlay(options) { return options.openPlayer(); },
     };
   `);
+  const dramaScoreUrl = sourceUrl(read('pages/drama/services/drama-score.mjs'));
   const source = read('pages/drama/services/pangle-content.js')
     .replace("from './native-bridge';", `from ${JSON.stringify(nativeBridgeUrl)};`)
     .replace("from '@/pages/drama/data';", `from ${JSON.stringify(dramaDataUrl)};`)
@@ -54,9 +55,25 @@ async function importPangleContent(plugin) {
     .replace(
       "from '@/pages/drama/services/display-ad-flow.mjs';",
       `from ${JSON.stringify(displayAdUrl)};`,
-    );
+    )
+    .replace("from './drama-score.mjs';", `from ${JSON.stringify(dramaScoreUrl)};`);
   return import(sourceUrl(source));
 }
+
+test('provider score normalization is applied by the real drama mapper', async () => {
+  const content = await importPangleContent({});
+  const baseDrama = {
+    id: 901,
+    title: '真实剧目',
+    total: 12,
+    freeSet: 3,
+    lockSet: 1,
+  };
+
+  assert.equal(content.normalizePangleDrama(baseDrama).score, '');
+  assert.equal(content.normalizePangleDrama({ ...baseDrama, score: 8.64 }).score, '8.6');
+  assert.equal(content.normalizePangleDrama({ ...baseDrama, score: 99 }).score, '');
+});
 
 test('H5 cannot send malicious freeSet or lockSet policy to the native player', async () => {
   let openPayload;
@@ -247,9 +264,7 @@ test('DJX unlock callbacks are bound to the current widget epoch and preserve SD
   const scopeSnapshot = terminalHandler.indexOf(
     'boolean hadSdkOwnedScope = sdkUnlockResumePolicy.hasOutstandingResumeScope()',
   );
-  const terminalObservation = terminalHandler.indexOf(
-    'sdkUnlockResumePolicy.observeTerminal(',
-  );
+  const terminalObservation = terminalHandler.indexOf('sdkUnlockResumePolicy.observeTerminal(');
   const unownedGuard = terminalHandler.indexOf('if (!hadSdkOwnedScope)');
   const unownedReturn = terminalHandler.indexOf('return;', unownedGuard);
   const mismatchGuard = terminalHandler.indexOf(

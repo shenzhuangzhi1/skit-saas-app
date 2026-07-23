@@ -109,10 +109,10 @@ public class MainActivity extends Activity {
                 new WebChromeClient() {
                     @Override
                     public boolean onConsoleMessage(ConsoleMessage consoleMessage) {
-                        String authDiagnostic =
+                        String safeDiagnostic =
                                 AuthConsoleMessageFilter.forLog(consoleMessage.message());
-                        if (authDiagnostic != null) {
-                            Log.w(TAG, authDiagnostic);
+                        if (safeDiagnostic != null) {
+                            Log.w(TAG, safeDiagnostic);
                         } else {
                             Log.d(TAG, "web console level=" + consoleMessage.messageLevel());
                         }

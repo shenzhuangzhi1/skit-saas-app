@@ -6,6 +6,10 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const playerSource = readFileSync(resolve(root, 'pages/drama/play.vue'), 'utf8');
+const unlockErrorSource = readFileSync(
+  resolve(root, 'pages/drama/services/ad-unlock-error.mjs'),
+  'utf8',
+);
 
 function cssRule(selector) {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -54,7 +58,7 @@ test('refreshes a cached unlock against the server before deciding whether to sh
   );
   assert.match(
     unlockFlow,
-    /if \(isUnlocked\(unlockEpisode\)\) \{\s*const snapshot = await refreshAuthoritativeEntitlements\(identity\);\s*assertPageRequestCurrent\(unlockRequest\);\s*if \(snapshot\.grantedEpisodeNos\.includes\(unlockEpisode\)\) \{[\s\S]*?await playCurrentEpisode\('server_entitled', null, unlockEpisode\)/,
+    /if \(isUnlocked\(unlockEpisode\)\) \{\s*unlockStage = 'entitlements';\s*const snapshot = await refreshAuthoritativeEntitlements\(identity\);\s*assertPageRequestCurrent\(unlockRequest\);\s*if \(snapshot\.grantedEpisodeNos\.includes\(unlockEpisode\)\) \{[\s\S]*?await playCurrentEpisode\('server_entitled', null, unlockEpisode\)/,
   );
   assert.match(
     unlockFlow,
@@ -157,7 +161,7 @@ test('a VERIFYING create outcome polls without handing a missing protocol to nat
 test('reward messaging distinguishes incomplete, verifying, and unavailable states', () => {
   assert.match(playerSource, /广告未完整观看，请重新观看/);
   assert.match(playerSource, /奖励确认中/);
-  assert.match(playerSource, /广告暂不可用/);
+  assert.match(unlockErrorSource, /广告暂不可用/);
 });
 
 test('watch history begins after a player actually opens', () => {

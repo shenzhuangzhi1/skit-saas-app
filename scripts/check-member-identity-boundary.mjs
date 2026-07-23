@@ -79,6 +79,21 @@ for (const file of trackedFiles) {
       }
     });
   }
+  if (
+    (file.startsWith('pages/') || file.startsWith('sheep/')) &&
+    file !== 'pages/auth/auth-navigation.mjs'
+  ) {
+    const directAuthNavigation =
+      /uni\.(?:navigateTo|redirectTo|reLaunch)\s*\(\s*\{[\s\S]{0,240}?url:\s*[`'"]\/pages\/auth\/index/g;
+    for (const match of source.matchAll(directAuthNavigation)) {
+      const line = source.slice(0, match.index).split('\n').length;
+      violations.push(
+        `${file}:${line}: direct auth route bypasses shared navigation gate: ${match[0]
+          .replace(/\s+/g, ' ')
+          .trim()}`,
+      );
+    }
+  }
 }
 
 const requiredEndpoints = [
