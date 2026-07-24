@@ -957,6 +957,63 @@ test('Taku bridge returns a structured delivery error when telemetry cannot reac
   }
 });
 
+test('DJX callback handles are not mistaken for rewarded telemetry', async () => {
+  const originalUni = globalThis.uni;
+  const callbacks = [
+    event(),
+    event({ callbackSequence: 1, nativeState: 'LOADED' }),
+    event({
+      callbackSequence: 2,
+      nativeState: 'SHOWING',
+      providerShowId: 'show-1',
+      networkFirmId: 66,
+      adsourceId: 'source-1',
+    }),
+    event({
+      callbackSequence: 3,
+      nativeState: 'SHOWING',
+      providerShowId: 'show-1',
+      networkFirmId: 66,
+      adsourceId: 'source-1',
+      clientRewardObserved: true,
+    }),
+    event({
+      callbackSequence: 4,
+      nativeState: 'CLOSED',
+      providerShowId: 'show-1',
+      networkFirmId: 66,
+      adsourceId: 'source-1',
+      clientRewardObserved: true,
+      closed: true,
+    }),
+  ];
+  globalThis.uni = {
+    requireNativePlugin() {
+      return {
+        showRewardedVideo(_payload, callback) {
+          queueMicrotask(() => callbacks.forEach(callback));
+          return 'djx_opaque_callback_handle';
+        },
+      };
+    },
+  };
+  try {
+    const taku = await importTakuSource();
+    const clientEvents = [];
+    const result = await taku.showRewardedVideoAd(serverProtocol, {
+      onClientEvent(clientEvent) {
+        clientEvents.push(clientEvent.eventType);
+      },
+      timeoutMs: 100,
+    });
+
+    assert.equal(result.outcome, 'REWARD_OBSERVED');
+    assert.deepEqual(clientEvents, ['LOAD_STARTED', 'SHOWN', 'REWARD_OBSERVED', 'CLOSED']);
+  } finally {
+    globalThis.uni = originalUni;
+  }
+});
+
 test('Taku bridge has no success path when the native plugin is absent', async () => {
   const originalUni = globalThis.uni;
   globalThis.uni = { requireNativePlugin: () => null };

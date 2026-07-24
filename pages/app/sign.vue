@@ -1,79 +1,123 @@
-<!-- 签到界面  -->
 <template>
-  <s-layout title="签到有礼">
-    <view v-if="state.loading" class="loading-box">正在加载签到记录...</view>
-    <view v-else class="sign-wrap">
-      <view class="content-box calendar">
-        <view class="sign-everyday ss-flex ss-col-center ss-row-between ss-p-x-30">
-          <text class="sign-everyday-title">每日签到</text>
-          <view class="sign-num-box">
-            已连续签到 <text class="sign-num">{{ state.signInfo.continuousDay }}</text> 天
+  <s-layout title="签到打卡" navbar="normal" navbarBackgroundColor="#ffffff">
+    <view class="sign-page">
+      <view v-if="state.loading" class="state-card">
+        <uni-icons type="spinner-cycle" size="30" color="#ff5a1f" />
+        <view class="state-title">正在同步签到状态</view>
+        <view class="state-desc">签到结果和积分以当前账号的服务端记录为准</view>
+      </view>
+
+      <view v-else-if="state.error" class="state-card error-card">
+        <uni-icons type="info-filled" size="30" color="#ff5a1f" />
+        <view class="state-title">签到状态加载失败</view>
+        <view class="state-desc">{{ state.error }}</view>
+        <button class="retry-btn" @tap="retrySignInfo">重新加载</button>
+      </view>
+
+      <template v-else-if="state.ready">
+        <view class="hero-card">
+          <view class="hero-kicker">每日签到 · 每次固定 +1 积分</view>
+          <view class="streak-row">
+            <view>
+              <view class="streak-value">{{ state.signInfo.continuousDay }}</view>
+              <view class="streak-label">连续签到天数</view>
+            </view>
+            <view class="today-badge" :class="{ completed: state.signInfo.todaySignIn }">
+              {{ state.signInfo.todaySignIn ? '今日已签到' : '今日待签到' }}
+            </view>
           </view>
-        </view>
-        <view class="summary-grid">
-          <view class="summary-item">
-            <view class="summary-value">+1</view>
-            <view class="summary-label">每次签到积分</view>
-          </view>
-          <view class="summary-item">
-            <view class="summary-value">{{ state.signInfo.totalDay || 0 }}</view>
-            <view class="summary-label">累计签到天数</view>
-          </view>
-          <view class="summary-item">
-            <view class="summary-value">{{ state.signInfo.pointBalance || 0 }}</view>
-            <view class="summary-label">当前积分</view>
+
+          <view class="summary-grid">
+            <view class="summary-item">
+              <view class="summary-value">{{ state.signInfo.totalDay }}</view>
+              <view class="summary-label">累计签到</view>
+            </view>
+            <view class="summary-divider"></view>
+            <view class="summary-item">
+              <view class="summary-value">{{ state.signInfo.pointBalance }}</view>
+              <view class="summary-label">当前积分</view>
+            </view>
+            <view class="summary-divider"></view>
+            <view class="summary-item">
+              <view class="summary-value">+1</view>
+              <view class="summary-label">本次奖励</view>
+            </view>
           </view>
         </view>
 
-        <view class="myDateTable">
-          <view class="ss-flex ss-col-center ss-row-center sign-box ss-m-y-40">
-            <button
-              class="ss-reset-button sign-btn"
-              v-if="!state.signInfo.todaySignIn"
-              :disabled="state.signing"
-              @tap="onSign"
-            >
-              {{ state.signing ? '签到中...' : '签到并领取 1 积分' }}
-            </button>
-            <button class="ss-reset-button already-btn" v-else disabled> 已签到 </button>
+        <view class="action-card">
+          <view class="action-copy">
+            <view class="action-title">
+              {{ state.signInfo.todaySignIn ? '今天的签到已完成' : '完成今日签到' }}
+            </view>
+            <view class="action-desc">
+              {{
+                state.signInfo.todaySignIn
+                  ? '积分已经计入当前账号，可在积分记录中核对。'
+                  : '每个账号每天仅可签到一次，成功后立即获得 1 积分。'
+              }}
+            </view>
+          </view>
+          <button
+            class="sign-btn"
+            :class="{ completed: state.signInfo.todaySignIn }"
+            :disabled="state.signing || !state.ready || state.signInfo.todaySignIn"
+            @tap="onSign"
+          >
+            {{
+              state.signing
+                ? '签到中...'
+                : state.signInfo.todaySignIn
+                ? '今日已签到'
+                : '签到并领取 1 积分'
+            }}
+          </button>
+          <button class="record-link" @tap="goPointRecords">
+            <text>查看积分记录</text>
+            <uni-icons type="right" size="16" color="#ff5a1f" />
+          </button>
+        </view>
+
+        <view class="rules-card">
+          <view class="rules-title">签到说明</view>
+          <view class="rule-row">
+            <view class="rule-index">1</view>
+            <view>每个账号按北京时间每天可签到一次。</view>
+          </view>
+          <view class="rule-row">
+            <view class="rule-index">2</view>
+            <view>每次签到固定获得 1 积分，不在前端预先记账。</view>
+          </view>
+          <view class="rule-row">
+            <view class="rule-index">3</view>
+            <view>积分余额和每笔流水仅当前登录账号可以查看。</view>
           </view>
         </view>
-      </view>
-
-      <view class="bg-white ss-m-t-16 ss-p-t-30 ss-p-b-60 ss-p-x-40">
-        <view class="activity-title ss-m-b-30">签到说明</view>
-        <view class="activity-des">1. 每个账号每天可以签到一次。</view>
-        <view class="activity-des">2. 每次签到固定获得 1 积分。</view>
-        <view class="activity-des">3. 积分余额和每笔流水仅当前账号可查看。</view>
-      </view>
+      </template>
     </view>
 
-    <su-popup :show="state.showModel" type="center" round="10" :isMaskClick="false">
-      <view class="model-box ss-flex-col">
-        <view class="ss-m-t-56 ss-flex-col ss-col-center">
-          <text class="cicon-check-round"></text>
-          <view class="score-title">
-            <text>获得 {{ state.signResult.awardedPoints }} 积分</text>
-          </view>
-          <view class="model-title ss-flex ss-col-center ss-m-t-22 ss-m-b-30">
-            已连续打卡 {{ state.signResult.continuousDay }} 天
-          </view>
+    <su-popup :show="state.showModel" type="center" round="18" :isMaskClick="false">
+      <view class="success-modal">
+        <view class="success-icon">
+          <uni-icons type="checkmarkempty" size="34" color="#ffffff" />
         </view>
-        <view class="model-bg ss-flex-col ss-col-center ss-row-right">
-          <view class="title ss-m-b-64">签到成功</view>
-          <view class="ss-m-b-40">
-            <button class="ss-reset-button confirm-btn" @tap="onConfirm">确认</button>
-          </view>
+        <view class="success-title">签到成功</view>
+        <view class="success-points">+{{ state.signResult.awardedPoints }} 积分</view>
+        <view class="success-desc">
+          已连续签到 {{ state.signResult.continuousDay }} 天，当前积分
+          {{ state.signResult.pointBalance }}
         </view>
+        <button class="confirm-btn" @tap="onConfirm">返回首页看短剧</button>
+        <button class="modal-record-link" @tap="goPointRecords">查看积分记录</button>
       </view>
     </su-popup>
   </s-layout>
 </template>
 
 <script setup>
-  import sheep from '@/sheep';
   import { onHide, onReady, onShow, onUnload } from '@dcloudio/uni-app';
-  import { reactive } from 'vue';
+  import { reactive, watch } from 'vue';
+  import sheep from '@/sheep';
   import SignInApi from '@/sheep/api/member/signin';
   import {
     createPageVisitGuard,
@@ -83,42 +127,177 @@
 
   const state = reactive({
     loading: true,
+    ready: false,
+    error: '',
     signing: false,
-    signInfo: {},
+    signInfo: null,
     showModel: false,
     signResult: {},
   });
   const userStore = sheep.$store('user');
   const signPageVisitGuard = createPageVisitGuard();
   let pageReady = false;
-  let scheduledEntryAdEpoch = 0;
+  let entryAdRequested = false;
+  let summaryRequestEpoch = 0;
+
+  function captureCurrentAuthSession() {
+    const authSession = userStore.getAuthSessionSnapshot();
+    return userStore.isAuthSessionCurrent(authSession) ? authSession : null;
+  }
+
+  function isCurrentAuthSession(authSession) {
+    return Boolean(authSession) && userStore.isAuthSessionCurrent(authSession);
+  }
+
+  function requireNonNegativeInteger(value, label) {
+    const number = Number(value);
+    if (!Number.isSafeInteger(number) || number < 0) {
+      throw new Error(`${label}数据无效`);
+    }
+    return number;
+  }
+
+  function normalizeSignInfo(data) {
+    if (typeof data?.todaySignIn !== 'boolean') {
+      throw new Error('今日签到状态无效');
+    }
+    return Object.freeze({
+      todaySignIn: data.todaySignIn,
+      continuousDay: requireNonNegativeInteger(data.continuousDay, '连续签到'),
+      totalDay: requireNonNegativeInteger(data.totalDay, '累计签到'),
+      pointBalance: requireNonNegativeInteger(data.pointBalance, '积分余额'),
+    });
+  }
+
+  function normalizeSignResult(data) {
+    const signInDate = String(data?.signInDate || '');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(signInDate)) {
+      throw new Error('签到日期无效');
+    }
+    const awardedPoints = requireNonNegativeInteger(data.awardedPoints, '签到奖励');
+    if (awardedPoints !== 1) {
+      throw new Error('签到奖励与固定 1 积分规则不一致');
+    }
+    return Object.freeze({
+      signInDate,
+      awardedPoints,
+      pointBalance: requireNonNegativeInteger(data.pointBalance, '积分余额'),
+      continuousDay: requireNonNegativeInteger(data.continuousDay, '连续签到'),
+      totalDay: requireNonNegativeInteger(data.totalDay, '累计签到'),
+    });
+  }
+
+  async function getSignInfo(options = {}) {
+    const authSession = options.authSession || captureCurrentAuthSession();
+    const requestEpoch = ++summaryRequestEpoch;
+    if (options.showLoading !== false) {
+      state.loading = true;
+    }
+    state.error = '';
+    if (!authSession) {
+      state.signInfo = null;
+      state.ready = false;
+      state.loading = false;
+      state.error = '登录状态已更新，请重新进入签到页面';
+      return false;
+    }
+    try {
+      const { code, data } = await SignInApi.getSignInRecordSummary();
+      if (code !== 0) {
+        throw new Error('服务端未返回可用的签到状态');
+      }
+      const signInfo = normalizeSignInfo(data);
+      if (requestEpoch !== summaryRequestEpoch || !isCurrentAuthSession(authSession)) {
+        return false;
+      }
+      state.signInfo = signInfo;
+      state.ready = true;
+      return true;
+    } catch (error) {
+      if (requestEpoch !== summaryRequestEpoch || !isCurrentAuthSession(authSession)) {
+        return false;
+      }
+      state.signInfo = null;
+      state.ready = false;
+      state.error = error?.message || '请检查网络后重试';
+      return false;
+    } finally {
+      if (requestEpoch === summaryRequestEpoch && isCurrentAuthSession(authSession)) {
+        state.loading = false;
+      }
+    }
+  }
+
+  function retrySignInfo() {
+    void getSignInfo();
+  }
 
   async function onSign() {
-    if (state.signing) {
+    if (state.signing || !state.ready || !state.signInfo || state.signInfo.todaySignIn) {
+      return;
+    }
+    const authSession = captureCurrentAuthSession();
+    if (!authSession) {
+      state.ready = false;
+      state.error = '登录状态已更新，请重新进入签到页面';
       return;
     }
     state.signing = true;
     try {
       const { code, data } = await SignInApi.createSignInRecord();
-      if (code !== 0 || data?.awardedPoints !== 1) {
+      if (!isCurrentAuthSession(authSession)) {
         return;
       }
+      if (code !== 0) {
+        throw new Error('签到提交失败，请稍后重试');
+      }
+      const result = normalizeSignResult(data);
+      state.signResult = result;
+      state.signInfo = Object.freeze({
+        todaySignIn: true,
+        continuousDay: result.continuousDay,
+        totalDay: result.totalDay,
+        pointBalance: result.pointBalance,
+      });
       state.showModel = true;
-      state.signResult = data;
-      const markerStored = markPostCheckIn(data.signInDate);
+      const markerStored = markPostCheckIn(result.signInDate, authSession);
       const refreshResults = await Promise.allSettled([
-        getSignInfo(),
+        getSignInfo({ showLoading: false, authSession }),
         userStore.updateUserData(true),
       ]);
-      if (!markerStored) {
-        markPostCheckIn(data.signInDate);
+      if (!isCurrentAuthSession(authSession)) {
+        state.showModel = false;
+        return;
       }
-      if (refreshResults.some((result) => result.status === 'rejected')) {
+      if (!markerStored) {
+        markPostCheckIn(result.signInDate, authSession);
+      }
+      if (refreshResults.some((item) => item.status === 'rejected')) {
         console.warn('[check-in] post-sign-in refresh incomplete');
       }
+    } catch (error) {
+      if (!isCurrentAuthSession(authSession)) {
+        return;
+      }
+      console.warn('[check-in] sign-in request failed');
+      uni.showToast({
+        title: error?.message || '签到失败，请稍后重试',
+        icon: 'none',
+      });
     } finally {
       state.signing = false;
     }
+  }
+
+  function markPostCheckIn(signInDate, authSession) {
+    if (!isCurrentAuthSession(authSession)) {
+      return false;
+    }
+    return displayAdFlow.markPostCheckIn({
+      tenantId: authSession.tenantId,
+      memberId: authSession.memberId,
+      signInDate,
+    });
   }
 
   function onConfirm() {
@@ -128,55 +307,62 @@
     });
   }
 
-  async function getSignInfo() {
-    try {
-      const { code, data } = await SignInApi.getSignInRecordSummary();
-      if (code !== 0) {
-        return;
-      }
-      state.signInfo = data;
-    } finally {
-      state.loading = false;
-    }
-  }
-
-  function markPostCheckIn(signInDate) {
-    const profile = userStore.userInfo || {};
-    return displayAdFlow.markPostCheckIn({
-      tenantId: profile.tenantId,
-      memberId: profile.userId || profile.id,
-      signInDate,
+  function goPointRecords() {
+    state.showModel = false;
+    uni.navigateTo({
+      url: '/pages/user/wallet/score',
     });
   }
 
   async function showCheckInEntryInterstitial(visitEpoch) {
     try {
-      await userStore.getAdConfig();
+      try {
+        await userStore.getAdConfig();
+      } catch (error) {
+        console.warn('[display-ad] check-in placement config unavailable');
+      }
+      if (!signPageVisitGuard.isCurrent(visitEpoch)) {
+        return;
+      }
+      const placements = resolveDisplayPlacements(userStore.adConfig);
+      await signPageVisitGuard.runPresentation(visitEpoch, () =>
+        displayAdFlow.showCheckInEntryInterstitial(placements.checkInEntryInterstitial),
+      );
     } catch (error) {
-      console.warn('[display-ad] check-in placement config unavailable', error);
+      if (error?.code !== 'PAGE_VISIT_INVALIDATED') {
+        console.warn('[display-ad] check-in interstitial unavailable');
+      }
     }
-    if (!signPageVisitGuard.isCurrent(visitEpoch)) {
-      return;
-    }
-    const placements = resolveDisplayPlacements(userStore.adConfig);
-    await displayAdFlow.showCheckInEntryInterstitial(placements.checkInEntryInterstitial);
   }
 
   function scheduleCheckInEntryInterstitial() {
     const visitEpoch = signPageVisitGuard.capture();
-    if (
-      !pageReady ||
-      !signPageVisitGuard.isCurrent(visitEpoch) ||
-      scheduledEntryAdEpoch === visitEpoch
-    ) {
+    if (!pageReady || entryAdRequested || !signPageVisitGuard.isCurrent(visitEpoch)) {
       return;
     }
-    scheduledEntryAdEpoch = visitEpoch;
+    entryAdRequested = true;
     void showCheckInEntryInterstitial(visitEpoch);
   }
 
+  watch(
+    () => userStore.authSessionEpoch,
+    () => {
+      summaryRequestEpoch += 1;
+      state.loading = true;
+      state.ready = false;
+      state.error = '';
+      state.signing = false;
+      state.showModel = false;
+      state.signInfo = null;
+      state.signResult = {};
+    },
+  );
+
   onShow(() => {
     signPageVisitGuard.enter();
+    if (pageReady) {
+      void getSignInfo({ showLoading: !state.ready });
+    }
     scheduleCheckInEntryInterstitial();
   });
 
@@ -185,7 +371,8 @@
   });
 
   onUnload(() => {
-    signPageVisitGuard.leave();
+    signPageVisitGuard.unload();
+    summaryRequestEpoch += 1;
   });
 
   onReady(() => {
@@ -196,322 +383,276 @@
 </script>
 
 <style lang="scss" scoped>
-  .loading-box {
-    padding: 120rpx 40rpx;
-    color: #999;
+  .sign-page {
+    min-height: calc(100vh - 88rpx);
+    padding: 24rpx 24rpx 60rpx;
+    box-sizing: border-box;
+    background: #f6f6f6;
+  }
+
+  .state-card,
+  .hero-card,
+  .action-card,
+  .rules-card {
+    border-radius: 22rpx;
+    background: #ffffff;
+    box-shadow: 0 10rpx 30rpx rgba(33, 20, 14, 0.06);
+  }
+
+  .state-card {
+    display: flex;
+    min-height: 420rpx;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    padding: 48rpx;
     text-align: center;
+  }
+
+  .state-title {
+    margin-top: 20rpx;
+    color: #202020;
+    font-size: 32rpx;
+    font-weight: 800;
+  }
+
+  .state-desc {
+    margin-top: 12rpx;
+    color: #888888;
+    font-size: 25rpx;
+    line-height: 38rpx;
+  }
+
+  .retry-btn {
+    height: 68rpx;
+    margin-top: 28rpx;
+    padding: 0 34rpx;
+    border: 0;
+    border-radius: 34rpx;
+    background: #ff5a1f;
+    color: #ffffff;
+    font-size: 26rpx;
+    line-height: 68rpx;
+  }
+
+  .hero-card {
+    padding: 34rpx;
+    overflow: hidden;
+    background: linear-gradient(145deg, #ff6325 0%, #ff8a31 58%, #2b1f1b 140%);
+    color: #ffffff;
+  }
+
+  .hero-kicker {
+    color: rgba(255, 255, 255, 0.78);
+    font-size: 24rpx;
+  }
+
+  .streak-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    margin-top: 24rpx;
+  }
+
+  .streak-value {
+    font-size: 72rpx;
+    font-weight: 900;
+    line-height: 82rpx;
+  }
+
+  .streak-label {
+    color: rgba(255, 255, 255, 0.76);
+    font-size: 24rpx;
+  }
+
+  .today-badge {
+    padding: 12rpx 20rpx;
+    border: 1rpx solid rgba(255, 255, 255, 0.36);
+    border-radius: 28rpx;
+    background: rgba(255, 255, 255, 0.14);
+    font-size: 23rpx;
+  }
+
+  .today-badge.completed {
+    background: rgba(28, 166, 101, 0.9);
   }
 
   .summary-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 16rpx;
-    padding: 44rpx 30rpx 8rpx;
-
-    .summary-item {
-      padding: 28rpx 12rpx;
-      border-radius: 18rpx;
-      background: #fff7f1;
-      text-align: center;
-    }
-
-    .summary-value {
-      color: #ff6000;
-      font-size: 40rpx;
-      font-weight: 700;
-    }
-
-    .summary-label {
-      margin-top: 10rpx;
-      color: #777;
-      font-size: 22rpx;
-    }
-  }
-
-  .header-box {
-    border-top: 2rpx solid rgba(#dfdfdf, 0.5);
-  }
-
-  // 日历
-  .calendar {
-    background: #fff;
-
-    .sign-everyday {
-      height: 100rpx;
-      background: rgba(255, 255, 255, 1);
-      border: 2rpx solid rgba(223, 223, 223, 0.4);
-
-      .sign-everyday-title {
-        font-size: 32rpx;
-        color: rgba(51, 51, 51, 1);
-        font-weight: 500;
-      }
-
-      .sign-num-box {
-        font-size: 26rpx;
-        font-weight: 500;
-        color: rgba(153, 153, 153, 1);
-
-        .sign-num {
-          font-size: 30rpx;
-          font-weight: 600;
-          color: #ff6000;
-          padding: 0 10rpx;
-          font-family: OPPOSANS;
-        }
-      }
-    }
-
-    // 年月日
-    .bar {
-      height: 100rpx;
-
-      .date {
-        font-size: 30rpx;
-        font-family: OPPOSANS;
-        font-weight: 500;
-        color: #333333;
-        line-height: normal;
-      }
-    }
-
-    .cicon-back {
-      margin-top: 6rpx;
-      font-size: 30rpx;
-      color: #c4c4c4;
-      line-height: normal;
-    }
-
-    .cicon-forward {
-      margin-top: 6rpx;
-      font-size: 30rpx;
-      color: #c4c4c4;
-      line-height: normal;
-    }
-
-    // 星期
-    .week {
-      .week-item {
-        font-size: 24rpx;
-        font-weight: 500;
-        color: rgba(153, 153, 153, 1);
-        flex: 1;
-      }
-    }
-
-    // 日历表
-    .myDateTable {
-      display: flex;
-      flex-wrap: wrap;
-
-      .dateCell {
-        width: calc(750rpx / 7);
-        height: 80rpx;
-        font-size: 26rpx;
-        font-weight: 400;
-        color: rgba(51, 51, 51, 1);
-      }
-    }
-  }
-
-  .is-sign {
-    width: 48rpx;
-    height: 48rpx;
-    position: relative;
-
-    .is-sign-num {
-      font-size: 24rpx;
-      font-family: OPPOSANS;
-      font-weight: 500;
-      line-height: normal;
-    }
-
-    .is-sign-image {
-      position: absolute;
-      left: 0;
-      top: 0;
-      width: 48rpx;
-      height: 48rpx;
-    }
-  }
-
-  .cell-num {
-    font-size: 24rpx;
-    font-family: OPPOSANS;
-    font-weight: 500;
-    color: #333333;
-    line-height: normal;
-  }
-
-  .cicon-title {
-    position: absolute;
-    right: -10rpx;
-    top: -6rpx;
-    font-size: 20rpx;
-    color: red;
-  }
-
-  // 签到按钮
-  .sign-box {
-    height: 140rpx;
-    width: 100%;
-
-    .sign-btn {
-      width: 710rpx;
-      height: 80rpx;
-      border-radius: 35rpx;
-      font-size: 30rpx;
-      font-weight: 500;
-      box-shadow: 0 0.2em 0.5em rgba(#ff6000, 0.4);
-      background: linear-gradient(90deg, #ff6000, #fe832a);
-      color: #fff;
-    }
-
-    .already-btn {
-      width: 710rpx;
-      height: 80rpx;
-      border-radius: 35rpx;
-      font-size: 30rpx;
-      font-weight: 500;
-    }
-  }
-
-  .model-box {
-    width: 520rpx;
-    // height: 590rpx;
-    background: linear-gradient(177deg, #ff6000 0%, #fe832a 100%);
-    // background: linear-gradient(177deg, var(--ui-BG-Main), var(--ui-BG-Main-gradient));
-    border-radius: 10rpx;
-
-    .cicon-check-round {
-      font-size: 70rpx;
-      color: #fff;
-    }
-
-    .score-title {
-      font-size: 34rpx;
-      font-family: OPPOSANS;
-      font-weight: 500;
-      color: #fcff00;
-    }
-
-    .model-title {
-      font-size: 28rpx;
-      font-weight: 500;
-      color: #ffffff;
-    }
-
-    .model-bg {
-      width: 520rpx;
-      height: 344rpx;
-      background-size: 100% 100%;
-      background-image: v-bind(headerBg);
-      background-repeat: no-repeat;
-      border-radius: 0 0 10rpx 10rpx;
-
-      .title {
-        font-size: 34rpx;
-        font-weight: bold;
-        color: var(--ui-BG-Main-TC);
-      }
-
-      .subtitle {
-        font-size: 26rpx;
-        font-weight: 500;
-        color: #999999;
-      }
-
-      .cancel-btn {
-        width: 220rpx;
-        height: 70rpx;
-        border: 2rpx solid #ff6000;
-        border-radius: 35rpx;
-        font-size: 28rpx;
-        font-weight: 500;
-        color: #ff6000;
-        line-height: normal;
-        margin-right: 10rpx;
-      }
-
-      .confirm-btn {
-        width: 220rpx;
-        height: 70rpx;
-        background: linear-gradient(90deg, #ff6000, #fe832a);
-        box-shadow: 0 0.2em 0.5em rgba(#ff6000, 0.4);
-        border-radius: 35rpx;
-        font-size: 28rpx;
-        font-weight: 500;
-        color: #ffffff;
-        line-height: normal;
-      }
-    }
-  }
-
-  //签到说明
-  .activity-title {
-    font-size: 32rpx;
-    font-weight: 500;
-    color: #333333;
-    line-height: normal;
-  }
-
-  .activity-des {
-    font-size: 26rpx;
-    font-weight: 500;
-    color: #666666;
-    line-height: 40rpx;
-  }
-
-  .reward {
-    background-image: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEsAAAA4CAYAAAC1+AWFAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAA3ZpVFh0WE1MOmNvbS5hZG9iZS54bXAAAAAAADw/eHBhY2tldCBiZWdpbj0i77u/IiBpZD0iVzVNME1wQ2VoaUh6cmVTek5UY3prYzlkIj8+IDx4OnhtcG1ldGEgeG1sbnM6eD0iYWRvYmU6bnM6bWV0YS8iIHg6eG1wdGs9IkFkb2JlIFhNUCBDb3JlIDUuNi1jMTQyIDc5LjE2MDkyNCwgMjAxNy8wNy8xMy0wMTowNjozOSAgICAgICAgIj4gPHJkZjpSREYgeG1sbnM6cmRmPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5LzAyLzIyLXJkZi1zeW50YXgtbnMjIj4gPHJkZjpEZXNjcmlwdGlvbiByZGY6YWJvdXQ9IiIgeG1sbnM6eG1wTU09Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC9tbS8iIHhtbG5zOnN0UmVmPSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvc1R5cGUvUmVzb3VyY2VSZWYjIiB4bWxuczp4bXA9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC8iIHhtcE1NOk9yaWdpbmFsRG9jdW1lbnRJRD0ieG1wLmRpZDowYWFmYjU3Mi03MGJhLTRiNDctOTI2Yi0zOThlZDkzZDkxMDkiIHhtcE1NOkRvY3VtZW50SUQ9InhtcC5kaWQ6RUEyNzZEMjZEMDFCMTFFOEIzQzhEMjMxNjI1NENDQjciIHhtcE1NOkluc3RhbmNlSUQ9InhtcC5paWQ6RUEyNzZEMjVEMDFCMTFFOEIzQzhEMjMxNjI1NENDQjciIHhtcDpDcmVhdG9yVG9vbD0iQWRvYmUgUGhvdG9zaG9wIENDIDIwMTggKFdpbmRvd3MpIj4gPHhtcE1NOkRlcml2ZWRGcm9tIHN0UmVmOmluc3RhbmNlSUQ9InhtcC5paWQ6ZmRjNTM0MmUtNmFkOC1iMDRhLThjZTEtMjk2YWYzM2FkMmUxIiBzdFJlZjpkb2N1bWVudElEPSJ4bXAuZGlkOjBhYWZiNTcyLTcwYmEtNGI0Ny05MjZiLTM5OGVkOTNkOTEwOSIv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');
-    width: 75rpx;
-    height: 56rpx;
-  }
-
-  .rewardTxt {
-    width: 74rpx;
-    height: 32rpx;
-    background-color: #f4b409;
-    border-radius: 16rpx;
-    font-size: 20rpx;
-    color: var(--ui-BG-Main-TC);
-    line-height: 32rpx;
-    text-align: center;
-    padding: 2rpx;
-  }
-
-  .venus {
-    background-image: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADgAAAA4CAYAAACohjseAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAA3ZpVFh0WE1MOmNvbS5hZG9iZS54bXAAAAAAADw/eHBhY2tldCBiZWdpbj0i77u/IiBpZD0iVzVNME1wQ2VoaUh6cmVTek5UY3prYzlkIj8+IDx4OnhtcG1ldGEgeG1sbnM6eD0iYWRvYmU6bnM6bWV0YS8iIHg6eG1wdGs9IkFkb2JlIFhNUCBDb3JlIDUuNi1jMTQyIDc5LjE2MDkyNCwgMjAxNy8wNy8xMy0wMTowNjozOSAgICAgICAgIj4gPHJkZjpSREYgeG1sbnM6cmRmPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5LzAyLzIyLXJkZi1zeW50YXgtbnMjIj4gPHJkZjpEZXNjcmlwdGlvbiByZGY6YWJvdXQ9IiIgeG1sbnM6eG1wTU09Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC9tbS8iIHhtbG5zOnN0UmVmPSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvc1R5cGUvUmVzb3VyY2VSZWYjIiB4bWxuczp4bXA9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC8iIHhtcE1NOk9yaWdpbmFsRG9jdW1lbnRJRD0ieG1wLmRpZDowYWFmYjU3Mi03MGJhLTRiNDctOTI2Yi0zOThlZDkzZDkxMDkiIHhtcE1NOkRvY3VtZW50SUQ9InhtcC5kaWQ6RDQ3N0E3RkJEMDFCMTFFODhGODVBOTc1NEM5Nzg2NzkiIHhtcE1NOkluc3RhbmNlSUQ9InhtcC5paWQ6RDQ3N0E3RkFEMDFCMTFFODhGODVBOTc1NEM5Nzg2NzkiIHhtcDpDcmVhdG9yVG9vbD0iQWRvYmUgUGhvdG9zaG9wIENDIDIwMTggKFdpbmRvd3MpIj4gPHhtcE1NOkRlcml2ZWRGcm9tIHN0UmVmOmluc3RhbmNlSUQ9InhtcC5paWQ6ZmRjNTM0MmUtNmFkOC1iMDRhLThjZTEtMjk2YWYzM2FkMmUxIiBzdFJlZjpkb2N1bWVudElEPSJ4bXAuZGlkOjBhYWZiNTcyLTcwYmEtNGI0Ny05MjZiLTM5OGVkOTNkOTEwOSIvPiA8L3JkZjpEZXNjcmlwdGlvbj4gPC9yZGY6UkRGPiA8L3g6eG1wbWV0YT4gPD94cGFja2V0IGVuZD0iciI/PnZClGIAAAT7SURBVHja7JtLcxtFEMdnn1rJUhIrTiS7KLsK/EXwNck3gCMcuUFx4QvACW48buHGMZxJPkiowpjC2LElcKzXSqul/6OdoOB9zezsCCimqmvXtdqd+U33dPf0rq2Tn54zg81KjrGuB75x8FbuddsQWIvkS5IxySA5b5no2DUE94TkKPk7IHmf5JDkUQJdW7MNw623o+Ra698KmAdnDNLeIJwRSHvDcLVDVnYynU771fnLl9eFcLZts+VymQf5iJ6pzfFYJeKgT/IZyTskXdWOPM9jjYbPLMticRyz2Sxk8/lc9XFDksckH1IcDKtq8FOSD6rMIuCCoPHXrBIk/qYDC0MlyO1kTBOSj6uuwXerwPn+63DrrdFo8OsV2ns6nEy3Chwg8lpFyK4OwNrgNGpSvxfFoDzP5etJR8PzsiYETmk+X5BjmpkBrHPGU109TeKqv5X3rT3QQ3ObaPDGRjIZXWZpol+b/cebUUA4iuHw938UoNbk9+zsjP16eqoV4JfjH1uqgLjxe10DiaKIDYZDNqfU7OrqSifjkzxIuwDubV2juLi8ZK7j8oT74uJSJ+BRHqQtC6cS/7A9wtrDvb7v84A9Go2UMyQZSFsWrmz6td4GgyF38a7r8lgGefHiQjnjkYG064ZDmjWktecRnEOCDa9DpjqdTrnUDSk2vJXgsHGdTKa0t5vx/V0Yhvy4WMx5hdf3VqYJDQqTxW+QdmECPM8h8flvPPRFR/QXBEEuKEw9Yz/5AyoDtBkei5zriyw4pGVFmoOHPD7+mQ/ccR1mWzZpyuIacx2Hgzl0FJkIjjBTHBeLiO6LuDZH4zFbRkt63oLt7+8XAmJcIhFP0eTn2C9CgzBTrPjUp7XbW6VSJGjx5OSEBhsz2wGkxc0R967LuukuSWKaFEwMnXJQSL/fZ51Op/QSuL5OdVjY7beFBq2sAlHZ/A8aOTg4YKenv/EBr8Nl5ZUO6jPJRGCg0dJie/d3WbPZlMpPMwpZsN0Y2sOVb7PcOzou22CGe3u7fB3J3Cd+udvvScG9soT0Kt13tAZj4UVRwHmWtZClcj+azX6vxx0GN8ECUFyHjnsEp+KlM8b3TBTKBCDqkA/SIFV20jCbO3duk8OIcgHF7G9ttbinVYFLcTBgeAAP+vc4mAkJVywLibARpZvOjWWA36rApYSI1+DSMhltkJPpRGIyJrXAZeWiWiCnk9kNU4RGl8m5MN1VLFzwWKobLm83kQtZbnMb8lgYJ2aIYH//3g73lEHQ5ECAXYUSu7QWZeCKqmoCcqSyPkQgd8lHbne3uSMRbWenSwNtU476BxtT9oJQOZ3OKKloq6SmmXBlyoZKb3nG4wnXyt1ul9261UkN9ggjvd497mDOz885KGN3pfvKg1OuixY15JCHh2/ymFjUms2AMqD9BFB/qwUQg5ZtrVY9b7H/LxtmZSCbaCr9KgGmpEeG6qpzM2tQBHudb5eKNLfKiUMzgAIyL6uRreHklB9qX4MDlQfLpHUV4AY6AB+rzl4ZyIqa+0aHiX6UlDTwMcK2CqQoEGmEE5+RfFK4N636vWjKh0Cp5ceS38k8JXko8yHQ7W7PXKBPBvYwGegNF4/q12g05mV7HXClqgs1ffEr+/LmaTIx0nCb+uI3U5M64Tadi5aBrBXORLKdB1k7nKndhID8GqUaErze/coEXJ1OJm9CY2bw3wr+FGAAoa6PIUihovYAAAAASUVORK5CYII=');
-    background-repeat: no-repeat;
-    background-size: 100% 100%;
-    width: 56rpx;
-    height: 56rpx;
-    margin: 10rpx auto;
-  }
-
-  .venusSelect {
-    background-image: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADgAAAA4CAYAAACohjseAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAA3ZpVFh0WE1MOmNvbS5hZG9iZS54bXAAAAAAADw/eHBhY2tldCBiZWdpbj0i77u/IiBpZD0iVzVNME1wQ2VoaUh6cmVTek5UY3prYzlkIj8+IDx4OnhtcG1ldGEgeG1sbnM6eD0iYWRvYmU6bnM6bWV0YS8iIHg6eG1wdGs9IkFkb2JlIFhNUCBDb3JlIDUuNi1jMTQyIDc5LjE2MDkyNCwgMjAxNy8wNy8xMy0wMTowNjozOSAgICAgICAgIj4gPHJkZjpSREYgeG1sbnM6cmRmPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5LzAyLzIyLXJkZi1zeW50YXgtbnMjIj4gPHJkZjpEZXNjcmlwdGlvbiByZGY6YWJvdXQ9IiIgeG1sbnM6eG1wTU09Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC9tbS8iIHhtbG5zOnN0UmVmPSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvc1R5cGUvUmVzb3VyY2VSZWYjIiB4bWxuczp4bXA9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC8iIHhtcE1NOk9yaWdpbmFsRG9jdW1lbnRJRD0ieG1wLmRpZDowYWFmYjU3Mi03MGJhLTRiNDctOTI2Yi0zOThlZDkzZDkxMDkiIHhtcE1NOkRvY3VtZW50SUQ9InhtcC5kaWQ6QzkwRkI4NEFEMDFCMTFFODhDNDdBMDVGOTBBN0U2NTQiIHhtcE1NOkluc3RhbmNlSUQ9InhtcC5paWQ6QzkwRkI4NDlEMDFCMTFFODhDNDdBMDVGOTBBN0U2NTQiIHhtcDpDcmVhdG9yVG9vbD0iQWRvYmUgUGhvdG9zaG9wIENDIDIwMTggKFdpbmRvd3MpIj4gPHhtcE1NOkRlcml2ZWRGcm9tIHN0UmVmOmluc3RhbmNlSUQ9InhtcC5paWQ6ZmRjNTM0MmUtNmFkOC1iMDRhLThjZTEtMjk2YWYzM2FkMmUxIiBzdFJlZjpkb2N1bWVudElEPSJ4bXAuZGlkOjBhYWZiNTcyLTcwYmEtNGI0Ny05MjZiLTM5OGVkOTNkOTEwOSIv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');
-  }
-
-  .num {
-    font-size: 36rpx;
-    font-family: 'Guildford Pro';
-  }
-
-  .item {
+    grid-template-columns: 1fr 1rpx 1fr 1rpx 1fr;
     align-items: center;
-    justify-content: space-between;
-    flex-direction: column;
-    height: 130rpx;
+    margin-top: 34rpx;
+    padding: 24rpx 12rpx;
+    border-radius: 18rpx;
+    background: rgba(255, 255, 255, 0.12);
   }
 
-  .reward {
-    background-image: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEsAAAA4CAYAAAC1+AWFAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAA3ZpVFh0WE1MOmNvbS5hZG9iZS54bXAAAAAAADw/eHBhY2tldCBiZWdpbj0i77u/IiBpZD0iVzVNME1wQ2VoaUh6cmVTek5UY3prYzlkIj8+IDx4OnhtcG1ldGEgeG1sbnM6eD0iYWRvYmU6bnM6bWV0YS8iIHg6eG1wdGs9IkFkb2JlIFhNUCBDb3JlIDUuNi1jMTQyIDc5LjE2MDkyNCwgMjAxNy8wNy8xMy0wMTowNjozOSAgICAgICAgIj4gPHJkZjpSREYgeG1sbnM6cmRmPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5LzAyLzIyLXJkZi1zeW50YXgtbnMjIj4gPHJkZjpEZXNjcmlwdGlvbiByZGY6YWJvdXQ9IiIgeG1sbnM6eG1wTU09Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC9tbS8iIHhtbG5zOnN0UmVmPSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvc1R5cGUvUmVzb3VyY2VSZWYjIiB4bWxuczp4bXA9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC8iIHhtcE1NOk9yaWdpbmFsRG9jdW1lbnRJRD0ieG1wLmRpZDowYWFmYjU3Mi03MGJhLTRiNDctOTI2Yi0zOThlZDkzZDkxMDkiIHhtcE1NOkRvY3VtZW50SUQ9InhtcC5kaWQ6RUEyNzZEMjZEMDFCMTFFOEIzQzhEMjMxNjI1NENDQjciIHhtcE1NOkluc3RhbmNlSUQ9InhtcC5paWQ6RUEyNzZEMjVEMDFCMTFFOEIzQzhEMjMxNjI1NENDQjciIHhtcDpDcmVhdG9yVG9vbD0iQWRvYmUgUGhvdG9zaG9wIENDIDIwMTggKFdpbmRvd3MpIj4gPHhtcE1NOkRlcml2ZWRGcm9tIHN0UmVmOmluc3RhbmNlSUQ9InhtcC5paWQ6ZmRjNTM0MmUtNmFkOC1iMDRhLThjZTEtMjk2YWYzM2FkMmUxIiBzdFJlZjpkb2N1bWVudElEPSJ4bXAuZGlkOjBhYWZiNTcyLTcwYmEtNGI0Ny05MjZiLTM5OGVkOTNkOTEwOSIv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');
-    width: 75rpx;
-    height: 56rpx;
+  .summary-item {
+    text-align: center;
   }
 
-  .on {
-    color: #f4b409;
+  .summary-divider {
+    width: 1rpx;
+    height: 54rpx;
+    background: rgba(255, 255, 255, 0.2);
+  }
+
+  .summary-value {
+    font-size: 34rpx;
+    font-weight: 800;
+  }
+
+  .summary-label {
+    margin-top: 5rpx;
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 22rpx;
+  }
+
+  .action-card,
+  .rules-card {
+    margin-top: 20rpx;
+    padding: 30rpx;
+  }
+
+  .action-title,
+  .rules-title {
+    color: #202020;
+    font-size: 32rpx;
+    font-weight: 800;
+  }
+
+  .action-desc {
+    margin-top: 10rpx;
+    color: #858585;
+    font-size: 25rpx;
+    line-height: 38rpx;
+  }
+
+  .sign-btn {
+    width: 100%;
+    height: 82rpx;
+    margin-top: 28rpx;
+    border: 0;
+    border-radius: 42rpx;
+    background: linear-gradient(90deg, #ff5a1f, #ff8730);
+    color: #ffffff;
+    font-size: 29rpx;
+    font-weight: 800;
+    line-height: 82rpx;
+    box-shadow: 0 12rpx 26rpx rgba(255, 90, 31, 0.24);
+  }
+
+  .sign-btn.completed {
+    background: #dedede;
+    box-shadow: none;
+  }
+
+  .record-link {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 64rpx;
+    margin-top: 12rpx;
+    border: 0;
+    background: transparent;
+    color: #ff5a1f;
+    font-size: 25rpx;
+    line-height: 64rpx;
+  }
+
+  .record-link text {
+    margin-right: 6rpx;
+  }
+
+  .rule-row {
+    display: flex;
+    align-items: flex-start;
+    margin-top: 20rpx;
+    color: #6f6f6f;
+    font-size: 25rpx;
+    line-height: 38rpx;
+  }
+
+  .rule-index {
+    display: flex;
+    flex: 0 0 auto;
+    width: 36rpx;
+    height: 36rpx;
+    align-items: center;
+    justify-content: center;
+    margin-right: 14rpx;
+    border-radius: 50%;
+    background: #fff0e9;
+    color: #ff5a1f;
+    font-size: 21rpx;
+    font-weight: 800;
+  }
+
+  .success-modal {
+    width: 560rpx;
+    padding: 48rpx 40rpx 34rpx;
+    box-sizing: border-box;
+    border-radius: 24rpx;
+    background: #ffffff;
+    text-align: center;
+  }
+
+  .success-icon {
+    display: flex;
+    width: 78rpx;
+    height: 78rpx;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto;
+    border-radius: 50%;
+    background: linear-gradient(145deg, #ff5a1f, #ff9238);
+  }
+
+  .success-title {
+    margin-top: 22rpx;
+    color: #202020;
+    font-size: 36rpx;
+    font-weight: 900;
+  }
+
+  .success-points {
+    margin-top: 12rpx;
+    color: #ff5a1f;
+    font-size: 44rpx;
+    font-weight: 900;
+  }
+
+  .success-desc {
+    margin-top: 12rpx;
+    color: #7b7b7b;
+    font-size: 24rpx;
+    line-height: 38rpx;
+  }
+
+  .confirm-btn {
+    width: 100%;
+    height: 76rpx;
+    margin-top: 30rpx;
+    border: 0;
+    border-radius: 38rpx;
+    background: #ff5a1f;
+    color: #ffffff;
+    font-size: 27rpx;
+    font-weight: 800;
+    line-height: 76rpx;
+  }
+
+  .modal-record-link {
+    height: 62rpx;
+    margin-top: 8rpx;
+    border: 0;
+    background: transparent;
+    color: #ff5a1f;
+    font-size: 24rpx;
+    line-height: 62rpx;
+  }
+
+  button::after {
+    border: 0;
   }
 </style>

@@ -367,12 +367,12 @@
         {
           "path": "wallet/score",
           "style": {
-            "navigationBarTitleText": "我的积分"
+            "navigationBarTitleText": "积分记录"
           },
           "meta": {
             "auth": true,
             "sync": true,
-            "title": "用户积分",
+            "title": "积分记录",
             "group": "用户中心"
           }
         }
@@ -485,12 +485,12 @@
         {
           "path": "sign",
           "style": {
-            "navigationBarTitleText": "签到中心"
+            "navigationBarTitleText": "签到打卡"
           },
           "meta": {
             "auth": true,
             "sync": true,
-            "title": "签到中心",
+            "title": "签到打卡",
             "group": "应用"
           }
         }

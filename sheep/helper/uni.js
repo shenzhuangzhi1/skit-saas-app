@@ -1,3 +1,9 @@
+import { mergeRuntimeSystemBars, parseRuntimeSystemBars } from './system-bars.mjs';
+
+const runtimeSystemBars = parseRuntimeSystemBars(
+  typeof window === 'undefined' ? '' : window.location?.search,
+);
+
 const getSafeArea = () => {
   const width = typeof window === 'undefined' ? 375 : window.innerWidth;
   const height = typeof window === 'undefined' ? 667 : window.innerHeight;
@@ -14,16 +20,19 @@ const getSafeArea = () => {
 const fallbackUni = {
   getWindowInfo() {
     const safeArea = getSafeArea();
-    return {
-      windowWidth: safeArea.width,
-      windowHeight: safeArea.height,
-      screenWidth: safeArea.width,
-      screenHeight: safeArea.height,
-      statusBarHeight: 0,
-      safeArea,
-      safeAreaInsets: {},
-      pixelRatio: typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1,
-    };
+    return mergeRuntimeSystemBars(
+      {
+        windowWidth: safeArea.width,
+        windowHeight: safeArea.height,
+        screenWidth: safeArea.width,
+        screenHeight: safeArea.height,
+        statusBarHeight: 0,
+        safeArea,
+        safeAreaInsets: {},
+        pixelRatio: typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1,
+      },
+      runtimeSystemBars,
+    );
   },
   getDeviceInfo() {
     return {
@@ -79,7 +88,7 @@ const fallbackUni = {
   },
   upx2px(value) {
     const width = typeof window === 'undefined' ? 375 : window.innerWidth;
-    return Number(value) * width / 750;
+    return (Number(value) * width) / 750;
   },
 };
 
@@ -93,6 +102,11 @@ export const getUni = () => {
   return new Proxy(fallbackUni, {
     get(target, prop) {
       const nativeValue = uni[prop];
+      if (prop === 'getWindowInfo' || prop === 'getSystemInfoSync') {
+        const getInfo =
+          typeof nativeValue === 'function' ? nativeValue.bind(uni) : target[prop].bind(target);
+        return (...args) => mergeRuntimeSystemBars(getInfo(...args), runtimeSystemBars);
+      }
       if (nativeValue !== undefined && nativeValue !== null) {
         return bindValue(uni, nativeValue);
       }

@@ -80,6 +80,7 @@ jobs:
       - name: Build and verify production APK
         env:
           SKIT_BUILD_TYPE: release
+          H5_DIR: ${{ github.workspace }}/unpackage/dist/build/h5-android-runtime
           SKIT_PROFILE_CODE: ${{ inputs.profile_code }}
           SKIT_AGENT_CODE: ${{ inputs.profile_code }}
           SKIT_API_BASE_URL: ${{ secrets.SKIT_API_BASE_URL }}

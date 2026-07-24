@@ -1,125 +1,130 @@
-<!-- 我的积分 -->
 <template>
-  <s-layout class="wallet-wrap" title="我的积分" navbar="inner">
-    <view
-      class="header-box ss-flex ss-flex-col ss-row-center ss-col-center"
-      :style="[
-        {
-          marginTop: '-' + Number(statusBarHeight + 88) + 'rpx',
-          paddingTop: Number(statusBarHeight + 88) + 'rpx',
-        },
-      ]"
-    >
-      <view class="header-bg">
-        <view class="bg" />
-      </view>
-      <view class="score-box ss-flex-col ss-row-center ss-col-center">
-        <view class="ss-m-b-30">
-          <text class="all-title ss-m-r-8">当前积分</text>
+  <s-layout title="积分记录" navbar="normal" navbarBackgroundColor="#ffffff">
+    <view class="point-page">
+      <view class="balance-card">
+        <view>
+          <view class="balance-label">当前积分</view>
+          <view class="balance-value">{{ pointBalanceText }}</view>
         </view>
-        <text class="all-num">{{ userInfo.pointBalance || 0 }}</text>
+        <view class="record-total">
+          共 {{ state.recordsReady ? state.pagination.total : '--' }} 条
+        </view>
       </view>
-    </view>
-    <!-- tab -->
-    <su-sticky :customNavHeight="sys_navBar">
-      <!-- 统计 -->
-      <view class="filter-box ss-p-x-30 ss-flex ss-col-center ss-row-between">
+
+      <view class="filter-card">
         <uni-datetime-picker
           v-model="state.date"
           type="daterange"
-          @change="onChangeTime"
           :end="state.today"
+          @change="onChangeTime"
         >
-          <button class="ss-reset-button date-btn">
+          <button class="date-btn">
+            <uni-icons type="calendar" size="17" color="#666666" />
             <text>{{ dateFilterText }}</text>
-            <text class="cicon-drop-down ss-seldate-icon"></text>
+            <uni-icons type="arrowdown" size="14" color="#999999" />
           </button>
         </uni-datetime-picker>
+        <su-tabs
+          :list="tabMaps"
+          :scrollable="false"
+          :current="state.currentTab"
+          @change="onChange"
+        />
       </view>
-      <su-tabs
-        :list="tabMaps"
-        @change="onChange"
-        :scrollable="false"
-        :current="state.currentTab"
-      ></su-tabs>
-    </su-sticky>
 
-    <!-- list -->
-    <view class="list-box">
-      <view v-if="state.pagination.total > 0">
-        <view
-          class="list-item ss-flex ss-col-center ss-row-between"
-          v-for="item in state.pagination.list"
-          :key="item.id"
-        >
-          <view class="ss-flex-col">
-            <view class="name"
-              >{{ item.title }}{{ item.description ? ' - ' + item.description : '' }}</view
-            >
-            <view class="time">{{
-              sheep.$helper.timeFormat(item.createTime, 'yyyy-mm-dd hh:MM:ss')
-            }}</view>
+      <view v-if="state.initialLoading" class="state-card">
+        <uni-icons type="spinner-cycle" size="28" color="#ff5a1f" />
+        <view class="state-title">正在加载积分记录</view>
+      </view>
+
+      <view v-else-if="state.error && state.pagination.list.length === 0" class="state-card">
+        <uni-icons type="info-filled" size="28" color="#ff5a1f" />
+        <view class="state-title">积分记录加载失败</view>
+        <view class="state-desc">{{ state.error }}</view>
+        <button class="retry-btn" @tap="retryPointRecords">重新加载</button>
+      </view>
+
+      <view v-else-if="state.pagination.list.length > 0" class="record-list">
+        <view class="record-item" v-for="item in state.pagination.list" :key="item.id">
+          <view class="record-main">
+            <view class="record-title">
+              {{ item.title }}{{ item.description ? ` · ${item.description}` : '' }}
+            </view>
+            <view class="record-time">
+              {{ sheep.$helper.timeFormat(item.createTime, 'yyyy-mm-dd hh:MM:ss') }}
+            </view>
+            <view class="balance-after">变动后余额：{{ item.balanceAfter }}</view>
           </view>
-          <view class="add" v-if="item.pointDelta > 0">+{{ item.pointDelta }}</view>
-          <view class="minus" v-else>{{ item.pointDelta }}</view>
+          <view class="delta" :class="{ income: item.pointDelta > 0 }">
+            {{ item.pointDelta > 0 ? `+${item.pointDelta}` : item.pointDelta }}
+          </view>
         </view>
       </view>
-      <s-empty v-else text="暂无数据" icon="/static/data-empty.png" />
-    </view>
 
-    <uni-load-more
-      v-if="state.pagination.total > 0"
-      :status="state.loadStatus"
-      :content-text="{
-        contentdown: '上拉加载更多',
-      }"
-      @tap="onLoadMore"
-    />
+      <view v-else class="state-card empty-card">
+        <s-empty text="当前筛选条件下暂无积分记录" icon="/static/data-empty.png" />
+      </view>
+
+      <view v-if="state.error && state.pagination.list.length > 0" class="inline-error">
+        {{ state.error }}
+        <text @tap="retryPointRecords">重试</text>
+      </view>
+
+      <uni-load-more
+        v-if="state.pagination.list.length > 0"
+        :status="state.loadStatus"
+        :content-text="{ contentdown: '上拉加载更多' }"
+        @tap="onLoadMore"
+      />
+    </view>
   </s-layout>
 </template>
 
 <script setup>
-  import sheep from '@/sheep';
-  import { onLoad, onReachBottom } from '@dcloudio/uni-app';
-  import { computed, reactive } from 'vue';
+  import { computed, reactive, watch } from 'vue';
+  import { onHide, onLoad, onReachBottom, onShow } from '@dcloudio/uni-app';
   import { concat } from 'lodash-es';
   import dayjs from 'dayjs';
+  import sheep from '@/sheep';
   import PointApi from '@/sheep/api/member/point';
   import { resetPagination } from '@/sheep/helper/utils';
   import { createPointRecordQueryGate } from './point-record-query.mjs';
 
-  const statusBarHeight = sheep.$platform.device.statusBarHeight * 2;
-  const userInfo = computed(() => sheep.$store('user').userInfo);
-  const sys_navBar = sheep.$platform.navbar;
+  const userStore = sheep.$store('user');
+  const userInfo = computed(() => userStore.userInfo || {});
   const pointQueryGate = createPointRecordQueryGate();
-
+  let pageVisible = false;
   const state = reactive({
     currentTab: 0,
     pagination: {
       list: [],
       total: 0,
-      pageSize: 6,
+      pageSize: 10,
       pageNo: 1,
     },
     loadStatus: '',
+    initialLoading: true,
+    recordsReady: false,
+    error: '',
     date: [],
     today: '',
   });
 
   const tabMaps = [
-    {
-      name: '全部',
-      value: 'all',
-    },
-    {
-      name: '收入',
-      value: 'true',
-    },
-    {
-      name: '支出',
-      value: 'false',
-    },
+    { name: '全部', value: 'all' },
+    { name: '收入', value: 'true' },
+    { name: '支出', value: 'false' },
   ];
+
+  const pointBalanceText = computed(() => {
+    const authSession = userStore.getAuthSessionSnapshot();
+    const pointBalance = Number(userInfo.value.pointBalance);
+    return userStore.isAuthSessionCurrent(authSession) &&
+      Number.isSafeInteger(pointBalance) &&
+      pointBalance >= 0
+      ? pointBalance
+      : '--';
+  });
 
   const dateFilterText = computed(() => {
     if (!state.date.length) {
@@ -127,25 +132,41 @@
     }
     if (state.date[0] === state.date[1]) {
       return state.date[0];
-    } else {
-      return state.date.join('~');
     }
+    return state.date.join(' ~ ');
   });
 
-  function currentFilterSignature() {
+  function authSessionSignature(authSession) {
     return JSON.stringify({
+      epoch: authSession?.epoch,
+      tenantId: String(authSession?.tenantId || ''),
+      memberId: String(authSession?.memberId || ''),
+    });
+  }
+
+  function currentFilterSignature(authSession = userStore.getAuthSessionSnapshot()) {
+    return JSON.stringify({
+      authSession: authSessionSignature(authSession),
       currentTab: state.currentTab,
       date: [...state.date],
     });
   }
 
-  async function getLogList() {
+  async function getLogList(options = {}) {
     if (state.loadStatus === 'loading' || pointQueryGate.isLoading()) {
+      return;
+    }
+    const authSession = options.authSession || userStore.getAuthSessionSnapshot();
+    if (!userStore.isAuthSessionCurrent(authSession)) {
+      state.initialLoading = false;
+      state.recordsReady = false;
+      state.error = '登录状态已更新，请重新进入积分记录';
       return;
     }
     const request = pointQueryGate.tryStart({
       pageNo: state.pagination.pageNo,
-      filterSignature: currentFilterSignature(),
+      filterSignature: currentFilterSignature(authSession),
+      authSession,
     });
     if (!request) {
       return;
@@ -159,40 +180,51 @@
       params['createTime[0]'] = `${state.date[0]} 00:00:00`;
       params['createTime[1]'] = `${state.date[1]} 23:59:59`;
     }
+    if (request.pageNo === 1) {
+      state.error = '';
+    }
     state.loadStatus = 'loading';
     try {
       const { code, data } = await PointApi.getPointRecordPage(params);
       if (
         !pointQueryGate.isCurrent(request) ||
-        request.filterSignature !== currentFilterSignature() ||
+        !userStore.isAuthSessionCurrent(request.authSession) ||
+        request.filterSignature !== currentFilterSignature(request.authSession) ||
         request.pageNo !== state.pagination.pageNo
       ) {
         return;
       }
       if (code !== 0) {
-        if (request.pageNo > 1) {
-          state.pagination.pageNo = request.pageNo - 1;
-        }
-        state.loadStatus = state.pagination.list.length > 0 ? 'more' : 'noMore';
-        return;
+        throw new Error('服务端未返回可用的积分记录');
       }
       const rows = Array.isArray(data?.list) ? data.list : [];
-      state.pagination.list =
-        request.pageNo === 1 ? rows : concat(state.pagination.list, rows);
+      state.pagination.list = request.pageNo === 1 ? rows : concat(state.pagination.list, rows);
       state.pagination.total = Number(data?.total) || 0;
-      state.loadStatus =
-        state.pagination.list.length < state.pagination.total ? 'more' : 'noMore';
+      state.loadStatus = state.pagination.list.length < state.pagination.total ? 'more' : 'noMore';
+      state.error = '';
+      state.recordsReady = true;
     } catch (error) {
-      if (pointQueryGate.isCurrent(request)) {
+      if (
+        pointQueryGate.isCurrent(request) &&
+        userStore.isAuthSessionCurrent(request.authSession)
+      ) {
         if (request.pageNo > 1) {
           state.pagination.pageNo = request.pageNo - 1;
         }
+        if (request.pageNo === 1) {
+          state.recordsReady = false;
+        }
+        state.error = error?.message || '请检查网络后重试';
         state.loadStatus = state.pagination.list.length > 0 ? 'more' : 'noMore';
-        console.warn('[points] point record page unavailable', error);
+        console.warn('[points] point record page unavailable');
       }
     } finally {
-      if (pointQueryGate.finish(request) && state.loadStatus === 'loading') {
-        state.loadStatus = state.pagination.list.length > 0 ? 'more' : 'noMore';
+      const finishedCurrent = pointQueryGate.finish(request);
+      if (finishedCurrent && userStore.isAuthSessionCurrent(request.authSession)) {
+        if (state.loadStatus === 'loading') {
+          state.loadStatus = state.pagination.list.length > 0 ? 'more' : 'noMore';
+        }
+        state.initialLoading = false;
       }
     }
   }
@@ -201,27 +233,27 @@
     pointQueryGate.invalidate();
     resetPagination(state.pagination);
     state.loadStatus = '';
+    state.error = '';
+    state.initialLoading = true;
+    state.recordsReady = false;
     void getLogList();
   }
 
-  onLoad(async () => {
-    state.today = dayjs().format('YYYY-MM-DD');
-    try {
-      await sheep.$store('user').updateUserData(true);
-    } catch (error) {
-      console.warn('[points] member profile refresh unavailable', error);
-    }
-    await getLogList();
-  });
+  function retryPointRecords() {
+    reloadLogList();
+  }
 
-  function onChange(e) {
-    state.currentTab = e.index;
+  function onChange(event) {
+    state.currentTab = event.index;
     reloadLogList();
   }
 
   function onChangeTime(e) {
-    state.date[0] = e[0];
-    state.date[1] = e[e.length - 1];
+    if (!Array.isArray(e) || e.length === 0) {
+      state.date = [];
+    } else {
+      state.date = [e[0], e[e.length - 1]];
+    }
     reloadLogList();
   }
 
@@ -233,110 +265,241 @@
     ) {
       return;
     }
-    state.pagination.pageNo++;
+    state.pagination.pageNo += 1;
     void getLogList();
   }
+
+  async function refreshCurrentPointRecords() {
+    const authSession = userStore.getAuthSessionSnapshot();
+    pointQueryGate.invalidate();
+    resetPagination(state.pagination);
+    state.loadStatus = '';
+    state.error = '';
+    state.initialLoading = true;
+    state.recordsReady = false;
+    if (!userStore.isAuthSessionCurrent(authSession)) {
+      state.initialLoading = false;
+      state.error = '登录状态已更新，请重新进入积分记录';
+      return;
+    }
+    try {
+      await userStore.updateUserData(true);
+    } catch (error) {
+      console.warn('[points] member profile refresh unavailable');
+    }
+    if (!userStore.isAuthSessionCurrent(authSession)) {
+      return;
+    }
+    await getLogList({ authSession });
+  }
+
+  onLoad(() => {
+    state.today = dayjs().format('YYYY-MM-DD');
+  });
+
+  onShow(() => {
+    pageVisible = true;
+    void refreshCurrentPointRecords();
+  });
+
+  onHide(() => {
+    pageVisible = false;
+  });
 
   onReachBottom(() => {
     onLoadMore();
   });
+
+  watch(
+    () => userStore.authSessionEpoch,
+    () => {
+      pointQueryGate.invalidate();
+      resetPagination(state.pagination);
+      state.loadStatus = '';
+      state.error = '';
+      state.initialLoading = true;
+      state.recordsReady = false;
+      if (pageVisible) {
+        void refreshCurrentPointRecords();
+      }
+    },
+  );
 </script>
 
 <style lang="scss" scoped>
-  .header-box {
-    width: 100%;
-    background: linear-gradient(180deg, var(--ui-BG-Main) 0%, var(--ui-BG-Main-gradient) 100%)
-      no-repeat;
-    background-size: 750rpx 100%;
-    padding: 0 0 120rpx 0;
+  .point-page {
+    min-height: calc(100vh - 88rpx);
+    padding: 24rpx 24rpx 60rpx;
     box-sizing: border-box;
-
-    .score-box {
-      height: 100%;
-
-      .all-num {
-        font-size: 50rpx;
-        font-weight: bold;
-        color: #fff;
-        font-family: OPPOSANS;
-      }
-
-      .all-title {
-        font-size: 26rpx;
-        font-weight: 500;
-        color: #fff;
-      }
-
-      .cicon-help-o {
-        color: #fff;
-        font-size: 28rpx;
-      }
-    }
+    background: #f6f6f6;
   }
 
-  // 筛选
-  .filter-box {
-    height: 114rpx;
-    background-color: $bg-page;
-
-    .total-box {
-      font-size: 24rpx;
-      font-weight: 500;
-      color: $dark-9;
-    }
-
-    .date-btn {
-      background-color: $white;
-      line-height: 54rpx;
-      border-radius: 27rpx;
-      padding: 0 20rpx;
-      font-size: 24rpx;
-      font-weight: 500;
-      color: $dark-6;
-
-      .ss-seldate-icon {
-        font-size: 50rpx;
-        color: $dark-9;
-      }
-    }
+  .balance-card {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    padding: 34rpx;
+    border-radius: 22rpx;
+    background: linear-gradient(145deg, #ff6325 0%, #ff8b32 64%, #2b1f1b 145%);
+    color: #ffffff;
+    box-shadow: 0 12rpx 32rpx rgba(255, 90, 31, 0.18);
   }
 
-  .list-box {
-    .list-item {
-      background: #fff;
-      border-bottom: 1rpx solid #dfdfdf;
-      padding: 30rpx;
+  .balance-label {
+    color: rgba(255, 255, 255, 0.76);
+    font-size: 24rpx;
+  }
 
-      .name {
-        font-size: 28rpx;
+  .balance-value {
+    margin-top: 8rpx;
+    font-size: 64rpx;
+    font-weight: 900;
+    line-height: 70rpx;
+  }
 
-        font-weight: 500;
-        color: rgba(102, 102, 102, 1);
-        line-height: 28rpx;
-        margin-bottom: 20rpx;
-      }
+  .record-total {
+    padding: 10rpx 18rpx;
+    border-radius: 24rpx;
+    background: rgba(255, 255, 255, 0.16);
+    color: rgba(255, 255, 255, 0.86);
+    font-size: 23rpx;
+  }
 
-      .time {
-        font-size: 24rpx;
+  .filter-card {
+    margin-top: 20rpx;
+    overflow: hidden;
+    border-radius: 20rpx;
+    background: #ffffff;
+    box-shadow: 0 8rpx 24rpx rgba(33, 20, 14, 0.05);
+  }
 
-        font-weight: 500;
-        color: rgba(196, 196, 196, 1);
-        line-height: 24px;
-      }
+  .date-btn {
+    display: flex;
+    align-items: center;
+    height: 72rpx;
+    margin: 20rpx 24rpx 8rpx;
+    padding: 0 22rpx;
+    border: 1rpx solid #eeeeee;
+    border-radius: 36rpx;
+    background: #f8f8f8;
+    color: #555555;
+    font-size: 24rpx;
+    line-height: 72rpx;
+  }
 
-      .add {
-        font-size: 30rpx;
+  .date-btn text {
+    margin: 0 10rpx;
+  }
 
-        font-weight: 500;
-        color: #e6b873;
-      }
+  .state-card {
+    display: flex;
+    min-height: 360rpx;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    margin-top: 20rpx;
+    padding: 40rpx;
+    border-radius: 20rpx;
+    background: #ffffff;
+    text-align: center;
+  }
 
-      .minus {
-        font-size: 30rpx;
+  .state-title {
+    margin-top: 18rpx;
+    color: #242424;
+    font-size: 30rpx;
+    font-weight: 800;
+  }
 
-        font-weight: 500;
-        color: $dark-3;
-      }
-    }
+  .state-desc {
+    margin-top: 10rpx;
+    color: #888888;
+    font-size: 24rpx;
+    line-height: 36rpx;
+  }
+
+  .retry-btn {
+    height: 66rpx;
+    margin-top: 24rpx;
+    padding: 0 32rpx;
+    border: 0;
+    border-radius: 34rpx;
+    background: #ff5a1f;
+    color: #ffffff;
+    font-size: 25rpx;
+    line-height: 66rpx;
+  }
+
+  .record-list {
+    margin-top: 20rpx;
+    overflow: hidden;
+    border-radius: 20rpx;
+    background: #ffffff;
+  }
+
+  .record-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 150rpx;
+    padding: 24rpx 28rpx;
+    border-bottom: 1rpx solid #eeeeee;
+  }
+
+  .record-item:last-child {
+    border-bottom: 0;
+  }
+
+  .record-main {
+    flex: 1;
+    min-width: 0;
+    padding-right: 20rpx;
+  }
+
+  .record-title {
+    overflow: hidden;
+    color: #262626;
+    font-size: 27rpx;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .record-time,
+  .balance-after {
+    margin-top: 8rpx;
+    color: #999999;
+    font-size: 22rpx;
+  }
+
+  .balance-after {
+    color: #777777;
+  }
+
+  .delta {
+    color: #555555;
+    font-size: 31rpx;
+    font-weight: 800;
+  }
+
+  .delta.income {
+    color: #ff5a1f;
+  }
+
+  .inline-error {
+    margin-top: 16rpx;
+    color: #8a8a8a;
+    font-size: 23rpx;
+    text-align: center;
+  }
+
+  .inline-error text {
+    margin-left: 12rpx;
+    color: #ff5a1f;
+    font-weight: 700;
+  }
+
+  button::after {
+    border: 0;
   }
 </style>

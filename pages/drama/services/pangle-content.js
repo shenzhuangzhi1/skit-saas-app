@@ -280,6 +280,7 @@ export async function openDirectDramaPlayer(
   return displayAdFlow.runBeforeDramaPlay({
     ...identity,
     beforePlay: options.beforePlay,
+    presentInterstitial: options.presentInterstitial,
     resolvePlacement: async () => {
       try {
         await userStore.getAdConfig();

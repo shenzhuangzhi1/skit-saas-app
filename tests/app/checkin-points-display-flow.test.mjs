@@ -321,6 +321,90 @@ test('page visit guard rejects delayed work after leave and re-entry', async () 
   assert.equal(nativeCalls, 0);
 });
 
+test('a controlled interstitial preserves the page visit until the native activity returns', async () => {
+  const { createDisplayAdFlow, createPageVisitGuard } = await loadDisplayAdFlow();
+  const storage = memoryStorage();
+  const guard = createPageVisitGuard();
+  const visitEpoch = guard.enter();
+  let finishAd;
+  let opened = 0;
+  const flow = createDisplayAdFlow({
+    storage,
+    getNativePlugin: () => ({
+      showInterstitial(_payload, callback) {
+        finishAd = callback;
+        return 'djx_interstitial_callback';
+      },
+    }),
+    now: () => new Date('2026-07-24T08:00:00+08:00'),
+  });
+  const identity = { tenantId: 162, memberId: 88, signInDate: '2026-07-24' };
+  flow.markPostCheckIn(identity);
+
+  const playback = flow.runBeforeDramaPlay({
+    ...identity,
+    placementId: 'post-checkin-placement',
+    canOpenPlayer: () => guard.isCurrent(visitEpoch),
+    presentInterstitial: (operation) => guard.runPresentation(visitEpoch, operation),
+    openPlayer: () => {
+      opened += 1;
+      return true;
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  guard.leave();
+  finishAd({ success: true, closed: true });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(opened, 0, 'navigation must wait until the same page is visible again');
+
+  const resumedEpoch = guard.enter();
+  const result = await playback;
+
+  assert.equal(resumedEpoch, visitEpoch, 'the ad activity must not create a new page visit');
+  assert.equal(result, true);
+  assert.equal(opened, 1);
+});
+
+test('unloading during a controlled interstitial permanently invalidates navigation', async () => {
+  const { createDisplayAdFlow, createPageVisitGuard } = await loadDisplayAdFlow();
+  const storage = memoryStorage();
+  const guard = createPageVisitGuard();
+  const visitEpoch = guard.enter();
+  let finishAd;
+  let opened = 0;
+  const flow = createDisplayAdFlow({
+    storage,
+    getNativePlugin: () => ({
+      showInterstitial(_payload, callback) {
+        finishAd = callback;
+        return 'djx_interstitial_callback';
+      },
+    }),
+    now: () => new Date('2026-07-24T08:00:00+08:00'),
+  });
+  const identity = { tenantId: 162, memberId: 88, signInDate: '2026-07-24' };
+  flow.markPostCheckIn(identity);
+
+  const playback = flow.runBeforeDramaPlay({
+    ...identity,
+    placementId: 'post-checkin-placement',
+    canOpenPlayer: () => guard.isCurrent(visitEpoch),
+    presentInterstitial: (operation) => guard.runPresentation(visitEpoch, operation),
+    openPlayer: () => {
+      opened += 1;
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  guard.leave();
+  guard.unload();
+  finishAd({ success: true, closed: true });
+  await playback;
+
+  assert.equal(opened, 0);
+});
+
 test('native display-ad failureReason is preserved for diagnostics', async () => {
   const { createDisplayAdFlow } = await loadDisplayAdFlow();
   const flow = createDisplayAdFlow({
@@ -437,7 +521,10 @@ test('display-ad cache and rendering are scoped to the active tenant and visible
   assert.match(userStore, /adConfigTenantId/);
   assert.match(userStore, /activeTenantScope/);
   assert.match(userStore, /adConfigTenantId !== requestTenantScope/);
-  assert.match(userStore, /requestTenantScope[\s\S]*activeTenantScope\(\)\s*!==\s*requestTenantScope/);
+  assert.match(
+    userStore,
+    /requestTenantScope[\s\S]*activeTenantScope\(\)\s*!==\s*requestTenantScope/,
+  );
   assert.match(userStore, /clearDisplayAdConfig/);
   assert.match(
     userStore,

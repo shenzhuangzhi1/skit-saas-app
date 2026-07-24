@@ -290,7 +290,10 @@ test('pending verification is UI-silent after leaving the page and always releas
     scheduler,
     /if \(!isPageRequestCurrent\(pendingRequest\)\) \{\s*return;\s*\}[\s\S]*?grantedEpisodeNos\.value = result\.entitlements\.grantedEpisodeNos/,
   );
-  assert.match(scheduler, /if \(!isPageUiRequestCurrent\(pendingRequest\)\) \{\s*return;/);
+  assert.match(
+    scheduler,
+    /await waitForPageUiRequestCurrent\(pendingRequest\);\s*assertPageRequestCurrent\(pendingRequest\)/,
+  );
   assert.match(scheduler, /\.finally\(\(\) => \{[\s\S]*?releaseOwnership\(\)/);
   assert.match(playerSource, /onUnload\(\(\) => \{[\s\S]*?pageAsyncGuard\.deactivate\(\)/);
 });

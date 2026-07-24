@@ -161,14 +161,7 @@ export function showRewardedVideoAd(serverProtocol, options = {}) {
         if (telemetry.nativeState === 'ERROR') {
           const failure =
             TERMINAL_FAILURES[telemetry.failureReason] || TERMINAL_FAILURES.SDK_FAILURE;
-          finishWithError(
-            flowError(
-              failure.code,
-              failure.message,
-              undefined,
-              telemetry,
-            ),
-          );
+          finishWithError(flowError(failure.code, failure.message, undefined, telemetry));
           return;
         }
         settled = true;
@@ -219,6 +212,9 @@ export function showRewardedVideoAd(serverProtocol, options = {}) {
               flowError('NATIVE_AD_FAILED', error?.message || '激励视频加载失败', error),
             ),
           );
+      } else if (typeof result === 'string') {
+        // The DJX WebView bridge returns an opaque callback handle immediately.
+        // Native telemetry arrives later through `receive`; the handle is not an ad result.
       } else if (result !== undefined) {
         receive(result);
       }

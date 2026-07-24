@@ -104,6 +104,11 @@ test('production workflows select a versioned repository profile and a profile-s
     dependencyInstall < productionBuild,
     'locked H5 dependencies must be installed before the production APK build',
   );
+  assert.match(
+    apkWorkflow,
+    /H5_DIR:\s*\$\{\{\s*github\.workspace\s*\}\}\/unpackage\/dist\/build\/h5-android-runtime/,
+    'production APK packaging must pin the generated H5 directory on self-hosted runners',
+  );
   assert.ok(
     hotDependencyInstall >= 0,
     'production hot updates must install locked H5 dependencies',

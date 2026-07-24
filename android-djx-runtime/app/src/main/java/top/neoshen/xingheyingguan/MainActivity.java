@@ -5,6 +5,7 @@ import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.res.AssetManager;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.Gravity;
@@ -159,7 +160,15 @@ public class MainActivity extends Activity {
                 });
 
         attachNativeMessageChannel();
-        webView.loadUrl(assetServer.getBaseUrl() + "index.html");
+        String initialPageUrl = Uri.parse(assetServer.getBaseUrl() + "index.html")
+                .buildUpon()
+                .appendQueryParameter("skitTopInset",
+                        String.valueOf(systemBarHeightDp("status_bar_height")))
+                .appendQueryParameter("skitBottomInset",
+                        String.valueOf(systemBarHeightDp("navigation_bar_height")))
+                .build()
+                .toString();
+        webView.loadUrl(initialPageUrl);
     }
 
     @Override
@@ -279,6 +288,22 @@ public class MainActivity extends Activity {
 
     private int dpToPx(int value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    private int systemBarHeightDp(String resourceName) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+            return 0;
+        }
+        int resourceId = getResources().getIdentifier(resourceName, "dimen", "android");
+        if (resourceId == 0) {
+            return 0;
+        }
+        int pixels = getResources().getDimensionPixelSize(resourceId);
+        float density = getResources().getDisplayMetrics().density;
+        if (pixels <= 0 || density <= 0f) {
+            return 0;
+        }
+        return Math.max(0, Math.round(pixels / density));
     }
 
     private ThirdPartySdkBootstrap createThirdPartySdkBootstrap() {

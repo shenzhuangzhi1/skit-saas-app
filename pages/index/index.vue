@@ -116,11 +116,7 @@
         </template>
       </view>
 
-      <view
-        v-else
-        class="content history-content"
-        :class="{ 'banner-active': homeBannerVisible }"
-      >
+      <view v-else class="content history-content" :class="{ 'banner-active': homeBannerVisible }">
         <view v-if="historyList.length > 0" class="history-grid">
           <DramaCard
             v-for="item in historyList"
@@ -144,7 +140,7 @@
 
 <script setup>
   import { computed, onMounted, onUnmounted, ref } from 'vue';
-  import { onHide, onPullDownRefresh, onShow } from '@dcloudio/uni-app';
+  import { onHide, onPullDownRefresh, onShow, onUnload } from '@dcloudio/uni-app';
   import sheep from '@/sheep';
   import DramaCard from '@/pages/drama/components/DramaCard.vue';
   import DramaTabbar from '@/pages/drama/components/DramaTabbar.vue';
@@ -256,6 +252,7 @@
     const opened = await openDirectDramaPlayer(drama, episode, 'home_direct', {
       beforePlay: hideHomeBanner,
       canOpenPlayer: () => homeVisitGuard.isCurrent(visitEpoch),
+      presentInterstitial: (operation) => homeVisitGuard.runPresentation(visitEpoch, operation),
     });
     if (opened) {
       saveHistory(drama.id, episode);
@@ -288,10 +285,7 @@
 
   function handleBannerLifecycle(event) {
     const detail = event?.detail;
-    if (
-      detail?.state === 'CLOSED' &&
-      detail?.scene === DISPLAY_AD_SCENES.HOME_BANNER
-    ) {
+    if (detail?.state === 'CLOSED' && detail?.scene === DISPLAY_AD_SCENES.HOME_BANNER) {
       homeBannerVisible.value = false;
     }
   }
@@ -325,6 +319,10 @@
     bannerEpoch.value += 1;
     homeBannerVisible.value = false;
     void displayAdFlow.hideHomeBanner();
+  });
+
+  onUnload(() => {
+    homeVisitGuard.unload();
   });
 
   onPullDownRefresh(async () => {

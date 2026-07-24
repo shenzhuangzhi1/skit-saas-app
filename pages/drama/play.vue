@@ -457,9 +457,8 @@
           if (!result.entitlements.grantedEpisodeNos.includes(episodeNo)) {
             throw new Error('目标剧集尚未获得服务端权益');
           }
-          if (!isPageUiRequestCurrent(pendingRequest)) {
-            return;
-          }
+          await waitForPageUiRequestCurrent(pendingRequest);
+          assertPageRequestCurrent(pendingRequest);
           pageAsyncGuard.invalidateChannel('entitlements');
           grantedEpisodeNos.value = result.entitlements.grantedEpisodeNos;
           uni.showToast({ title: `已解锁第${episodeNo}集`, icon: 'none' });

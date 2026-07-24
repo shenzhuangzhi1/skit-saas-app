@@ -93,15 +93,53 @@ export function resolveDisplayPlacements(config = {}) {
 export function createPageVisitGuard() {
   let epoch = 0;
   let active = false;
+  let presentation = null;
+
+  function invalidatedError() {
+    const error = new Error('页面访问已经失效');
+    error.code = 'PAGE_VISIT_INVALIDATED';
+    return error;
+  }
+
+  function settlePresentationWaiters(lease, error = null) {
+    for (const waiter of [...lease.waiters]) {
+      lease.waiters.delete(waiter);
+      if (error) {
+        waiter.reject(error);
+      } else {
+        waiter.resolve();
+      }
+    }
+  }
+
   return Object.freeze({
     enter() {
+      if (presentation && presentation.epoch === epoch && presentation.hidden) {
+        active = true;
+        presentation.hidden = false;
+        settlePresentationWaiters(presentation);
+        return epoch;
+      }
       active = true;
       epoch += 1;
       return epoch;
     },
     leave() {
       active = false;
+      if (presentation && presentation.epoch === epoch && !presentation.invalidated) {
+        presentation.hidden = true;
+        return epoch;
+      }
       epoch += 1;
+      return epoch;
+    },
+    unload() {
+      active = false;
+      epoch += 1;
+      if (presentation) {
+        presentation.invalidated = true;
+        settlePresentationWaiters(presentation, invalidatedError());
+      }
       return epoch;
     },
     capture() {
@@ -109,6 +147,53 @@ export function createPageVisitGuard() {
     },
     isCurrent(capturedEpoch) {
       return active && Number.isSafeInteger(capturedEpoch) && capturedEpoch === epoch;
+    },
+    async runPresentation(capturedEpoch, operation) {
+      if (
+        typeof operation !== 'function' ||
+        !active ||
+        presentation ||
+        !Number.isSafeInteger(capturedEpoch) ||
+        capturedEpoch !== epoch
+      ) {
+        throw invalidatedError();
+      }
+      const lease = {
+        epoch: capturedEpoch,
+        hidden: false,
+        invalidated: false,
+        waiters: new Set(),
+      };
+      presentation = lease;
+      try {
+        let result;
+        let operationError;
+        try {
+          result = await operation();
+        } catch (error) {
+          operationError = error;
+        }
+        if (lease.invalidated) {
+          throw invalidatedError();
+        }
+        if (lease.hidden) {
+          await new Promise((resolve, reject) => {
+            lease.waiters.add({ resolve, reject });
+          });
+        }
+        if (lease.invalidated || !active || capturedEpoch !== epoch) {
+          throw invalidatedError();
+        }
+        if (operationError) {
+          throw operationError;
+        }
+        return result;
+      } finally {
+        if (presentation === lease) {
+          presentation = null;
+        }
+        settlePresentationWaiters(lease, invalidatedError());
+      }
     },
   });
 }
@@ -184,10 +269,7 @@ export function createDisplayAdFlow(options = {}) {
           } catch {
             // The navigation path remains fail-open even if native cancellation fails.
           }
-        } else if (
-          nativeRequestId &&
-          typeof plugin.forgetRequestCallback === 'function'
-        ) {
+        } else if (nativeRequestId && typeof plugin.forgetRequestCallback === 'function') {
           try {
             plugin.forgetRequestCallback({ requestId: nativeRequestId });
           } catch {
@@ -298,6 +380,7 @@ export function createDisplayAdFlow(options = {}) {
     resolvePlacement,
     beforePlay,
     canOpenPlayer,
+    presentInterstitial,
     openPlayer,
   }) {
     if (playFlight) {
@@ -355,12 +438,25 @@ export function createDisplayAdFlow(options = {}) {
         if (!canContinue()) {
           return false;
         }
-        await callNative(
-          'showInterstitial',
-          resolvedPlacementId,
-          DISPLAY_AD_SCENES.POST_CHECK_IN_FIRST_PLAY,
-          interstitialTimeoutMs,
-        );
+        const showInterstitial = () =>
+          callNative(
+            'showInterstitial',
+            resolvedPlacementId,
+            DISPLAY_AD_SCENES.POST_CHECK_IN_FIRST_PLAY,
+            interstitialTimeoutMs,
+          );
+        try {
+          if (typeof presentInterstitial === 'function') {
+            await presentInterstitial(showInterstitial);
+          } else {
+            await showInterstitial();
+          }
+        } catch (error) {
+          if (!canContinue()) {
+            return false;
+          }
+          throw error;
+        }
       }
       if (!canContinue()) {
         return false;
